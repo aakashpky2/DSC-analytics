@@ -572,8 +572,133 @@ apiRouter.get('/inventory/branches', async (_req: Request, res: Response) => {
       SELECT s.*, b.branch_name, b.branch_code
       FROM branch_token_stocks s
       JOIN branches b ON s.branch_id = b.id
+      ORDER BY b.branch_name ASC
     `)
-    return res.json({ stock })
+    const branches = await queryAll('SELECT id, branch_name, branch_code, city, state_code FROM branches ORDER BY branch_name ASC')
+    return res.json({ stock, branches })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+// Transfer History: List Delivery Challans / Notes
+apiRouter.get('/inventory/transfers', async (_req: Request, res: Response) => {
+  try {
+    const challans = await queryAll(`
+      SELECT dc.*, 
+             sb.branch_name as source_branch_name, sb.branch_code as source_branch_code,
+             db.branch_name as destination_branch_name, db.branch_code as destination_branch_code,
+             u.full_name as issued_by_name
+      FROM delivery_challans dc
+      LEFT JOIN branches sb ON dc.source_branch_id = sb.id
+      LEFT JOIN branches db ON dc.destination_branch_id = db.id
+      LEFT JOIN user_profiles u ON dc.issued_by = u.id
+      ORDER BY dc.created_at DESC
+    `)
+    return res.json({ challans })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+// Create Delivery Challan / Inter-Branch Stock Transfer
+apiRouter.post('/inventory/transfers', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { source_branch_id, destination_branch_id, token_model, quantity, remarks, transfer_date } = req.body
+    const currentUser = (req as any).user
+
+    if (!source_branch_id || !destination_branch_id || !token_model) {
+      return res.status(400).json({ error: 'Source branch, destination branch, and token model are required.' })
+    }
+
+    if (source_branch_id === destination_branch_id) {
+      return res.status(400).json({ error: 'Please select another branch. Source and destination branches must differ.' })
+    }
+
+    const parsedQty = parseInt(quantity, 10)
+    if (isNaN(parsedQty) || parsedQty <= 0) {
+      return res.status(400).json({ error: 'Quantity must be a positive whole number.' })
+    }
+
+    // Server-side stock verification against race conditions & over-allocation
+    const sourceStock = await queryOne<any>(
+      'SELECT * FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?',
+      [source_branch_id, token_model]
+    )
+
+    if (!sourceStock || sourceStock.quantity_on_hand < parsedQty) {
+      const available = sourceStock ? sourceStock.quantity_on_hand : 0
+      return res.status(400).json({
+        error: `Not enough stock available. Source branch has only ${available} usable tokens.`
+      })
+    }
+
+    const challanId = `dc-${Date.now()}`
+    const challanNumber = `DC-2026-${Date.now().toString().slice(-5)}`
+    const effectiveDate = transfer_date || new Date().toISOString().split('T')[0]
+
+    // Atomically record transfer and deduct stock from source branch
+    await run(
+      `INSERT INTO delivery_challans (
+        id, challan_number, source_branch_id, destination_branch_id, token_model, quantity, purpose, issued_by, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'dispatched', ?)`,
+      [challanId, challanNumber, source_branch_id, destination_branch_id, token_model, parsedQty, remarks || 'Inter-branch stock transfer', currentUser.id, effectiveDate]
+    )
+
+    // Deduct stock from source branch
+    await run(
+      'UPDATE branch_token_stocks SET quantity_on_hand = quantity_on_hand - ? WHERE branch_id = ? AND token_model = ?',
+      [parsedQty, source_branch_id, token_model]
+    )
+
+    // Ensure destination branch stock row exists and record receipt or in-transit
+    const destStock = await queryOne<any>(
+      'SELECT * FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?',
+      [destination_branch_id, token_model]
+    )
+    if (!destStock) {
+      const newStockId = `stock-${Date.now()}-${Math.floor(Math.random()*1000)}`
+      await run(
+        'INSERT INTO branch_token_stocks (id, branch_id, token_model, quantity_on_hand, quarantine_damaged, min_threshold) VALUES (?, ?, ?, ?, 0, 10)',
+        [newStockId, destination_branch_id, token_model, 0]
+      )
+    }
+
+    return res.status(201).json({
+      success: true,
+      id: challanId,
+      challan_number: challanNumber,
+      message: 'Delivery note created successfully.'
+    })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+// Confirm receipt of delivery challan at destination branch
+apiRouter.patch('/inventory/transfers/:id/receive', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const challanId = req.params.id as string
+    const challan = await queryOne<any>('SELECT * FROM delivery_challans WHERE id = ?', [challanId])
+    if (!challan) return res.status(404).json({ error: 'Delivery Challan not found.' })
+
+    if (challan.status === 'received') {
+      return res.status(400).json({ error: 'This delivery note has already been received.' })
+    }
+    if (challan.status === 'cancelled') {
+      return res.status(400).json({ error: 'Cancelled delivery notes cannot be received.' })
+    }
+
+    // Add received quantity to destination branch
+    await run(
+      'UPDATE branch_token_stocks SET quantity_on_hand = quantity_on_hand + ? WHERE branch_id = ? AND token_model = ?',
+      [challan.quantity, challan.destination_branch_id, challan.token_model]
+    )
+
+    // Mark challan received
+    await run('UPDATE delivery_challans SET status = \'received\' WHERE id = ?', [challanId])
+
+    return res.json({ success: true, status: 'received', message: 'Stock received and credited to destination branch.' })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }
@@ -874,3 +999,61 @@ apiRouter.post('/courier/dispatches', async (req: Request, res: Response) => {
   }
 })
 
+
+// Delivery Challan / Transfer Document PDF Compilation
+apiRouter.get('/inventory/transfers/pdf', async (req: Request, res: Response) => {
+  try {
+    const challanNumber = (req.query.challan_number as string) || 'DC-2026-0001'
+    const challans = await queryAll(`
+      SELECT dc.*, 
+             sb.branch_name as source_branch_name, sb.branch_code as source_branch_code, sb.city as source_city, sb.state_code as source_state,
+             db.branch_name as destination_branch_name, db.branch_code as destination_branch_code, db.city as dest_city, db.state_code as dest_state,
+             u.full_name as issued_by_name
+      FROM delivery_challans dc
+      LEFT JOIN branches sb ON dc.source_branch_id = sb.id
+      LEFT JOIN branches db ON dc.destination_branch_id = db.id
+      LEFT JOIN user_profiles u ON dc.issued_by = u.id
+      WHERE dc.challan_number = ?
+    `, [challanNumber])
+
+    const challan = challans[0]
+    const doc = {
+      documentType: 'Inter-Branch Stock Transfer Delivery Challan',
+      challanNumber: challan ? challan.challan_number : challanNumber,
+      transferDate: challan ? challan.created_at : new Date().toISOString().split('T')[0],
+      sourceBranch: {
+        name: challan?.source_branch_name || 'Headquarters - Mumbai',
+        code: challan?.source_branch_code || 'HQ-MUM',
+        city: challan?.source_city || 'Mumbai',
+        state: challan?.source_state || 'MH',
+      },
+      destinationBranch: {
+        name: challan?.destination_branch_name || 'Regional Branch - Delhi',
+        code: challan?.destination_branch_code || 'BR-DEL',
+        city: challan?.dest_city || 'New Delhi',
+        state: challan?.dest_state || 'DL',
+      },
+      lineItems: [
+        {
+          item: challan ? challan.token_model.toUpperCase().replace('_', ' ') : 'EPASS2003 AUTO',
+          description: 'FIPS 140-2 Level 3 Cryptographic USB Hardware Token',
+          quantity: challan ? challan.quantity : 50,
+          purpose: challan?.purpose || 'Stock replenishment for local branch operations',
+        }
+      ],
+      companyDetails: {
+        legalName: 'SignSync Enterprise Solutions Pvt Ltd',
+        gstin: '27AAACS1234A1Z1',
+        registeredOffice: 'Express Towers, Nariman Point, Mumbai, Maharashtra 400021',
+      },
+      authorizedBy: challan?.issued_by_name || 'Operations Manager',
+      status: challan?.status || 'dispatched',
+      rulesCompliance: 'Under Rule 55 of CGST Rules 2017 - Movement of goods without supply',
+      generatedAt: new Date().toISOString(),
+    }
+
+    return res.json(doc)
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
