@@ -19,13 +19,20 @@ const port = parseInt(process.env.PORT || '3000', 10);
 // Initialize Next.js app with SSR
 const nextApp = (0, next_1.default)({ dev, hostname, port });
 const handle = nextApp.getRequestHandler();
-// Public frontend routes that do not require authentication
+// Public frontend routes and static assets that do not require authentication
 const PUBLIC_PAGE_PREFIXES = [
     '/login',
     '/forgot-password',
     '/reset-password',
     '/_next',
     '/favicon.ico',
+    '/favicon.png',
+    '/icon.png',
+    '/apple-icon.png',
+    '/signsync-logo.png',
+    '/logo.png',
+    '/next.svg',
+    '/vercel.svg',
 ];
 async function startServer() {
     await nextApp.prepare();

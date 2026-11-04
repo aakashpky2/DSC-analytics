@@ -136,8 +136,12 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
         <div>
           {/* Brand Header */}
           <div className="h-16 flex items-center px-5 border-b border-slate-800 gap-3">
-            <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-cyan-500 flex items-center justify-center font-bold text-white shadow-lg shadow-indigo-500/20">
-              SS
+            <div className="h-9 w-9 rounded-xl overflow-hidden bg-slate-950 border border-slate-800 flex items-center justify-center shrink-0 shadow-md">
+              <img
+                src="/signsync-logo.png"
+                alt="SignSync"
+                className="w-full h-full object-cover"
+              />
             </div>
             <div>
               <div className="font-bold text-sm tracking-wide text-white flex items-center gap-1.5">

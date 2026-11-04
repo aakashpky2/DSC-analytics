@@ -5,6 +5,14 @@ import ShellLayout from '@/components/ShellLayout'
 export const metadata: Metadata = {
   title: 'SignSync B2B Enterprise Platform | v2.4',
   description: 'DSC & Hardware Token Logistics, CRM Deduplication, Multi-Account Billing & Ledger',
+  icons: {
+    icon: [
+      { url: '/signsync-logo.png', sizes: 'any', type: 'image/png' },
+      { url: '/favicon.ico', sizes: 'any' },
+    ],
+    shortcut: '/signsync-logo.png',
+    apple: '/signsync-logo.png',
+  },
 }
 
 export default function RootLayout({

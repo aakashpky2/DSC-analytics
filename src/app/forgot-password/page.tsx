@@ -49,8 +49,12 @@ export default function ForgotPasswordPage() {
       <div className="max-w-md w-full p-8 rounded-2xl bg-slate-900 border border-slate-800 space-y-6 shadow-2xl">
         {/* Brand Header */}
         <div className="text-center space-y-2">
-          <div className="h-12 w-12 rounded-2xl bg-gradient-to-tr from-indigo-600 to-cyan-500 flex items-center justify-center font-bold text-white shadow-lg shadow-indigo-600/20 mx-auto text-lg">
-            SS
+          <div className="h-16 w-16 rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 flex items-center justify-center shadow-xl mx-auto">
+            <img
+              src="/signsync-logo.png"
+              alt="SignSync"
+              className="w-full h-full object-cover"
+            />
           </div>
           <h1 className="text-xl font-bold text-white tracking-tight">Reset Password</h1>
           <p className="text-xs text-slate-400">
