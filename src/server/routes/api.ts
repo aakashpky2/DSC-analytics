@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express'
-const { queryAll, queryOne, run } = require('../initLocalDb.js')
+import { queryAll, queryOne, run } from '../localDb'
 import { calculateLandedCost, evaluateLeadDuplicates, calculateGst } from '../../lib/businessLogic'
 import { applyPiiMasking } from '../../lib/masking'
 import { validateDelegationAuthority, validateSubPermissionCap } from '../../lib/permissions'

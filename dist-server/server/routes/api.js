@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.apiRouter = void 0;
 const express_1 = require("express");
-const { queryAll, queryOne, run } = require('../initLocalDb.js');
+const localDb_1 = require("../localDb");
 const businessLogic_1 = require("../../lib/businessLogic");
 const masking_1 = require("../../lib/masking");
 exports.apiRouter = (0, express_1.Router)();
@@ -11,7 +11,7 @@ exports.apiRouter = (0, express_1.Router)();
 // ==========================================
 exports.apiRouter.get('/health', async (_req, res) => {
     try {
-        const user = await queryOne('SELECT * FROM user_profiles WHERE id = ?', ['usr-admin-root']);
+        const user = await (0, localDb_1.queryOne)('SELECT * FROM user_profiles WHERE id = ?', ['usr-admin-root']);
         return res.json({
             status: 'ok',
             platform: 'SignSync B2B Enterprise v2.4',
@@ -30,7 +30,7 @@ exports.apiRouter.get('/auth/me', async (req, res) => {
     try {
         // Current user defaults to Super Admin or header user
         const userId = req.headers['x-user-id'] || 'usr-admin-root';
-        const user = await queryOne(`
+        const user = await (0, localDb_1.queryOne)(`
       SELECT u.*, r.name as role_name, h.level_order as hierarchy_level_order, h.level_name
       FROM user_profiles u
       LEFT JOIN roles r ON u.role_id = r.id
@@ -52,7 +52,7 @@ exports.apiRouter.get('/auth/me', async (req, res) => {
 exports.apiRouter.get('/admin/users', async (req, res) => {
     try {
         const mask = req.query.mask === 'true';
-        const users = await queryAll(`
+        const users = await (0, localDb_1.queryAll)(`
       SELECT u.id, u.email, u.full_name, u.phone_number, u.can_grant_permissions, u.permissions_frozen, u.status, u.created_at,
              r.name as role_name, h.level_order, h.level_name, b.branch_name
       FROM user_profiles u
@@ -72,7 +72,7 @@ exports.apiRouter.post('/admin/users', async (req, res) => {
     try {
         const { email, full_name, phone_number, role_id, hierarchy_level_id, branch_id } = req.body;
         const id = `usr-${Date.now()}`;
-        await run(`
+        await (0, localDb_1.run)(`
       INSERT INTO user_profiles (id, email, password_hash, full_name, phone_number, role_id, hierarchy_level_id, branch_id, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
     `, [id, email, 'password123', full_name, phone_number, role_id, hierarchy_level_id, branch_id]);
@@ -85,7 +85,7 @@ exports.apiRouter.post('/admin/users', async (req, res) => {
 exports.apiRouter.patch('/admin/users/:id/freeze', async (req, res) => {
     try {
         const { frozen } = req.body;
-        await run(`UPDATE user_profiles SET permissions_frozen = ? WHERE id = ?`, [frozen ? 1 : 0, req.params.id]);
+        await (0, localDb_1.run)(`UPDATE user_profiles SET permissions_frozen = ? WHERE id = ?`, [frozen ? 1 : 0, req.params.id]);
         return res.json({ success: true, frozen: Boolean(frozen) });
     }
     catch (err) {
@@ -98,7 +98,7 @@ exports.apiRouter.patch('/admin/users/:id/freeze', async (req, res) => {
 exports.apiRouter.get('/partners', async (req, res) => {
     try {
         const mask = req.query.mask === 'true';
-        const partners = await queryAll('SELECT * FROM partners ORDER BY created_at DESC');
+        const partners = await (0, localDb_1.queryAll)('SELECT * FROM partners ORDER BY created_at DESC');
         const sanitized = partners.map((p) => (0, masking_1.applyPiiMasking)(p, mask));
         return res.json({ partners: sanitized });
     }
@@ -109,12 +109,12 @@ exports.apiRouter.get('/partners', async (req, res) => {
 exports.apiRouter.get('/partners/:id', async (req, res) => {
     try {
         const mask = req.query.mask === 'true';
-        const partner = await queryOne('SELECT * FROM partners WHERE id = ?', [req.params.id]);
+        const partner = await (0, localDb_1.queryOne)('SELECT * FROM partners WHERE id = ?', [req.params.id]);
         if (!partner)
             return res.status(404).json({ error: 'Partner not found' });
-        const orders = await queryAll('SELECT * FROM dsc_applications WHERE partner_id = ? ORDER BY created_at DESC', [req.params.id]);
-        const invoices = await queryAll('SELECT * FROM invoices WHERE partner_id = ? ORDER BY invoice_date DESC', [req.params.id]);
-        const ledger = await queryAll('SELECT * FROM financial_ledger WHERE partner_id = ? ORDER BY entry_date DESC', [req.params.id]);
+        const orders = await (0, localDb_1.queryAll)('SELECT * FROM dsc_applications WHERE partner_id = ? ORDER BY created_at DESC', [req.params.id]);
+        const invoices = await (0, localDb_1.queryAll)('SELECT * FROM invoices WHERE partner_id = ? ORDER BY invoice_date DESC', [req.params.id]);
+        const ledger = await (0, localDb_1.queryAll)('SELECT * FROM financial_ledger WHERE partner_id = ? ORDER BY entry_date DESC', [req.params.id]);
         return res.json({
             partner: (0, masking_1.applyPiiMasking)(partner, mask),
             orders,
@@ -131,7 +131,7 @@ exports.apiRouter.post('/partners', async (req, res) => {
         const { type, company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit = 0, credit_period_days = 0, } = req.body;
         const id = `part-${Date.now()}`;
         const partner_code = `PRT-${Date.now().toString().slice(-4)}`;
-        await run(`
+        await (0, localDb_1.run)(`
       INSERT INTO partners (id, partner_code, type, company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit, credit_period_days, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
     `, [id, partner_code, type, company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit, credit_period_days]);
@@ -146,7 +146,7 @@ exports.apiRouter.post('/partners', async (req, res) => {
 // ==========================================
 exports.apiRouter.get('/dsc/catalog', async (_req, res) => {
     try {
-        const items = await queryAll('SELECT * FROM dsc_catalog ORDER BY class_type, validity_years');
+        const items = await (0, localDb_1.queryAll)('SELECT * FROM dsc_catalog ORDER BY class_type, validity_years');
         return res.json({ catalog: items });
     }
     catch (err) {
@@ -156,7 +156,7 @@ exports.apiRouter.get('/dsc/catalog', async (_req, res) => {
 exports.apiRouter.get('/dsc/applications', async (req, res) => {
     try {
         const mask = req.query.mask === 'true';
-        const apps = await queryAll(`
+        const apps = await (0, localDb_1.queryAll)(`
       SELECT a.*, p.company_name as partner_company, c.class_type, c.certificate_type, c.validity_years
       FROM dsc_applications a
       LEFT JOIN partners p ON a.partner_id = p.id
@@ -175,7 +175,7 @@ exports.apiRouter.post('/dsc/applications', async (req, res) => {
         const { partner_id, catalog_id, applicant_name, applicant_email, applicant_phone, applicant_pan } = req.body;
         const id = `app-${Date.now()}`;
         const application_number = `DSC-${Date.now().toString().slice(-6)}`;
-        await run(`
+        await (0, localDb_1.run)(`
       INSERT INTO dsc_applications (id, application_number, partner_id, catalog_id, applicant_name, applicant_email, applicant_phone, applicant_pan, stage)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'intake')
     `, [id, application_number, partner_id, catalog_id, applicant_name, applicant_email, applicant_phone, applicant_pan]);
@@ -188,7 +188,7 @@ exports.apiRouter.post('/dsc/applications', async (req, res) => {
 exports.apiRouter.patch('/dsc/applications/:id/stage', async (req, res) => {
     try {
         const { stage, ca_reference_no, notes } = req.body;
-        await run(`
+        await (0, localDb_1.run)(`
       UPDATE dsc_applications
       SET stage = COALESCE(?, stage),
           ca_reference_no = COALESCE(?, ca_reference_no),
@@ -207,7 +207,7 @@ exports.apiRouter.patch('/dsc/applications/:id/stage', async (req, res) => {
 // ==========================================
 exports.apiRouter.get('/inventory/batches', async (_req, res) => {
     try {
-        const batches = await queryAll('SELECT * FROM token_purchase_batches ORDER BY created_at DESC');
+        const batches = await (0, localDb_1.queryAll)('SELECT * FROM token_purchase_batches ORDER BY created_at DESC');
         return res.json({ batches });
     }
     catch (err) {
@@ -226,7 +226,7 @@ exports.apiRouter.post('/inventory/batches', async (req, res) => {
         });
         const id = `batch-${Date.now()}`;
         const batch_number = `BAT-${Date.now().toString().slice(-6)}`;
-        await run(`
+        await (0, localDb_1.run)(`
       INSERT INTO token_purchase_batches (
         id, batch_number, token_model, vendor_name, quantity_purchased,
         base_unit_price, inward_shipping_cost, customs_or_taxes, handling_charges,
@@ -253,7 +253,7 @@ exports.apiRouter.post('/inventory/batches', async (req, res) => {
 });
 exports.apiRouter.get('/inventory/branches', async (_req, res) => {
     try {
-        const stock = await queryAll(`
+        const stock = await (0, localDb_1.queryAll)(`
       SELECT s.*, b.branch_name, b.branch_code
       FROM branch_token_stocks s
       JOIN branches b ON s.branch_id = b.id
@@ -270,7 +270,7 @@ exports.apiRouter.get('/inventory/branches', async (_req, res) => {
 exports.apiRouter.get('/crm/leads', async (req, res) => {
     try {
         const mask = req.query.mask === 'true';
-        const leads = await queryAll(`
+        const leads = await (0, localDb_1.queryAll)(`
       SELECT l.*, u.full_name as assigned_agent_name
       FROM crm_leads l
       LEFT JOIN user_profiles u ON l.assigned_to = u.id
@@ -287,7 +287,7 @@ exports.apiRouter.get('/crm/leads', async (req, res) => {
 exports.apiRouter.post('/crm/leads/check-duplicate', async (req, res) => {
     try {
         const { gstin, phone, email, pan, company_name } = req.body;
-        const existing = await queryAll('SELECT id, lead_code, company_name, email, phone, gstin, pan FROM crm_leads WHERE is_merged = 0');
+        const existing = await (0, localDb_1.queryAll)('SELECT id, lead_code, company_name, email, phone, gstin, pan FROM crm_leads WHERE is_merged = 0');
         const matches = (0, businessLogic_1.evaluateLeadDuplicates)({ gstin, phone, email, pan, companyName: company_name }, existing.map((e) => ({
             id: e.id,
             leadCode: e.lead_code,
@@ -311,7 +311,7 @@ exports.apiRouter.post('/crm/leads', async (req, res) => {
         const { company_name, contact_person, email, phone, gstin, pan, requirement_summary } = req.body;
         const id = `lead-${Date.now()}`;
         const lead_code = `LD-${Date.now().toString().slice(-6)}`;
-        await run(`
+        await (0, localDb_1.run)(`
       INSERT INTO crm_leads (id, lead_code, company_name, contact_person, email, phone, gstin, pan, requirement_summary, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
     `, [id, lead_code, company_name, contact_person, email, phone, gstin, pan, requirement_summary]);
@@ -324,7 +324,7 @@ exports.apiRouter.post('/crm/leads', async (req, res) => {
 exports.apiRouter.post('/crm/leads/merge', async (req, res) => {
     try {
         const { primary_lead_id, secondary_lead_id } = req.body;
-        await run(`
+        await (0, localDb_1.run)(`
       UPDATE crm_leads
       SET is_merged = 1, merged_into_lead_id = ?, status = 'merged', updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
@@ -340,7 +340,7 @@ exports.apiRouter.post('/crm/leads/merge', async (req, res) => {
 // ==========================================
 exports.apiRouter.get('/services/orders', async (_req, res) => {
     try {
-        const orders = await queryAll(`
+        const orders = await (0, localDb_1.queryAll)(`
       SELECT s.*, p.company_name as partner_company
       FROM service_orders s
       LEFT JOIN partners p ON s.partner_id = p.id
@@ -357,7 +357,7 @@ exports.apiRouter.post('/services/orders', async (req, res) => {
         const { service_type, partner_id, client_name, client_contact, government_fees = 0, professional_fees = 0, notes } = req.body;
         const id = `srv-${Date.now()}`;
         const order_number = `SRV-${Date.now().toString().slice(-6)}`;
-        await run(`
+        await (0, localDb_1.run)(`
       INSERT INTO service_orders (id, order_number, service_type, partner_id, client_name, client_contact, government_fees, professional_fees, notes, stage)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft_review')
     `, [id, order_number, service_type, partner_id, client_name, client_contact, government_fees, professional_fees, notes]);
@@ -372,7 +372,7 @@ exports.apiRouter.post('/services/orders', async (req, res) => {
 // ==========================================
 exports.apiRouter.get('/billing/accounts', async (_req, res) => {
     try {
-        const accounts = await queryAll('SELECT * FROM bank_accounts WHERE is_active = 1');
+        const accounts = await (0, localDb_1.queryAll)('SELECT * FROM bank_accounts WHERE is_active = 1');
         return res.json({ accounts });
     }
     catch (err) {
@@ -381,7 +381,7 @@ exports.apiRouter.get('/billing/accounts', async (_req, res) => {
 });
 exports.apiRouter.get('/billing/series', async (_req, res) => {
     try {
-        const series = await queryAll(`
+        const series = await (0, localDb_1.queryAll)(`
       SELECT s.*, b.bank_name, b.account_number, b.upi_id
       FROM invoice_series_configs s
       JOIN bank_accounts b ON s.mapped_bank_account_id = b.id
@@ -394,7 +394,7 @@ exports.apiRouter.get('/billing/series', async (_req, res) => {
 });
 exports.apiRouter.get('/billing/invoices', async (_req, res) => {
     try {
-        const invoices = await queryAll(`
+        const invoices = await (0, localDb_1.queryAll)(`
       SELECT i.*, p.company_name as partner_company, b.bank_name, b.account_number, b.upi_id
       FROM invoices i
       LEFT JOIN partners p ON i.partner_id = p.id
@@ -410,10 +410,10 @@ exports.apiRouter.get('/billing/invoices', async (_req, res) => {
 exports.apiRouter.post('/billing/invoices', async (req, res) => {
     try {
         const { series_id, partner_id, due_days = 30, line_items = [] } = req.body;
-        const series = await queryOne('SELECT * FROM invoice_series_configs WHERE id = ?', [series_id]);
+        const series = await (0, localDb_1.queryOne)('SELECT * FROM invoice_series_configs WHERE id = ?', [series_id]);
         if (!series)
             return res.status(404).json({ error: 'Invoice series config not found' });
-        const partner = await queryOne('SELECT * FROM partners WHERE id = ?', [partner_id]);
+        const partner = await (0, localDb_1.queryOne)('SELECT * FROM partners WHERE id = ?', [partner_id]);
         if (!partner)
             return res.status(404).json({ error: 'Partner not found' });
         const subtotal = line_items.reduce((sum, item) => sum + (item.qty * item.rate), 0);
@@ -421,8 +421,8 @@ exports.apiRouter.post('/billing/invoices', async (req, res) => {
         const nextCounter = series.current_counter + 1;
         const invoice_number = `${series.prefix}${nextCounter}${series.suffix || ''}`;
         const id = `inv-${Date.now()}`;
-        await run('UPDATE invoice_series_configs SET current_counter = ? WHERE id = ?', [nextCounter, series.id]);
-        await run(`
+        await (0, localDb_1.run)('UPDATE invoice_series_configs SET current_counter = ? WHERE id = ?', [nextCounter, series.id]);
+        await (0, localDb_1.run)(`
       INSERT INTO invoices (
         id, invoice_number, series_id, partner_id, invoice_date, due_date,
         subtotal, cgst_amount, sgst_amount, igst_amount, total_amount, paid_amount,
@@ -444,7 +444,7 @@ exports.apiRouter.post('/billing/invoices', async (req, res) => {
             JSON.stringify(line_items),
         ]);
         // Ledger debit entry
-        await run(`
+        await (0, localDb_1.run)(`
       INSERT INTO financial_ledger (id, partner_id, transaction_type, reference_id, debit, credit, running_balance, remarks)
       VALUES (?, ?, 'invoice_raised', ?, ?, 0.0, (COALESCE((SELECT running_balance FROM financial_ledger WHERE partner_id = ? ORDER BY created_at DESC LIMIT 1), 0) + ?), ?)
     `, [`led-${Date.now()}`, partner.id, id, gst.total, partner.id, gst.total, `Invoice ${invoice_number} raised`]);
@@ -457,7 +457,7 @@ exports.apiRouter.post('/billing/invoices', async (req, res) => {
 // Payment screenshot verification queue
 exports.apiRouter.get('/billing/payments/queue', async (_req, res) => {
     try {
-        const queue = await queryAll(`
+        const queue = await (0, localDb_1.queryAll)(`
       SELECT p.*, i.invoice_number, i.total_amount, i.outstanding_balance, i.line_items,
              pt.company_name as partner_company, b.bank_name, b.account_number
       FROM payments_received p
@@ -475,17 +475,17 @@ exports.apiRouter.get('/billing/payments/queue', async (_req, res) => {
 exports.apiRouter.post('/billing/payments/verify', async (req, res) => {
     try {
         const { payment_id, action, rejection_remarks } = req.body; // action: 'verified' | 'rejected'
-        const payment = await queryOne('SELECT * FROM payments_received WHERE id = ?', [payment_id]);
+        const payment = await (0, localDb_1.queryOne)('SELECT * FROM payments_received WHERE id = ?', [payment_id]);
         if (!payment)
             return res.status(404).json({ error: 'Payment record not found' });
         if (action === 'verified') {
-            await run(`
+            await (0, localDb_1.run)(`
         UPDATE payments_received
         SET verified_status = 'verified', verified_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `, [payment_id]);
             // Update invoice paid amount
-            await run(`
+            await (0, localDb_1.run)(`
         UPDATE invoices
         SET paid_amount = paid_amount + ?,
             outstanding_balance = outstanding_balance - ?,
@@ -493,14 +493,14 @@ exports.apiRouter.post('/billing/payments/verify', async (req, res) => {
         WHERE id = ?
       `, [payment.amount_paid, payment.amount_paid, payment.amount_paid, payment.invoice_id]);
             // Post credit to financial ledger
-            await run(`
+            await (0, localDb_1.run)(`
         INSERT INTO financial_ledger (id, partner_id, transaction_type, reference_id, debit, credit, running_balance, remarks)
         VALUES (?, ?, 'payment_received', ?, 0.0, ?, (COALESCE((SELECT running_balance FROM financial_ledger WHERE partner_id = ? ORDER BY created_at DESC LIMIT 1), 0) - ?), ?)
       `, [`led-${Date.now()}`, payment.partner_id, payment.id, payment.amount_paid, payment.partner_id, payment.amount_paid, `Payment received UTR: ${payment.transaction_reference_utr || 'Direct'}`]);
             return res.json({ success: true, status: 'verified' });
         }
         else {
-            await run(`
+            await (0, localDb_1.run)(`
         UPDATE payments_received
         SET verified_status = 'rejected', rejection_remarks = ?, verified_at = CURRENT_TIMESTAMP
         WHERE id = ?
@@ -517,7 +517,7 @@ exports.apiRouter.post('/billing/payments/verify', async (req, res) => {
 // ==========================================
 exports.apiRouter.get('/courier/dispatches', async (_req, res) => {
     try {
-        const dispatches = await queryAll('SELECT * FROM courier_dispatches ORDER BY dispatched_at DESC');
+        const dispatches = await (0, localDb_1.queryAll)('SELECT * FROM courier_dispatches ORDER BY dispatched_at DESC');
         return res.json({ dispatches });
     }
     catch (err) {
@@ -529,7 +529,7 @@ exports.apiRouter.post('/courier/dispatches', async (req, res) => {
         const { carrier_name, awb_number, recipient_name, recipient_phone, shipping_address, package_contents } = req.body;
         const id = `disp-${Date.now()}`;
         const dispatch_number = `DSP-${Date.now().toString().slice(-6)}`;
-        await run(`
+        await (0, localDb_1.run)(`
       INSERT INTO courier_dispatches (id, dispatch_number, carrier_name, awb_number, recipient_name, recipient_phone, shipping_address, package_contents, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manifested')
     `, [id, dispatch_number, carrier_name, awb_number, recipient_name, recipient_phone, shipping_address, package_contents]);

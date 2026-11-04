@@ -28,7 +28,7 @@ async function startServer() {
   server.use('/api', apiRouter)
 
   // Next.js handles all other page rendering via Server-Side Rendering (SSR)
-  server.all('*', (req, res) => {
+  server.all('{*path}', (req, res) => {
     return handle(req, res)
   })
 
