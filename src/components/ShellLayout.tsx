@@ -232,7 +232,7 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-slate-950">
         {/* Top Header */}
-        <header className="h-14 border-b border-slate-800 px-6 flex items-center justify-between bg-slate-900/40 backdrop-blur-md shrink-0">
+        <header className="h-16 border-b border-slate-800 px-6 flex items-center justify-between bg-slate-900/40 backdrop-blur-md shrink-0">
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <Building2 className="w-3.5 h-3.5 text-slate-400" />
             <span>SignSync</span>
