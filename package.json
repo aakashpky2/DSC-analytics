@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "nodemon --watch src/server -e ts --exec ts-node --project tsconfig.server.json src/server/index.ts",
     "build:server": "tsc -p tsconfig.server.json",
-    "build:next": "next build",
+    "build:next": "next build --webpack",
     "build": "npm run build:server && npm run build:next",
     "start": "node server.js",
     "lint": "eslint"
