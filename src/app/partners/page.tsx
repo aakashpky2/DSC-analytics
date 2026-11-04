@@ -5,6 +5,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { Users2, Wallet, CreditCard, ShieldCheck, ArrowRight, Plus, Search } from 'lucide-react'
 import { AddPartnerModal } from '@/components/AddPartnerModal'
+import { EditPartnerModal } from '@/components/EditPartnerModal'
 import { Pagination } from '@/components/Pagination'
 import { PartnerRecord } from '@/types/models'
 import { UI_TERMS } from '@/lib/terms'
@@ -13,6 +14,7 @@ export default function PartnersPage() {
   const [partners, setPartners] = useState<PartnerRecord[]>([])
   const [search, setSearch] = useState('')
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const [editingPartner, setEditingPartner] = useState<any | null>(null)
   const [loading, setLoading] = useState(true)
 
   // Pagination states
@@ -188,12 +190,20 @@ export default function PartnersPage() {
                       </span>
                     </td>
                     <td className="p-3">
-                      <Link
-                        href={`/partners/${p.id}`}
-                        className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300 font-medium"
-                      >
-                        Partner Details <ArrowRight className="w-3 h-3" />
-                      </Link>
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href={`/partners/${p.id}`}
+                          className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300 font-medium"
+                        >
+                          Details <ArrowRight className="w-3 h-3" />
+                        </Link>
+                        <button
+                          onClick={() => setEditingPartner(p)}
+                          className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] transition cursor-pointer"
+                        >
+                          Edit
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -217,6 +227,16 @@ export default function PartnersPage() {
       <AddPartnerModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
+        onSuccess={() => {
+          loadPartners()
+          loadKpis()
+        }}
+      />
+
+      <EditPartnerModal
+        isOpen={Boolean(editingPartner)}
+        partner={editingPartner}
+        onClose={() => setEditingPartner(null)}
         onSuccess={() => {
           loadPartners()
           loadKpis()

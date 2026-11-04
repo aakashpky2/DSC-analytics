@@ -8,6 +8,7 @@ import { ArrowLeft, Plus, Trash2, CheckCircle2 } from 'lucide-react'
 export default function NewInvoicePage() {
   const [partners, setPartners] = useState<any[]>([])
   const [series, setSeries] = useState<any[]>([])
+  const [companyProfile, setCompanyProfile] = useState<any>(null)
   const [partnerId, setPartnerId] = useState('')
   const [seriesId, setSeriesId] = useState('')
   const [dueDays, setDueDays] = useState(30)
@@ -35,11 +36,19 @@ export default function NewInvoicePage() {
           setSeriesId(d.series[0].id)
         }
       })
+    fetch('/api/admin/settings/company')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.profile) {
+          setCompanyProfile(d.profile)
+        }
+      })
   }, [])
 
   const subtotal = items.reduce((acc, curr) => acc + curr.qty * curr.rate, 0)
   const selectedPartner = partners.find((p) => p.id === partnerId)
-  const isInterstate = selectedPartner && selectedPartner.state_code !== '27'
+  const sellerStateCode = companyProfile?.state_code || '27'
+  const isInterstate = selectedPartner && selectedPartner.state_code !== sellerStateCode
   const cgst = isInterstate ? 0 : Number(((subtotal * 0.18) / 2).toFixed(2))
   const sgst = isInterstate ? 0 : Number(((subtotal * 0.18) / 2).toFixed(2))
   const igst = isInterstate ? Number((subtotal * 0.18).toFixed(2)) : 0

@@ -1546,6 +1546,8 @@ apiRouter.post('/courier/dispatches', async (req: Request, res: Response) => {
 apiRouter.get('/inventory/transfers/pdf', async (req: Request, res: Response) => {
   try {
     const challanNumber = (req.query.challan_number as string) || 'DC-2026-0001'
+    const profile = await queryOne<any>('SELECT * FROM company_profile LIMIT 1')
+
     const challans = await queryAll(`
       SELECT dc.*, 
              sb.branch_name as source_branch_name, sb.branch_code as source_branch_code, sb.city as source_city, sb.state_code as source_state,
@@ -1584,9 +1586,9 @@ apiRouter.get('/inventory/transfers/pdf', async (req: Request, res: Response) =>
         }
       ],
       companyDetails: {
-        legalName: 'SignSync Enterprise Solutions Pvt Ltd',
-        gstin: '27AAACS1234A1Z1',
-        registeredOffice: 'Express Towers, Nariman Point, Mumbai, Maharashtra 400021',
+        legalName: profile?.legal_name || 'SignSync Technologies Private Limited',
+        gstin: profile?.gstin || '27AAACS1234A1Z1',
+        registeredOffice: profile?.registered_address || 'Suite 401, Nariman Point, Mumbai, Maharashtra 400021',
       },
       authorizedBy: challan?.issued_by_name || 'Operations Manager',
       status: challan?.status || 'dispatched',
@@ -1595,6 +1597,185 @@ apiRouter.get('/inventory/transfers/pdf', async (req: Request, res: Response) =>
     }
 
     return res.json(doc)
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+// ==========================================
+// 10. Administrator Central Settings (Phase 2)
+// ==========================================
+
+// A. Company Profile Settings
+apiRouter.get('/admin/settings/company', async (_req: Request, res: Response) => {
+  try {
+    const profile = await queryOne('SELECT * FROM company_profile LIMIT 1')
+    return res.json({ profile })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+apiRouter.put('/admin/settings/company', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { legal_name, trade_name, gstin, pan, email, phone, registered_address, state_code, state_name } = req.body
+    if (!legal_name || !gstin || !state_code) {
+      return res.status(400).json({ error: 'Legal name, GSTIN, and default state are required.' })
+    }
+
+    await run(`
+      UPDATE company_profile
+      SET legal_name = ?,
+          trade_name = ?,
+          gstin = ?,
+          pan = ?,
+          email = ?,
+          phone = ?,
+          registered_address = ?,
+          state_code = ?,
+          state_name = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = (SELECT id FROM company_profile LIMIT 1)
+    `, [legal_name, trade_name, gstin, pan, email, phone, registered_address, state_code, state_name])
+
+    return res.json({ success: true, message: 'Company profile updated successfully.' })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+// B. Token Models Master
+apiRouter.get('/admin/settings/tokens', async (_req: Request, res: Response) => {
+  try {
+    const models = await queryAll('SELECT * FROM token_models ORDER BY model_name ASC')
+    return res.json({ models })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+apiRouter.post('/admin/settings/tokens', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { model_name, manufacturer, vendor_contact, min_threshold } = req.body
+    if (!model_name || !manufacturer) {
+      return res.status(400).json({ error: 'Model name and manufacturer are required.' })
+    }
+    const id = `tm-${Date.now()}`
+    await run(`
+      INSERT INTO token_models (id, model_name, manufacturer, vendor_contact, min_threshold, is_active)
+      VALUES (?, ?, ?, ?, ?, 1)
+    `, [id, model_name.trim().toUpperCase(), manufacturer.trim(), vendor_contact || null, Number(min_threshold) || 10])
+
+    return res.status(201).json({ success: true, id, message: 'Token model added successfully.' })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+// C. Courier Companies Master
+apiRouter.get('/admin/settings/couriers', async (_req: Request, res: Response) => {
+  try {
+    const couriers = await queryAll('SELECT * FROM courier_partners ORDER BY company_name ASC')
+    return res.json({ couriers })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+apiRouter.post('/admin/settings/couriers', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { company_name, tracking_url_template, support_phone } = req.body
+    if (!company_name) return res.status(400).json({ error: 'Company name is required.' })
+    const id = `cp-${Date.now()}`
+    await run(`
+      INSERT INTO courier_partners (id, company_name, tracking_url_template, support_phone, is_active)
+      VALUES (?, ?, ?, ?, 1)
+    `, [id, company_name.trim(), tracking_url_template || null, support_phone || null])
+
+    return res.status(201).json({ success: true, id, message: 'Courier company added successfully.' })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+// D. Business Services Master
+apiRouter.get('/admin/settings/services', async (_req: Request, res: Response) => {
+  try {
+    const services = await queryAll('SELECT * FROM services_catalog ORDER BY category, service_name')
+    return res.json({ services })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+apiRouter.post('/admin/settings/services', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { service_key, service_name, category, government_fee, professional_fee } = req.body
+    if (!service_key || !service_name || !category) {
+      return res.status(400).json({ error: 'Service key, name, and category are required.' })
+    }
+    const id = `srv-${Date.now()}`
+    await run(`
+      INSERT INTO services_catalog (id, service_key, service_name, category, government_fee, professional_fee, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, 1)
+    `, [id, service_key.trim().toLowerCase(), service_name.trim(), category.trim(), Number(government_fee) || 0, Number(professional_fee) || 0])
+
+    return res.status(201).json({ success: true, id, message: 'Service catalog item added successfully.' })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+// E. Partner Edit API (Phase 3)
+apiRouter.put('/partners/:id', async (req: Request, res: Response) => {
+  try {
+    const {
+      company_name,
+      contact_person,
+      email,
+      phone,
+      gstin,
+      pan,
+      billing_address,
+      state_code,
+      credit_limit,
+      credit_period_days,
+      status,
+    } = req.body
+
+    const existing = await queryOne('SELECT * FROM partners WHERE id = ?', [req.params.id])
+    if (!existing) return res.status(404).json({ error: 'Partner not found' })
+
+    await run(`
+      UPDATE partners
+      SET company_name = COALESCE(?, company_name),
+          contact_person = COALESCE(?, contact_person),
+          email = COALESCE(?, email),
+          phone = COALESCE(?, phone),
+          gstin = COALESCE(?, gstin),
+          pan = COALESCE(?, pan),
+          billing_address = COALESCE(?, billing_address),
+          state_code = COALESCE(?, state_code),
+          credit_limit = COALESCE(?, credit_limit),
+          credit_period_days = COALESCE(?, credit_period_days),
+          status = COALESCE(?, status)
+      WHERE id = ?
+    `, [
+      company_name,
+      contact_person,
+      email,
+      phone,
+      gstin,
+      pan,
+      billing_address,
+      state_code,
+      credit_limit !== undefined ? Number(credit_limit) : null,
+      credit_period_days !== undefined ? Number(credit_period_days) : null,
+      status,
+      req.params.id,
+    ])
+
+    return res.json({ success: true, message: 'Partner details updated successfully.' })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }

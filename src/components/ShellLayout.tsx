@@ -57,6 +57,7 @@ const mainNavItems: NavItem[] = [
   { name: UI_TERMS.billingAccounts, href: '/billing/accounts', icon: Landmark },
   { name: UI_TERMS.courier, href: '/courier', icon: Truck },
   { name: UI_TERMS.users, href: '/admin/users', icon: ShieldCheck, minTier: 1 },
+  { name: 'Business Settings', href: '/admin/settings', icon: Building2, minTier: 1 },
 ]
 
 export default function ShellLayout({ children }: { children: React.ReactNode }) {
