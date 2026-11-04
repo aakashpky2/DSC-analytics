@@ -131,31 +131,31 @@ export default function BillingInvoicesPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+        <div className="overflow-x-auto no-scrollbar">
+          <table className="w-full text-left text-xs whitespace-nowrap">
             <thead>
               <tr className="text-slate-400 bg-slate-900/80 border-b border-slate-800">
-                <th className="p-3">Invoice Number</th>
-                <th className="p-3">Partner Company</th>
-                <th className="p-3">Date</th>
-                <th className="p-3">Payment Due</th>
-                <th className="p-3 text-right">Subtotal</th>
-                <th className="p-3 text-right">Total Tax (GST)</th>
-                <th className="p-3 text-right">Total Amount</th>
-                <th className="p-3 text-right font-semibold text-amber-400">Pending Amount</th>
-                <th className="p-3">Status</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Invoice Number</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Partner Company</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Date</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Payment Due</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Subtotal</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Total Tax (GST)</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Total Amount</th>
+                <th className="p-3 text-right font-semibold text-amber-400 whitespace-nowrap">Pending Amount</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               {loading && invoices.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="p-8 text-center text-slate-500">
+                  <td colSpan={9} className="p-8 text-center text-slate-500 whitespace-nowrap">
                     Loading invoices...
                   </td>
                 </tr>
               ) : invoices.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="p-8 text-center text-slate-500">
+                  <td colSpan={9} className="p-8 text-center text-slate-500 whitespace-nowrap">
                     No invoices found.
                   </td>
                 </tr>
@@ -163,19 +163,19 @@ export default function BillingInvoicesPage() {
                 invoices.map((inv: any) => {
                   const totalGst = (inv.cgst_amount || 0) + (inv.sgst_amount || 0) + (inv.igst_amount || 0)
                   return (
-                    <tr key={inv.id} className="hover:bg-slate-800/40">
-                      <td className="p-3 font-mono text-cyan-300 font-semibold">{inv.invoice_number}</td>
-                      <td className="p-3 font-medium text-white">{inv.partner_company}</td>
-                      <td className="p-3 text-slate-400 font-mono">{inv.invoice_date}</td>
-                      <td className="p-3 text-slate-400 font-mono">{inv.due_date}</td>
-                      <td className="p-3 text-right text-slate-300">₹{inv.subtotal?.toLocaleString('en-IN')}</td>
-                      <td className="p-3 text-right text-slate-400">₹{totalGst.toLocaleString('en-IN')}</td>
-                      <td className="p-3 text-right font-bold text-white">₹{inv.total_amount?.toLocaleString('en-IN')}</td>
-                      <td className="p-3 text-right font-bold text-amber-400">
+                    <tr key={inv.id} className="hover:bg-slate-800/40 h-12">
+                      <td className="p-3 font-mono text-cyan-300 font-semibold whitespace-nowrap">{inv.invoice_number}</td>
+                      <td className="p-3 font-medium text-white whitespace-nowrap">{inv.partner_company}</td>
+                      <td className="p-3 text-slate-400 font-mono whitespace-nowrap">{inv.invoice_date}</td>
+                      <td className="p-3 text-slate-400 font-mono whitespace-nowrap">{inv.due_date}</td>
+                      <td className="p-3 text-right text-slate-300 whitespace-nowrap">₹{inv.subtotal?.toLocaleString('en-IN')}</td>
+                      <td className="p-3 text-right text-slate-400 whitespace-nowrap">₹{totalGst.toLocaleString('en-IN')}</td>
+                      <td className="p-3 text-right font-bold text-white whitespace-nowrap">₹{inv.total_amount?.toLocaleString('en-IN')}</td>
+                      <td className="p-3 text-right font-bold text-amber-400 whitespace-nowrap">
                         ₹{inv.outstanding_balance?.toLocaleString('en-IN')}
                       </td>
-                      <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                      <td className="p-3 whitespace-nowrap">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap ${
                           inv.status === 'paid'
                             ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                             : 'bg-amber-500/10 text-amber-300 border border-amber-500/20'

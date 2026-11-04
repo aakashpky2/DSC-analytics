@@ -90,48 +90,48 @@ export default function InventoryTokensPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+        <div className="overflow-x-auto no-scrollbar">
+          <table className="w-full text-left text-xs whitespace-nowrap">
             <thead>
               <tr className="text-slate-400 bg-slate-900/80 border-b border-slate-800">
-                <th className="p-3">Batch Number</th>
-                <th className="p-3">Token Model</th>
-                <th className="p-3">Vendor</th>
-                <th className="p-3 text-right">Quantity</th>
-                <th className="p-3 text-right">Base Price</th>
-                <th className="p-3 text-right">Freight</th>
-                <th className="p-3 text-right">Customs/Tax</th>
-                <th className="p-3 text-right">Handling</th>
-                <th className="p-3 text-right font-bold text-white">Total Purchase Cost</th>
-                <th className="p-3 text-right font-bold text-cyan-400">Cost Per Token</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Batch Number</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Token Model</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Vendor</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Quantity</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Base Price</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Freight</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Customs/Tax</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Handling</th>
+                <th className="p-3 text-right font-bold text-white whitespace-nowrap">Total Purchase Cost</th>
+                <th className="p-3 text-right font-bold text-cyan-400 whitespace-nowrap">Cost Per Token</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               {loading && batches.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="p-6 text-center text-slate-500">
+                  <td colSpan={10} className="p-6 text-center text-slate-500 whitespace-nowrap">
                     Loading batches...
                   </td>
                 </tr>
               ) : batches.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="p-6 text-center text-slate-500">
+                  <td colSpan={10} className="p-6 text-center text-slate-500 whitespace-nowrap">
                     No purchase batches found.
                   </td>
                 </tr>
               ) : (
                 batches.map((b) => (
-                  <tr key={b.id} className="hover:bg-slate-800/40">
-                    <td className="p-3 font-mono text-cyan-300 font-semibold">{b.batch_number}</td>
-                    <td className="p-3 text-white uppercase">{b.token_model.replace('_', ' ')}</td>
-                    <td className="p-3 text-slate-300">{b.vendor_name}</td>
-                    <td className="p-3 text-right font-semibold text-white">{b.quantity_purchased}</td>
-                    <td className="p-3 text-right text-slate-400">₹{b.base_unit_price?.toFixed(2)}</td>
-                    <td className="p-3 text-right text-slate-400">₹{b.inward_shipping_cost?.toFixed(2)}</td>
-                    <td className="p-3 text-right text-slate-400">₹{b.customs_or_taxes?.toFixed(2)}</td>
-                    <td className="p-3 text-right text-slate-400">₹{b.handling_charges?.toFixed(2)}</td>
-                    <td className="p-3 text-right font-bold text-white">₹{b.total_landed_cost?.toLocaleString('en-IN')}</td>
-                    <td className="p-3 text-right font-bold text-cyan-400 bg-cyan-950/20">
+                  <tr key={b.id} className="hover:bg-slate-800/40 h-12">
+                    <td className="p-3 font-mono text-cyan-300 font-semibold whitespace-nowrap">{b.batch_number}</td>
+                    <td className="p-3 text-white uppercase whitespace-nowrap">{b.token_model.replace('_', ' ')}</td>
+                    <td className="p-3 text-slate-300 whitespace-nowrap">{b.vendor_name}</td>
+                    <td className="p-3 text-right font-semibold text-white whitespace-nowrap">{b.quantity_purchased}</td>
+                    <td className="p-3 text-right text-slate-400 whitespace-nowrap">₹{b.base_unit_price?.toFixed(2)}</td>
+                    <td className="p-3 text-right text-slate-400 whitespace-nowrap">₹{b.inward_shipping_cost?.toFixed(2)}</td>
+                    <td className="p-3 text-right text-slate-400 whitespace-nowrap">₹{b.customs_or_taxes?.toFixed(2)}</td>
+                    <td className="p-3 text-right text-slate-400 whitespace-nowrap">₹{b.handling_charges?.toFixed(2)}</td>
+                    <td className="p-3 text-right font-bold text-white whitespace-nowrap">₹{b.total_landed_cost?.toLocaleString('en-IN')}</td>
+                    <td className="p-3 text-right font-bold text-cyan-400 bg-cyan-950/20 whitespace-nowrap">
                       ₹{b.unit_landed_cost?.toFixed(2)}
                     </td>
                   </tr>
@@ -159,34 +159,34 @@ export default function InventoryTokensPage() {
           <div className="text-xs font-semibold text-white">Stock in Branch & Damaged Token Quarantine ({stock.length})</div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+        <div className="overflow-x-auto no-scrollbar">
+          <table className="w-full text-left text-xs whitespace-nowrap">
             <thead>
               <tr className="text-slate-400 bg-slate-900/80 border-b border-slate-800">
-                <th className="p-3">Branch Location</th>
-                <th className="p-3">Branch Code</th>
-                <th className="p-3">Token Model</th>
-                <th className="p-3 text-right">Available in Stock</th>
-                <th className="p-3 text-right">Damaged Stock</th>
-                <th className="p-3 text-right">Low Stock Alert Level</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Branch Location</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Branch Code</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Token Model</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Available in Stock</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Damaged Stock</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Low Stock Alert Level</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               {paginatedStock.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-6 text-center text-slate-500">
+                  <td colSpan={6} className="p-6 text-center text-slate-500 whitespace-nowrap">
                     No branch stock records.
                   </td>
                 </tr>
               ) : (
                 paginatedStock.map((s) => (
-                  <tr key={s.id} className="hover:bg-slate-800/40">
-                    <td className="p-3 font-semibold text-white">{s.branch_name}</td>
-                    <td className="p-3 font-mono text-indigo-300">{s.branch_code}</td>
-                    <td className="p-3 text-slate-200 uppercase">{s.token_model.replace('_', ' ')}</td>
-                    <td className="p-3 text-right font-bold text-emerald-400">{s.quantity_on_hand}</td>
-                    <td className="p-3 text-right text-red-400">{s.quarantine_damaged}</td>
-                    <td className="p-3 text-right text-slate-400">{s.min_threshold}</td>
+                  <tr key={s.id} className="hover:bg-slate-800/40 h-12">
+                    <td className="p-3 font-semibold text-white whitespace-nowrap">{s.branch_name}</td>
+                    <td className="p-3 font-mono text-indigo-300 whitespace-nowrap">{s.branch_code}</td>
+                    <td className="p-3 text-slate-200 uppercase whitespace-nowrap">{s.token_model.replace('_', ' ')}</td>
+                    <td className="p-3 text-right font-bold text-emerald-400 whitespace-nowrap">{s.quantity_on_hand}</td>
+                    <td className="p-3 text-right text-red-400 whitespace-nowrap">{s.quarantine_damaged}</td>
+                    <td className="p-3 text-right text-slate-400 whitespace-nowrap">{s.min_threshold}</td>
                   </tr>
                 ))
               )}

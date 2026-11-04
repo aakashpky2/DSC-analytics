@@ -122,46 +122,46 @@ export default function CourierPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+        <div className="overflow-x-auto no-scrollbar">
+          <table className="w-full text-left text-xs whitespace-nowrap">
             <thead>
               <tr className="text-slate-400 bg-slate-900/80 border-b border-slate-800">
-                <th className="p-3">Dispatch #</th>
-                <th className="p-3">Courier Partner</th>
-                <th className="p-3">Tracking Number</th>
-                <th className="p-3">Recipient & Phone</th>
-                <th className="p-3">Package Contents</th>
-                <th className="p-3">Dispatched Date</th>
-                <th className="p-3">Status</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Dispatch #</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Courier Partner</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Tracking Number</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Recipient & Phone</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Package Contents</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Dispatched Date</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-slate-500">
+                  <td colSpan={7} className="p-8 text-center text-slate-500 whitespace-nowrap">
                     Loading dispatches...
                   </td>
                 </tr>
               ) : dispatches.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-slate-500">
+                  <td colSpan={7} className="p-8 text-center text-slate-500 whitespace-nowrap">
                     No active dispatches. Click Book Courier Waybill to record a shipment.
                   </td>
                 </tr>
               ) : (
                 dispatches.map((d: any) => (
-                  <tr key={d.id} className="hover:bg-slate-800/40">
-                    <td className="p-3 font-mono text-cyan-300 font-semibold">{d.dispatch_number}</td>
-                    <td className="p-3 font-semibold text-white">{d.carrier_name}</td>
-                    <td className="p-3 font-mono text-indigo-300">{d.awb_number}</td>
-                    <td className="p-3">
+                  <tr key={d.id} className="hover:bg-slate-800/40 h-12">
+                    <td className="p-3 font-mono text-cyan-300 font-semibold whitespace-nowrap">{d.dispatch_number}</td>
+                    <td className="p-3 font-semibold text-white whitespace-nowrap">{d.carrier_name}</td>
+                    <td className="p-3 font-mono text-indigo-300 whitespace-nowrap">{d.awb_number}</td>
+                    <td className="p-3 whitespace-nowrap">
                       <div className="text-slate-200">{d.recipient_name}</div>
                       <div className="text-[11px] text-slate-400">{d.recipient_phone}</div>
                     </td>
-                    <td className="p-3 text-slate-300">{d.package_contents}</td>
-                    <td className="p-3 text-slate-400 font-mono">{d.dispatched_at?.split('T')[0] || d.dispatched_at}</td>
-                    <td className="p-3">
-                      <span className="px-2 py-0.5 rounded-full text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 capitalize">
+                    <td className="p-3 text-slate-300 whitespace-nowrap">{d.package_contents}</td>
+                    <td className="p-3 text-slate-400 font-mono whitespace-nowrap">{d.dispatched_at?.split('T')[0] || d.dispatched_at}</td>
+                    <td className="p-3 whitespace-nowrap">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 capitalize whitespace-nowrap">
                         {d.status === 'manifested' ? 'Booked & Manifested' : d.status}
                       </span>
                     </td>

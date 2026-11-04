@@ -7,10 +7,12 @@
  * - Sub-permission cap (Cannot grant permissions you do not hold)
  * - Super Admin Freeze Guard (permissions_frozen = 1)
  * - Effective Permission = User Override ?? Role Matrix ?? FALSE
+ * - Temporary Delegations resolution (active time window, cascading validity)
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.validateDelegationAuthority = validateDelegationAuthority;
 exports.validateSubPermissionCap = validateSubPermissionCap;
+exports.isDelegationValid = isDelegationValid;
 exports.resolveEffectivePermission = resolveEffectivePermission;
 /**
  * Validates whether user A can delegate or modify permissions of user B.
@@ -55,15 +57,36 @@ function validateSubPermissionCap(granterPermissions, requestedGrant, isSuperAdm
     return { allowed: true };
 }
 /**
- * Resolve effective permissions given role permissions and optional user override.
+ * Checks if a temporary delegation is currently active and valid.
  */
-function resolveEffectivePermission(rolePerm, userOverride) {
+function isDelegationValid(delegation, nowDate = new Date()) {
+    if (delegation.status !== 'active')
+        return false;
+    const from = new Date(delegation.valid_from).getTime();
+    const until = new Date(delegation.valid_until).getTime();
+    const now = nowDate.getTime();
+    return now >= from && now <= until;
+}
+/**
+ * Resolve effective permissions given role permissions, optional user override,
+ * and any active temporary delegations.
+ */
+function resolveEffectivePermission(rolePerm, userOverride, activeDelegations = []) {
     const getVal = (key, defaultVal = false) => {
+        // 1. User individual override has top priority
         if (userOverride && userOverride[key] !== undefined && userOverride[key] !== null) {
             return Boolean(userOverride[key]);
         }
+        // 2. Base role permission
         if (rolePerm && rolePerm[key] !== undefined && rolePerm[key] !== null) {
-            return Boolean(rolePerm[key]);
+            if (Boolean(rolePerm[key]))
+                return true;
+        }
+        // 3. Active temporary delegation grant
+        for (const del of activeDelegations) {
+            if (del.action_key === 'all' || del.action_key === key) {
+                return true;
+            }
         }
         return defaultVal;
     };

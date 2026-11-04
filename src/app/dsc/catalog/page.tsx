@@ -140,30 +140,30 @@ export default function DscCatalogPage() {
           <div className="text-xs font-semibold text-white">Active Product Prices ({catalog.length})</div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+        <div className="overflow-x-auto no-scrollbar">
+          <table className="w-full text-left text-xs whitespace-nowrap">
             <thead>
               <tr className="text-slate-400 bg-slate-900/80 border-b border-slate-800">
-                <th className="p-3">Class Type</th>
-                <th className="p-3">Certificate Type</th>
-                <th className="p-3">Validity</th>
-                <th className="p-3 text-right">Base Cost</th>
-                <th className="p-3 text-right">Partner Price</th>
-                <th className="p-3 text-right">Retail MRP</th>
-                <th className="p-3 text-right">Profit / Unit</th>
-                <th className="p-3 text-right">Actions</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Class Type</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Certificate Type</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Validity</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Base Cost</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Partner Price</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Retail MRP</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Profit / Unit</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="p-6 text-center text-slate-500">
+                  <td colSpan={8} className="p-6 text-center text-slate-500 whitespace-nowrap">
                     Loading pricing catalog...
                   </td>
                 </tr>
               ) : catalog.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-6 text-center text-slate-500">
+                  <td colSpan={8} className="p-6 text-center text-slate-500 whitespace-nowrap">
                     No products found in catalog.
                   </td>
                 </tr>
@@ -171,28 +171,28 @@ export default function DscCatalogPage() {
                 catalog.map((c: any) => {
                   const margin = c.partner_price - c.vendor_base_price
                   return (
-                    <tr key={c.id} className="hover:bg-slate-800/40">
-                      <td className="p-3 font-semibold text-white capitalize">
+                    <tr key={c.id} className="hover:bg-slate-800/40 h-12">
+                      <td className="p-3 font-semibold text-white capitalize whitespace-nowrap">
                         {c.class_type.replace(/_/g, ' ')}
                       </td>
-                      <td className="p-3 text-slate-300 capitalize">
+                      <td className="p-3 text-slate-300 capitalize whitespace-nowrap">
                         {c.certificate_type.replace(/_/g, ' ')}
                       </td>
-                      <td className="p-3">
-                        <span className="px-2 py-0.5 rounded bg-slate-800 text-cyan-300 font-mono text-[11px] border border-slate-700">
+                      <td className="p-3 whitespace-nowrap">
+                        <span className="px-2 py-0.5 rounded bg-slate-800 text-cyan-300 font-mono text-[11px] border border-slate-700 whitespace-nowrap">
                           {c.validity_years.replace('_', ' ')}
                         </span>
                       </td>
-                      <td className="p-3 text-right text-slate-400">₹{c.vendor_base_price?.toFixed(2)}</td>
-                      <td className="p-3 text-right text-indigo-400 font-semibold">₹{c.partner_price?.toFixed(2)}</td>
-                      <td className="p-3 text-right text-slate-200">₹{c.mrp?.toFixed(2)}</td>
-                      <td className="p-3 text-right text-emerald-400 font-bold">
+                      <td className="p-3 text-right text-slate-400 whitespace-nowrap">₹{c.vendor_base_price?.toFixed(2)}</td>
+                      <td className="p-3 text-right text-indigo-400 font-semibold whitespace-nowrap">₹{c.partner_price?.toFixed(2)}</td>
+                      <td className="p-3 text-right text-slate-200 whitespace-nowrap">₹{c.mrp?.toFixed(2)}</td>
+                      <td className="p-3 text-right text-emerald-400 font-bold whitespace-nowrap">
                         +₹{margin.toFixed(2)}
                       </td>
-                      <td className="p-3 text-right">
+                      <td className="p-3 text-right whitespace-nowrap">
                         <button
                           onClick={() => handleOpenEdit(c)}
-                          className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] inline-flex items-center gap-1 transition cursor-pointer"
+                          className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] inline-flex items-center gap-1 transition cursor-pointer whitespace-nowrap"
                         >
                           <Edit2 className="w-2.5 h-2.5" /> Edit Price
                         </button>

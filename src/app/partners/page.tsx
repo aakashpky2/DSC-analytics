@@ -141,65 +141,65 @@ export default function PartnersPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+        <div className="overflow-x-auto no-scrollbar">
+          <table className="w-full text-left text-xs whitespace-nowrap">
             <thead>
               <tr className="text-slate-400 bg-slate-900/80 border-b border-slate-800">
-                <th className="p-3">Partner Code</th>
-                <th className="p-3">Company & Contact</th>
-                <th className="p-3">Partner Type</th>
-                <th className="p-3 text-right">Credit Limit</th>
-                <th className="p-3">Payment Term</th>
-                <th className="p-3 text-right">Wallet Balance</th>
-                <th className="p-3">Documents</th>
-                <th className="p-3">Actions</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Partner Code</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Company & Contact</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Partner Type</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Credit Limit</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Payment Term</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Wallet Balance</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Documents</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               {loading && partners.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-slate-400">
+                  <td colSpan={8} className="p-8 text-center text-slate-400 whitespace-nowrap">
                     Loading partners...
                   </td>
                 </tr>
               ) : partners.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-slate-500">
+                  <td colSpan={8} className="p-8 text-center text-slate-500 whitespace-nowrap">
                     No partners found matching your search.
                   </td>
                 </tr>
               ) : (
                 partners.map((p) => (
-                  <tr key={p.id} className="hover:bg-slate-800/40">
-                    <td className="p-3 font-mono text-indigo-400 font-semibold">{p.partner_code}</td>
-                    <td className="p-3">
+                  <tr key={p.id} className="hover:bg-slate-800/40 h-12">
+                    <td className="p-3 font-mono text-indigo-400 font-semibold whitespace-nowrap">{p.partner_code}</td>
+                    <td className="p-3 whitespace-nowrap">
                       <div className="font-semibold text-white">{p.company_name}</div>
                       <div className="text-[11px] text-slate-400">{p.contact_person} &bull; {p.phone}</div>
                     </td>
-                    <td className="p-3">
-                      <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 capitalize">
+                    <td className="p-3 whitespace-nowrap">
+                      <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 capitalize whitespace-nowrap">
                         {p.type.replace('_', ' ')}
                       </span>
                     </td>
-                    <td className="p-3 text-right text-slate-200 font-medium">₹{p.credit_limit?.toLocaleString('en-IN')}</td>
-                    <td className="p-3 text-slate-400">Net-{p.credit_period_days} Days</td>
-                    <td className="p-3 text-right text-emerald-400 font-semibold">₹{p.wallet_balance?.toLocaleString('en-IN')}</td>
-                    <td className="p-3">
-                      <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400">
+                    <td className="p-3 text-right text-slate-200 font-medium whitespace-nowrap">₹{p.credit_limit?.toLocaleString('en-IN')}</td>
+                    <td className="p-3 text-slate-400 whitespace-nowrap">Net-{p.credit_period_days} Days</td>
+                    <td className="p-3 text-right text-emerald-400 font-semibold whitespace-nowrap">₹{p.wallet_balance?.toLocaleString('en-IN')}</td>
+                    <td className="p-3 whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 whitespace-nowrap">
                         <ShieldCheck className="w-3.5 h-3.5" /> Verified
                       </span>
                     </td>
-                    <td className="p-3">
-                      <div className="flex items-center gap-2">
+                    <td className="p-3 whitespace-nowrap">
+                      <div className="flex items-center gap-2 whitespace-nowrap">
                         <Link
                           href={`/partners/${p.id}`}
-                          className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300 font-medium"
+                          className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300 font-medium whitespace-nowrap"
                         >
                           Details <ArrowRight className="w-3 h-3" />
                         </Link>
                         <button
                           onClick={() => setEditingPartner(p)}
-                          className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] transition cursor-pointer"
+                          className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] transition cursor-pointer whitespace-nowrap"
                         >
                           Edit
                         </button>

@@ -106,50 +106,50 @@ export default function CrmLeadsPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+        <div className="overflow-x-auto no-scrollbar">
+          <table className="w-full text-left text-xs whitespace-nowrap">
             <thead>
               <tr className="text-slate-400 bg-slate-900/80 border-b border-slate-800">
-                <th className="p-3">Customer Code</th>
-                <th className="p-3">Company Name</th>
-                <th className="p-3">Contact Details</th>
-                <th className="p-3">GSTIN</th>
-                <th className="p-3">Requirement</th>
-                <th className="p-3">Lead Status</th>
-                <th className="p-3">Status</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Customer Code</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Company Name</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Contact Details</th>
+                <th className="p-3 font-semibold whitespace-nowrap">GSTIN</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Requirement</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Lead Status</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               {loading && leads.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-6 text-center text-slate-500">
+                  <td colSpan={7} className="p-6 text-center text-slate-500 whitespace-nowrap">
                     Loading customer leads...
                   </td>
                 </tr>
               ) : leads.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-slate-500">
+                  <td colSpan={7} className="p-8 text-center text-slate-500 whitespace-nowrap">
                     No customer leads found matching your search.
                   </td>
                 </tr>
               ) : (
                 leads.map((l) => (
-                  <tr key={l.id} className="hover:bg-slate-800/40">
-                    <td className="p-3 font-mono text-purple-300 font-semibold">{l.lead_code}</td>
-                    <td className="p-3 font-medium text-white">{l.company_name}</td>
-                    <td className="p-3">
+                  <tr key={l.id} className="hover:bg-slate-800/40 h-12">
+                    <td className="p-3 font-mono text-purple-300 font-semibold whitespace-nowrap">{l.lead_code}</td>
+                    <td className="p-3 font-medium text-white whitespace-nowrap">{l.company_name}</td>
+                    <td className="p-3 whitespace-nowrap">
                       <div className="text-slate-200">{l.contact_person}</div>
                       <div className="text-[11px] text-slate-400">{l.phone} &bull; {l.email}</div>
                     </td>
-                    <td className="p-3 font-mono text-slate-300">{l.gstin || 'N/A'}</td>
-                    <td className="p-3 text-slate-400 max-w-xs truncate">{l.requirement_summary}</td>
-                    <td className="p-3">
-                      <span className="px-2 py-0.5 rounded-full text-[10px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 capitalize">
+                    <td className="p-3 font-mono text-slate-300 whitespace-nowrap">{l.gstin || 'N/A'}</td>
+                    <td className="p-3 text-slate-400 max-w-xs truncate whitespace-nowrap" title={l.requirement_summary}>{l.requirement_summary}</td>
+                    <td className="p-3 whitespace-nowrap">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 capitalize whitespace-nowrap">
                         {l.status}
                       </span>
                     </td>
-                    <td className="p-3">
-                      <span className="text-[11px] text-emerald-400 flex items-center gap-1 font-medium">
+                    <td className="p-3 whitespace-nowrap">
+                      <span className="text-[11px] text-emerald-400 flex items-center gap-1 font-medium whitespace-nowrap">
                         <UserCheck className="w-3.5 h-3.5" /> Primary Record
                       </span>
                     </td>

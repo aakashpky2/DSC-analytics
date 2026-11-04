@@ -6,11 +6,12 @@
  * - Sub-permission cap (Cannot grant permissions you do not hold)
  * - Super Admin Freeze Guard (permissions_frozen = 1)
  * - Effective Permission = User Override ?? Role Matrix ?? FALSE
+ * - Temporary Delegations resolution (active time window, cascading validity)
  */
 
 export interface HierarchyLevel {
   id: string
-  level_order: number // 0, 1, 2, 3, 4
+  level_order: number // 0: Super Admin, 1: Partner Admin, 2: Manager, 3: Staff, 4: Field
   level_name: string
   can_delegate_default: number
 }
@@ -22,6 +23,22 @@ export interface PermissionSet {
   can_delete: boolean
   can_export: boolean
   mask_pii_fields: boolean
+}
+
+export interface TemporaryDelegationRecord {
+  id: string
+  grantor_user_id: string
+  recipient_user_id: string
+  module_key: string
+  action_key: string // e.g., 'can_create', 'can_edit', 'verify_payment', 'all'
+  branch_id?: string | null
+  valid_from: string
+  valid_until: string
+  reason: string
+  can_delegate_further: number
+  parent_delegation_id?: string | null
+  status: 'active' | 'revoked' | 'expired'
+  created_at: string
 }
 
 export interface UserProfileWithPermissions {
@@ -93,18 +110,42 @@ export function validateSubPermissionCap(
 }
 
 /**
- * Resolve effective permissions given role permissions and optional user override.
+ * Checks if a temporary delegation is currently active and valid.
+ */
+export function isDelegationValid(
+  delegation: TemporaryDelegationRecord,
+  nowDate: Date = new Date()
+): boolean {
+  if (delegation.status !== 'active') return false
+  const from = new Date(delegation.valid_from).getTime()
+  const until = new Date(delegation.valid_until).getTime()
+  const now = nowDate.getTime()
+  return now >= from && now <= until
+}
+
+/**
+ * Resolve effective permissions given role permissions, optional user override,
+ * and any active temporary delegations.
  */
 export function resolveEffectivePermission(
   rolePerm?: Partial<PermissionSet> | null,
-  userOverride?: Partial<PermissionSet> | null
+  userOverride?: Partial<PermissionSet> | null,
+  activeDelegations: TemporaryDelegationRecord[] = []
 ): PermissionSet {
   const getVal = (key: keyof PermissionSet, defaultVal: boolean = false): boolean => {
+    // 1. User individual override has top priority
     if (userOverride && userOverride[key] !== undefined && userOverride[key] !== null) {
       return Boolean(userOverride[key])
     }
+    // 2. Base role permission
     if (rolePerm && rolePerm[key] !== undefined && rolePerm[key] !== null) {
-      return Boolean(rolePerm[key])
+      if (Boolean(rolePerm[key])) return true
+    }
+    // 3. Active temporary delegation grant
+    for (const del of activeDelegations) {
+      if (del.action_key === 'all' || del.action_key === key) {
+        return true
+      }
     }
     return defaultVal
   }

@@ -148,72 +148,72 @@ export default function UsersPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+        <div className="overflow-x-auto no-scrollbar">
+          <table className="w-full text-left text-xs whitespace-nowrap">
             <thead>
               <tr className="text-slate-400 bg-slate-900/80 border-b border-slate-800">
-                <th className="p-3">Staff Name & Contact</th>
-                <th className="p-3">Assigned Role</th>
-                <th className="p-3">Role Tier</th>
-                <th className="p-3">Can Grant Access</th>
-                <th className="p-3">Access State</th>
-                <th className="p-3">Account Status</th>
-                <th className="p-3 text-right">Actions</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Staff Name & Contact</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Assigned Role</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Role Tier</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Can Grant Access</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Access State</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Account Status</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="p-6 text-center text-slate-500 text-xs">
+                  <td colSpan={7} className="p-6 text-center text-slate-500 text-xs whitespace-nowrap">
                     Loading staff members...
                   </td>
                 </tr>
               ) : users.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-6 text-center text-slate-500 text-xs">
+                  <td colSpan={7} className="p-6 text-center text-slate-500 text-xs whitespace-nowrap">
                     No staff records found.
                   </td>
                 </tr>
               ) : (
                 users.map((u: any) => (
-                  <tr key={u.id} className="hover:bg-slate-800/40">
-                    <td className="p-3">
+                  <tr key={u.id} className="hover:bg-slate-800/40 h-12">
+                    <td className="p-3 whitespace-nowrap">
                       <div className="font-semibold text-white">{u.full_name}</div>
                       <div className="text-[11px] text-slate-400 font-mono">{u.email}</div>
                     </td>
-                    <td className="p-3">
-                      <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                    <td className="p-3 whitespace-nowrap">
+                      <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
                         {u.role_name || 'Staff Member'}
                       </span>
                     </td>
-                    <td className="p-3">
-                      <span className="text-indigo-300 font-medium">
+                    <td className="p-3 whitespace-nowrap">
+                      <span className="text-indigo-300 font-medium whitespace-nowrap">
                         {u.level_name || `Tier ${u.level_order}`}
                       </span>
                     </td>
-                    <td className="p-3">
+                    <td className="p-3 whitespace-nowrap">
                       {u.can_grant_permissions ? (
-                        <span className="text-emerald-400 flex items-center gap-1 font-medium">
+                        <span className="text-emerald-400 flex items-center gap-1 font-medium whitespace-nowrap">
                           <UserCheck className="w-3.5 h-3.5" /> Allowed
                         </span>
                       ) : (
-                        <span className="text-slate-500 font-medium">Standard</span>
+                        <span className="text-slate-500 font-medium whitespace-nowrap">Standard</span>
                       )}
                     </td>
-                    <td className="p-3">
+                    <td className="p-3 whitespace-nowrap">
                       {u.permissions_frozen ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-red-500/20 text-red-300 font-mono text-[10px] border border-red-500/30">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-red-500/20 text-red-300 font-mono text-[10px] border border-red-500/30 whitespace-nowrap">
                           <Lock className="w-3 h-3" /> Locked
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono text-[10px]">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono text-[10px] whitespace-nowrap">
                           <Unlock className="w-3 h-3" /> Active
                         </span>
                       )}
                     </td>
-                    <td className="p-3">
+                    <td className="p-3 whitespace-nowrap">
                       <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] border capitalize ${
+                        className={`px-2 py-0.5 rounded-full text-[10px] border capitalize whitespace-nowrap ${
                           u.status === 'active'
                             ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                             : 'bg-red-500/10 text-red-400 border-red-500/20'

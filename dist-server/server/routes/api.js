@@ -4,6 +4,7 @@ exports.apiRouter = void 0;
 const express_1 = require("express");
 const localDb_1 = require("../localDb");
 const businessLogic_1 = require("../../lib/businessLogic");
+const numberingEngine_1 = require("../../lib/numberingEngine");
 const masking_1 = require("../../lib/masking");
 const pagination_1 = require("../pagination");
 const auth_1 = require("../auth");
@@ -67,10 +68,124 @@ function requireAdmin(req, res, next) {
     if (!user) {
         return res.status(401).json({ error: 'Please enter your email and password to sign in.' });
     }
+    if (user.status !== 'active') {
+        return res.status(403).json({ error: 'Your account is inactive. Please contact your administrator.' });
+    }
+    if (user.permissions_frozen) {
+        return res.status(403).json({ error: 'Your account access has been temporarily paused by an administrator.' });
+    }
     if (user.hierarchy_level_order > 1) {
         return res.status(403).json({ error: 'You do not have permission to open this page.' });
     }
     next();
+}
+/**
+ * Granular Permission Guard: Checks module-level CRUD or specific action permission,
+ * resolving role matrix, user overrides, and valid temporary delegations.
+ */
+function requirePermission(moduleKey, actionKey) {
+    return async (req, res, next) => {
+        const user = req.user;
+        if (!user) {
+            return res.status(401).json({ error: 'Authentication required.' });
+        }
+        if (user.status !== 'active') {
+            return res.status(403).json({ error: 'Account is inactive.' });
+        }
+        if (user.permissions_frozen) {
+            return res.status(403).json({ error: 'Account permissions are frozen by administrator.' });
+        }
+        // Super Admin (Level 0) has root authority across all modules and actions
+        if (user.hierarchy_level_order === 0) {
+            return next();
+        }
+        try {
+            // 1. Check user direct override
+            const override = await (0, localDb_1.queryOne)('SELECT * FROM user_permission_overrides WHERE user_id = ? AND module_id = (SELECT id FROM app_modules WHERE module_key = ?)', [user.id, moduleKey]);
+            if (override && override[actionKey] !== null && override[actionKey] !== undefined) {
+                if (override[actionKey] === 1 || override[actionKey] === true) {
+                    return next();
+                }
+                else {
+                    return res.status(403).json({ error: `Permission denied: ${moduleKey}.${actionKey} is restricted for your account.` });
+                }
+            }
+            // 2. Check role matrix permission
+            const rolePerm = await (0, localDb_1.queryOne)('SELECT * FROM role_module_permissions WHERE role_id = ? AND module_id = (SELECT id FROM app_modules WHERE module_key = ?)', [user.role_id, moduleKey]);
+            if (rolePerm && (rolePerm[actionKey] === 1 || rolePerm[actionKey] === true)) {
+                return next();
+            }
+            // 3. Check active temporary delegations
+            const nowIso = new Date().toISOString();
+            const delegation = await (0, localDb_1.queryOne)(`
+        SELECT d.*, g.permissions_frozen as grantor_frozen, g.status as grantor_status
+        FROM temporary_delegations d
+        JOIN user_profiles g ON d.grantor_user_id = g.id
+        WHERE d.recipient_user_id = ?
+          AND d.module_key = ?
+          AND (d.action_key = ? OR d.action_key = 'all')
+          AND d.status = 'active'
+          AND d.valid_from <= ?
+          AND d.valid_until >= ?
+      `, [user.id, moduleKey, actionKey, nowIso, nowIso]);
+            if (delegation) {
+                if (delegation.grantor_frozen || delegation.grantor_status !== 'active') {
+                    return res.status(403).json({ error: 'Delegated permission is invalid because the grantor account is frozen or inactive.' });
+                }
+                ;
+                req.delegation = delegation;
+                return next();
+            }
+            // Deny access if not authorized
+            return res.status(403).json({
+                error: `Permission denied: You do not have '${actionKey}' authority on '${moduleKey}'.`,
+            });
+        }
+        catch (err) {
+            return res.status(500).json({ error: err.message });
+        }
+    };
+}
+/**
+ * Record administrative change in audit_logs
+ */
+async function logAuditEvent(params) {
+    try {
+        const id = `aud-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        await (0, localDb_1.run)(`
+      INSERT INTO audit_logs (id, user_id, action_type, module_key, table_affected, record_id, old_value_json, new_value_json, reason, delegation_id, ip_address)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+            id,
+            params.userId,
+            params.actionType,
+            params.moduleKey,
+            params.tableAffected,
+            params.recordId || null,
+            params.oldValueJson ? JSON.stringify(params.oldValueJson) : null,
+            params.newValueJson ? JSON.stringify(params.newValueJson) : null,
+            params.reason || null,
+            params.delegationId || null,
+            params.ipAddress || null,
+        ]);
+    }
+    catch (err) {
+        console.error('Audit log failure:', err);
+    }
+}
+/**
+ * Concurrency-Safe Document Reference Number Allocator
+ * Atomically increments counter and formats business reference string.
+ */
+async function allocateNextReferenceNumber(documentType, options) {
+    const config = await (0, localDb_1.queryOne)('SELECT * FROM numbering_series_configs WHERE document_type = ? AND is_active = 1 LIMIT 1', [documentType]);
+    if (!config) {
+        // Fallback safe timestamp reference
+        return `${documentType.toUpperCase().slice(0, 3)}-${Date.now().toString().slice(-6)}`;
+    }
+    const nextCounter = (config.current_counter || 1000) + 1;
+    await (0, localDb_1.run)('UPDATE numbering_series_configs SET current_counter = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [nextCounter, config.id]);
+    return (0, numberingEngine_1.formatReferenceNumber)(config, nextCounter, options);
 }
 // ==========================================
 // Authentication Endpoints (/api/auth/*)
@@ -284,7 +399,57 @@ exports.apiRouter.get('/admin/roles', requireAdmin, async (_req, res) => {
       ORDER BY h.level_order ASC
     `);
         const levels = await (0, localDb_1.queryAll)('SELECT * FROM hierarchy_levels ORDER BY level_order ASC');
-        return res.json({ roles, levels });
+        const modules = await (0, localDb_1.queryAll)('SELECT * FROM app_modules ORDER BY display_name ASC');
+        const rolePermissions = await (0, localDb_1.queryAll)('SELECT * FROM role_module_permissions');
+        return res.json({ roles, levels, modules, rolePermissions });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+// Update role matrix permissions
+exports.apiRouter.put('/admin/roles/:id/permissions', requireAdmin, async (req, res) => {
+    try {
+        const currentUser = req.user;
+        if (currentUser.hierarchy_level_order !== 0) {
+            return res.status(403).json({ error: 'Only the Super Admin (Level 0) can modify role permission matrices.' });
+        }
+        const roleId = req.params.id;
+        const { permissions = [] } = req.body; // Array of { module_id, can_view, can_create, can_edit, can_delete, can_export, mask_pii_fields }
+        for (const p of permissions) {
+            await (0, localDb_1.run)(`
+        INSERT INTO role_module_permissions (id, role_id, module_id, can_view, can_create, can_edit, can_delete, can_export, mask_pii_fields)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(role_id, module_id) DO UPDATE SET
+          can_view = excluded.can_view,
+          can_create = excluded.can_create,
+          can_edit = excluded.can_edit,
+          can_delete = excluded.can_delete,
+          can_export = excluded.can_export,
+          mask_pii_fields = excluded.mask_pii_fields
+      `, [
+                `rmp-${roleId}-${p.module_id}`,
+                roleId,
+                p.module_id,
+                p.can_view ? 1 : 0,
+                p.can_create ? 1 : 0,
+                p.can_edit ? 1 : 0,
+                p.can_delete ? 1 : 0,
+                p.can_export ? 1 : 0,
+                p.mask_pii_fields !== undefined ? (p.mask_pii_fields ? 1 : 0) : 1,
+            ]);
+        }
+        await logAuditEvent({
+            userId: currentUser.id,
+            actionType: 'UPDATE_ROLE_PERMISSIONS',
+            moduleKey: 'admin_users',
+            tableAffected: 'role_module_permissions',
+            recordId: Array.isArray(roleId) ? roleId[0] : roleId,
+            newValueJson: permissions,
+            reason: 'Role Matrix Policy Update',
+            ipAddress: req.ip,
+        });
+        return res.json({ success: true, message: 'Role permissions updated successfully.' });
     }
     catch (err) {
         return res.status(500).json({ error: err.message });
@@ -450,7 +615,7 @@ exports.apiRouter.post('/partners', async (req, res) => {
     try {
         const { type, company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit = 0, credit_period_days = 0, } = req.body;
         const id = `part-${Date.now()}`;
-        const partner_code = `PRT-${Date.now().toString().slice(-4)}`;
+        const partner_code = await allocateNextReferenceNumber('partner');
         await (0, localDb_1.run)(`
       INSERT INTO partners (id, partner_code, type, company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit, credit_period_days, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
@@ -526,6 +691,17 @@ exports.apiRouter.put('/dsc/catalog/:id', requireAdmin, async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
+exports.apiRouter.patch('/dsc/catalog/:id/deactivate', requireAdmin, async (req, res) => {
+    try {
+        const { is_active } = req.body;
+        const newStatus = is_active !== undefined ? (is_active ? 1 : 0) : 0;
+        await (0, localDb_1.run)('UPDATE dsc_catalog SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
+        return res.json({ success: true, is_active: Boolean(newStatus), message: `Product ${newStatus ? 'activated' : 'deactivated'}.` });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
 exports.apiRouter.get('/dsc/applications', async (req, res) => {
     try {
         const mask = req.query.mask === 'true';
@@ -587,7 +763,7 @@ exports.apiRouter.post('/dsc/applications', async (req, res) => {
     try {
         const { partner_id, catalog_id, applicant_name, applicant_email, applicant_phone, applicant_pan } = req.body;
         const id = `app-${Date.now()}`;
-        const application_number = `DSC-${Date.now().toString().slice(-6)}`;
+        const application_number = await allocateNextReferenceNumber('dsc_application');
         await (0, localDb_1.run)(`
       INSERT INTO dsc_applications (id, application_number, partner_id, catalog_id, applicant_name, applicant_email, applicant_phone, applicant_pan, stage)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'intake')
@@ -646,18 +822,25 @@ exports.apiRouter.get('/inventory/batches', async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.post('/inventory/batches', async (req, res) => {
+exports.apiRouter.post('/inventory/batches', requirePermission('inventory', 'can_create'), async (req, res) => {
     try {
+        const currentUser = req.user;
+        const delegation = req.delegation;
         const { token_model, vendor_name, quantity_purchased, base_unit_price, inward_shipping_cost = 0, customs_or_taxes = 0, handling_charges = 0, } = req.body;
+        const qty = Number(quantity_purchased);
+        const basePrice = Number(base_unit_price);
+        if (!token_model || !vendor_name || isNaN(qty) || qty <= 0 || isNaN(basePrice) || basePrice < 0) {
+            return res.status(400).json({ error: 'Valid token model, vendor name, quantity, and unit price are required.' });
+        }
         const calc = (0, businessLogic_1.calculateLandedCost)({
-            quantityPurchased: Number(quantity_purchased),
-            baseUnitPrice: Number(base_unit_price),
+            quantityPurchased: qty,
+            baseUnitPrice: basePrice,
             inwardShippingCost: Number(inward_shipping_cost),
             customsOrTaxes: Number(customs_or_taxes),
             handlingCharges: Number(handling_charges),
         });
         const id = `batch-${Date.now()}`;
-        const batch_number = `BAT-${Date.now().toString().slice(-6)}`;
+        const batch_number = await allocateNextReferenceNumber('token_batch');
         await (0, localDb_1.run)(`
       INSERT INTO token_purchase_batches (
         id, batch_number, token_model, vendor_name, quantity_purchased,
@@ -669,14 +852,33 @@ exports.apiRouter.post('/inventory/batches', async (req, res) => {
             batch_number,
             token_model,
             vendor_name,
-            quantity_purchased,
-            base_unit_price,
-            inward_shipping_cost,
-            customs_or_taxes,
-            handling_charges,
+            qty,
+            basePrice,
+            Number(inward_shipping_cost),
+            Number(customs_or_taxes),
+            Number(handling_charges),
             calc.totalBatchLandedCost,
             calc.unitLandedCost,
         ]);
+        // Update headquarters stock
+        const hqBranch = await (0, localDb_1.queryOne)('SELECT id FROM branches WHERE branch_code = ? LIMIT 1', ['HQ-MUM']);
+        const branchId = hqBranch ? hqBranch.id : 'branch-hq';
+        await (0, localDb_1.run)(`
+      INSERT INTO branch_token_stocks (id, branch_id, token_model, quantity_on_hand, quarantine_damaged, min_threshold)
+      VALUES (?, ?, ?, ?, 0, 25)
+      ON CONFLICT(branch_id, token_model) DO UPDATE SET
+      quantity_on_hand = quantity_on_hand + excluded.quantity_on_hand
+    `, [`stk-${Date.now()}`, branchId, token_model, qty]);
+        await logAuditEvent({
+            userId: currentUser.id,
+            actionType: 'PURCHASE_TOKEN_BATCH',
+            moduleKey: 'inventory',
+            tableAffected: 'token_purchase_batches',
+            recordId: id,
+            newValueJson: { batch_number, token_model, qty, total_landed_cost: calc.totalBatchLandedCost },
+            delegationId: delegation === null || delegation === void 0 ? void 0 : delegation.id,
+            ipAddress: req.ip,
+        });
         return res.status(201).json(Object.assign({ success: true, id, batch_number }, calc));
     }
     catch (err) {
@@ -723,6 +925,54 @@ exports.apiRouter.get('/inventory/branches', async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
+// Branch CRUD & Management
+exports.apiRouter.post('/admin/branches', requireAdmin, async (req, res) => {
+    try {
+        const { branch_name, branch_code, address, city, state_code } = req.body;
+        if (!branch_name || !branch_code || !city || !state_code) {
+            return res.status(400).json({ error: 'Branch name, code, city, and state code are required.' });
+        }
+        const id = `br-${Date.now()}`;
+        await (0, localDb_1.run)(`
+      INSERT INTO branches (id, branch_name, branch_code, address, city, state_code, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, 1)
+    `, [id, branch_name.trim(), branch_code.trim().toUpperCase(), address || '', city.trim(), state_code.trim()]);
+        return res.status(201).json({ success: true, id, message: 'Branch created successfully.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.put('/admin/branches/:id', requireAdmin, async (req, res) => {
+    try {
+        const { branch_name, branch_code, address, city, state_code, is_active } = req.body;
+        await (0, localDb_1.run)(`
+      UPDATE branches
+      SET branch_name = COALESCE(?, branch_name),
+          branch_code = COALESCE(?, branch_code),
+          address = COALESCE(?, address),
+          city = COALESCE(?, city),
+          state_code = COALESCE(?, state_code),
+          is_active = COALESCE(?, is_active)
+      WHERE id = ?
+    `, [branch_name, branch_code, address, city, state_code, is_active, req.params.id]);
+        return res.json({ success: true, message: 'Branch updated successfully.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.patch('/admin/branches/:id/deactivate', requireAdmin, async (req, res) => {
+    try {
+        const { is_active } = req.body;
+        const newStatus = is_active !== undefined ? (is_active ? 1 : 0) : 0;
+        await (0, localDb_1.run)('UPDATE branches SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
+        return res.json({ success: true, is_active: Boolean(newStatus), message: `Branch ${newStatus ? 'activated' : 'deactivated'}.` });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
 // Transfer History: List Delivery Challans / Notes
 exports.apiRouter.get('/inventory/transfers', async (req, res) => {
     try {
@@ -763,10 +1013,11 @@ exports.apiRouter.get('/inventory/transfers', async (req, res) => {
     }
 });
 // Create Delivery Challan / Inter-Branch Stock Transfer
-exports.apiRouter.post('/inventory/transfers', requireAuth, async (req, res) => {
+exports.apiRouter.post('/inventory/transfers', requirePermission('inventory', 'can_create'), async (req, res) => {
     try {
         const { source_branch_id, destination_branch_id, token_model, quantity, remarks, transfer_date } = req.body;
         const currentUser = req.user;
+        const delegation = req.delegation;
         if (!source_branch_id || !destination_branch_id || !token_model) {
             return res.status(400).json({ error: 'Source branch, destination branch, and token model are required.' });
         }
@@ -785,13 +1036,15 @@ exports.apiRouter.post('/inventory/transfers', requireAuth, async (req, res) => 
                 error: `Not enough stock available. Source branch has only ${available} usable tokens.`
             });
         }
+        // Snapshot company legal data at challan issue time
+        const company = await (0, localDb_1.queryOne)('SELECT * FROM company_profile LIMIT 1');
         const challanId = `dc-${Date.now()}`;
-        const challanNumber = `DC-2026-${Date.now().toString().slice(-5)}`;
+        const challanNumber = await allocateNextReferenceNumber('delivery_challan');
         const effectiveDate = transfer_date || new Date().toISOString().split('T')[0];
         // Atomically record transfer and deduct stock from source branch
         await (0, localDb_1.run)(`INSERT INTO delivery_challans (
-        id, challan_number, source_branch_id, destination_branch_id, token_model, quantity, purpose, issued_by, status, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'dispatched', ?)`, [challanId, challanNumber, source_branch_id, destination_branch_id, token_model, parsedQty, remarks || 'Inter-branch stock transfer', currentUser.id, effectiveDate]);
+        id, challan_number, source_branch_id, destination_branch_id, token_model, quantity, purpose, issued_by, status, created_at, company_snapshot
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'dispatched', ?, ?)`, [challanId, challanNumber, source_branch_id, destination_branch_id, token_model, parsedQty, remarks || 'Inter-branch stock transfer', currentUser.id, effectiveDate, company ? JSON.stringify(company) : null]);
         // Deduct stock from source branch
         await (0, localDb_1.run)('UPDATE branch_token_stocks SET quantity_on_hand = quantity_on_hand - ? WHERE branch_id = ? AND token_model = ?', [parsedQty, source_branch_id, token_model]);
         // Ensure destination branch stock row exists and record receipt or in-transit
@@ -800,6 +1053,16 @@ exports.apiRouter.post('/inventory/transfers', requireAuth, async (req, res) => 
             const newStockId = `stock-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
             await (0, localDb_1.run)('INSERT INTO branch_token_stocks (id, branch_id, token_model, quantity_on_hand, quarantine_damaged, min_threshold) VALUES (?, ?, ?, ?, 0, 10)', [newStockId, destination_branch_id, token_model, 0]);
         }
+        await logAuditEvent({
+            userId: currentUser.id,
+            actionType: 'DISPATCH_TRANSFER',
+            moduleKey: 'inventory',
+            tableAffected: 'delivery_challans',
+            recordId: challanId,
+            newValueJson: { challanNumber, source_branch_id, destination_branch_id, token_model, parsedQty },
+            delegationId: delegation === null || delegation === void 0 ? void 0 : delegation.id,
+            ipAddress: req.ip,
+        });
         return res.status(201).json({
             success: true,
             id: challanId,
@@ -829,6 +1092,67 @@ exports.apiRouter.patch('/inventory/transfers/:id/receive', requireAuth, async (
         // Mark challan received
         await (0, localDb_1.run)('UPDATE delivery_challans SET status = \'received\' WHERE id = ?', [challanId]);
         return res.json({ success: true, status: 'received', message: 'Stock received and credited to destination branch.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+// Stock Adjustment & Damaged Token Handling (Item 10)
+exports.apiRouter.post('/inventory/adjust', requireAdmin, async (req, res) => {
+    try {
+        const { branch_id, token_model, adjustment_type, quantity, reason } = req.body;
+        const currentUser = req.user;
+        if (!branch_id || !token_model || !adjustment_type || quantity === undefined) {
+            return res.status(400).json({ error: 'Branch, token model, adjustment type, and quantity are required.' });
+        }
+        const qty = parseInt(quantity, 10);
+        if (isNaN(qty) || qty <= 0) {
+            return res.status(400).json({ error: 'Quantity must be a positive integer.' });
+        }
+        // Ensure branch stock row exists
+        let stock = await (0, localDb_1.queryOne)('SELECT * FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?', [branch_id, token_model]);
+        if (!stock) {
+            const newStockId = `stock-${Date.now()}`;
+            await (0, localDb_1.run)('INSERT INTO branch_token_stocks (id, branch_id, token_model, quantity_on_hand, quarantine_damaged, min_threshold) VALUES (?, ?, ?, 0, 0, 10)', [newStockId, branch_id, token_model]);
+            stock = { id: newStockId, quantity_on_hand: 0, quarantine_damaged: 0 };
+        }
+        if (adjustment_type === 'quarantine_damaged') {
+            if (stock.quantity_on_hand < qty) {
+                return res.status(400).json({ error: `Cannot quarantine ${qty} tokens. Only ${stock.quantity_on_hand} tokens available on hand.` });
+            }
+            await (0, localDb_1.run)(`
+        UPDATE branch_token_stocks
+        SET quantity_on_hand = quantity_on_hand - ?,
+            quarantine_damaged = quarantine_damaged + ?
+        WHERE branch_id = ? AND token_model = ?
+      `, [qty, qty, branch_id, token_model]);
+        }
+        else if (adjustment_type === 'reconcile_add') {
+            await (0, localDb_1.run)(`
+        UPDATE branch_token_stocks
+        SET quantity_on_hand = quantity_on_hand + ?
+        WHERE branch_id = ? AND token_model = ?
+      `, [qty, branch_id, token_model]);
+        }
+        else if (adjustment_type === 'reconcile_deduct') {
+            if (stock.quantity_on_hand < qty) {
+                return res.status(400).json({ error: `Cannot deduct ${qty} tokens. Only ${stock.quantity_on_hand} tokens available on hand.` });
+            }
+            await (0, localDb_1.run)(`
+        UPDATE branch_token_stocks
+        SET quantity_on_hand = quantity_on_hand - ?
+        WHERE branch_id = ? AND token_model = ?
+      `, [qty, branch_id, token_model]);
+        }
+        else {
+            return res.status(400).json({ error: 'Invalid adjustment type.' });
+        }
+        const adjId = `adj-${Date.now()}`;
+        await (0, localDb_1.run)(`
+      INSERT INTO stock_adjustments (id, branch_id, token_model, adjustment_type, quantity, reason, adjusted_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [adjId, branch_id, token_model, adjustment_type, qty, reason || 'Physical inventory audit adjustment', (currentUser === null || currentUser === void 0 ? void 0 : currentUser.id) || 'admin']);
+        return res.status(201).json({ success: true, id: adjId, message: 'Stock adjustment successfully posted.' });
     }
     catch (err) {
         return res.status(500).json({ error: err.message });
@@ -912,7 +1236,7 @@ exports.apiRouter.post('/crm/leads', async (req, res) => {
     try {
         const { company_name, contact_person, email, phone, gstin, pan, requirement_summary } = req.body;
         const id = `lead-${Date.now()}`;
-        const lead_code = `LD-${Date.now().toString().slice(-6)}`;
+        const lead_code = await allocateNextReferenceNumber('lead');
         await (0, localDb_1.run)(`
       INSERT INTO crm_leads (id, lead_code, company_name, contact_person, email, phone, gstin, pan, requirement_summary, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
@@ -923,15 +1247,54 @@ exports.apiRouter.post('/crm/leads', async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.post('/crm/leads/merge', async (req, res) => {
+exports.apiRouter.post('/crm/leads/merge', requirePermission('crm', 'can_edit'), async (req, res) => {
     try {
+        const currentUser = req.user;
+        const delegation = req.delegation;
         const { primary_lead_id, secondary_lead_id } = req.body;
         await (0, localDb_1.run)(`
       UPDATE crm_leads
       SET is_merged = 1, merged_into_lead_id = ?, status = 'merged', updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [primary_lead_id, secondary_lead_id]);
+        // Move associated follow-ups to primary lead
+        await (0, localDb_1.run)(`UPDATE crm_follow_ups SET lead_id = ? WHERE lead_id = ?`, [primary_lead_id, secondary_lead_id]);
+        await logAuditEvent({
+            userId: currentUser.id,
+            actionType: 'MERGE_LEADS',
+            moduleKey: 'crm',
+            tableAffected: 'crm_leads',
+            recordId: primary_lead_id,
+            newValueJson: { merged_id: secondary_lead_id },
+            reason: 'Deduplication consolidation',
+            delegationId: delegation === null || delegation === void 0 ? void 0 : delegation.id,
+            ipAddress: req.ip,
+        });
         return res.json({ success: true, primary_lead_id, merged_id: secondary_lead_id });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+// Lead Edit, Assignment & Status Update (Item 5)
+exports.apiRouter.put('/crm/leads/:id', async (req, res) => {
+    try {
+        const { company_name, contact_person, email, phone, gstin, pan, requirement_summary, status, assigned_to } = req.body;
+        await (0, localDb_1.run)(`
+      UPDATE crm_leads
+      SET company_name = COALESCE(?, company_name),
+          contact_person = COALESCE(?, contact_person),
+          email = COALESCE(?, email),
+          phone = COALESCE(?, phone),
+          gstin = COALESCE(?, gstin),
+          pan = COALESCE(?, pan),
+          requirement_summary = COALESCE(?, requirement_summary),
+          status = COALESCE(?, status),
+          assigned_to = COALESCE(?, assigned_to),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [company_name, contact_person, email, phone, gstin, pan, requirement_summary, status, assigned_to, req.params.id]);
+        return res.json({ success: true, message: 'Lead updated successfully.' });
     }
     catch (err) {
         return res.status(500).json({ error: err.message });
@@ -1008,6 +1371,26 @@ exports.apiRouter.patch('/crm/follow-ups/:id/complete', requireAuth, async (req,
         return res.status(500).json({ error: err.message });
     }
 });
+exports.apiRouter.patch('/crm/follow-ups/:id/reschedule', requireAuth, async (req, res) => {
+    try {
+        const { scheduled_at, notes, disposition } = req.body;
+        if (!scheduled_at) {
+            return res.status(400).json({ error: 'New scheduled date/time is required.' });
+        }
+        await (0, localDb_1.run)(`
+      UPDATE crm_follow_ups
+      SET scheduled_at = ?,
+          notes = COALESCE(?, notes),
+          disposition = COALESCE(?, disposition),
+          status = 'pending'
+      WHERE id = ?
+    `, [scheduled_at, notes, disposition, req.params.id]);
+        return res.json({ success: true, message: 'Follow-up rescheduled successfully.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
 // ==========================================
 // 7. Additional Business Services Hub
 // ==========================================
@@ -1048,7 +1431,7 @@ exports.apiRouter.post('/services/orders', async (req, res) => {
     try {
         const { service_type, partner_id, client_name, client_contact, government_fees = 0, professional_fees = 0, notes } = req.body;
         const id = `srv-${Date.now()}`;
-        const order_number = `SRV-${Date.now().toString().slice(-6)}`;
+        const order_number = await allocateNextReferenceNumber('service_order');
         await (0, localDb_1.run)(`
       INSERT INTO service_orders (id, order_number, service_type, partner_id, client_name, client_contact, government_fees, professional_fees, notes, stage)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft_review')
@@ -1129,6 +1512,43 @@ exports.apiRouter.get('/billing/series', async (_req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
+exports.apiRouter.post('/billing/series', requireAdmin, async (req, res) => {
+    try {
+        const { series_name, prefix, suffix, current_counter, is_gst_compliant, mapped_bank_account_id } = req.body;
+        if (!series_name || !prefix || !mapped_bank_account_id) {
+            return res.status(400).json({ error: 'Series name, prefix, and mapped bank account are required.' });
+        }
+        const id = `ser-${Date.now()}`;
+        await (0, localDb_1.run)(`
+      INSERT INTO invoice_series_configs (id, series_name, prefix, suffix, current_counter, is_gst_compliant, mapped_bank_account_id, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+    `, [id, series_name.trim(), prefix.trim().toUpperCase(), suffix ? suffix.trim() : null, current_counter || 1000, is_gst_compliant ? 1 : 0, mapped_bank_account_id]);
+        return res.status(201).json({ success: true, id, message: 'Invoice series created successfully.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.put('/billing/series/:id', requireAdmin, async (req, res) => {
+    try {
+        const { series_name, prefix, suffix, current_counter, is_gst_compliant, mapped_bank_account_id, is_active } = req.body;
+        await (0, localDb_1.run)(`
+      UPDATE invoice_series_configs
+      SET series_name = COALESCE(?, series_name),
+          prefix = COALESCE(?, prefix),
+          suffix = COALESCE(?, suffix),
+          current_counter = COALESCE(?, current_counter),
+          is_gst_compliant = COALESCE(?, is_gst_compliant),
+          mapped_bank_account_id = COALESCE(?, mapped_bank_account_id),
+          is_active = COALESCE(?, is_active)
+      WHERE id = ?
+    `, [series_name, prefix, suffix, current_counter, is_gst_compliant, mapped_bank_account_id, is_active, req.params.id]);
+        return res.json({ success: true, message: 'Invoice series updated successfully.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
 exports.apiRouter.get('/billing/invoices', async (req, res) => {
     try {
         const search = req.query.search ? String(req.query.search).trim() : '';
@@ -1183,8 +1603,10 @@ exports.apiRouter.get('/billing/invoices', async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.post('/billing/invoices', async (req, res) => {
+exports.apiRouter.post('/billing/invoices', requirePermission('billing', 'can_create'), async (req, res) => {
     try {
+        const currentUser = req.user;
+        const delegation = req.delegation;
         const { series_id, partner_id, due_days = 30, line_items = [] } = req.body;
         const series = await (0, localDb_1.queryOne)('SELECT * FROM invoice_series_configs WHERE id = ?', [series_id]);
         if (!series)
@@ -1192,6 +1614,8 @@ exports.apiRouter.post('/billing/invoices', async (req, res) => {
         const partner = await (0, localDb_1.queryOne)('SELECT * FROM partners WHERE id = ?', [partner_id]);
         if (!partner)
             return res.status(404).json({ error: 'Partner not found' });
+        // Snapshot company legal data at issue time to prevent historical corruption
+        const company = await (0, localDb_1.queryOne)('SELECT * FROM company_profile LIMIT 1');
         const subtotal = line_items.reduce((sum, item) => sum + (item.qty * item.rate), 0);
         const gst = (0, businessLogic_1.calculateGst)(subtotal, partner.state_code);
         const nextCounter = series.current_counter + 1;
@@ -1202,8 +1626,8 @@ exports.apiRouter.post('/billing/invoices', async (req, res) => {
       INSERT INTO invoices (
         id, invoice_number, series_id, partner_id, invoice_date, due_date,
         subtotal, cgst_amount, sgst_amount, igst_amount, total_amount, paid_amount,
-        outstanding_balance, status, bank_account_snapshot_id, line_items
-      ) VALUES (?, ?, ?, ?, DATE('now'), DATE('now', '+' || ? || ' days'), ?, ?, ?, ?, ?, 0.0, ?, 'unpaid', ?, ?)
+        outstanding_balance, status, bank_account_snapshot_id, line_items, company_snapshot
+      ) VALUES (?, ?, ?, ?, DATE('now'), DATE('now', '+' || ? || ' days'), ?, ?, ?, ?, ?, 0.0, ?, 'unpaid', ?, ?, ?)
     `, [
             id,
             invoice_number,
@@ -1218,12 +1642,23 @@ exports.apiRouter.post('/billing/invoices', async (req, res) => {
             gst.total,
             series.mapped_bank_account_id,
             JSON.stringify(line_items),
+            company ? JSON.stringify(company) : null,
         ]);
         // Ledger debit entry
         await (0, localDb_1.run)(`
       INSERT INTO financial_ledger (id, partner_id, transaction_type, reference_id, debit, credit, running_balance, remarks)
       VALUES (?, ?, 'invoice_raised', ?, ?, 0.0, (COALESCE((SELECT running_balance FROM financial_ledger WHERE partner_id = ? ORDER BY created_at DESC LIMIT 1), 0) + ?), ?)
     `, [`led-${Date.now()}`, partner.id, id, gst.total, partner.id, gst.total, `Invoice ${invoice_number} raised`]);
+        await logAuditEvent({
+            userId: currentUser.id,
+            actionType: 'CREATE_INVOICE',
+            moduleKey: 'billing',
+            tableAffected: 'invoices',
+            recordId: id,
+            newValueJson: { invoice_number, total: gst.total, partner_id },
+            delegationId: delegation === null || delegation === void 0 ? void 0 : delegation.id,
+            ipAddress: req.ip,
+        });
         return res.status(201).json({ success: true, id, invoice_number, total: gst.total });
     }
     catch (err) {
@@ -1272,8 +1707,10 @@ exports.apiRouter.get('/billing/payments/queue', async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.post('/billing/payments/verify', async (req, res) => {
+exports.apiRouter.post('/billing/payments/verify', requirePermission('billing', 'can_edit'), async (req, res) => {
     try {
+        const currentUser = req.user;
+        const delegation = req.delegation;
         const { payment_id, action, rejection_remarks } = req.body; // action: 'verified' | 'rejected'
         const payment = await (0, localDb_1.queryOne)('SELECT * FROM payments_received WHERE id = ?', [payment_id]);
         if (!payment)
@@ -1281,9 +1718,9 @@ exports.apiRouter.post('/billing/payments/verify', async (req, res) => {
         if (action === 'verified') {
             await (0, localDb_1.run)(`
         UPDATE payments_received
-        SET verified_status = 'verified', verified_at = CURRENT_TIMESTAMP
+        SET verified_status = 'verified', verified_at = CURRENT_TIMESTAMP, verified_by = ?
         WHERE id = ?
-      `, [payment_id]);
+      `, [currentUser.id, payment_id]);
             // Update invoice paid amount
             await (0, localDb_1.run)(`
         UPDATE invoices
@@ -1297,14 +1734,36 @@ exports.apiRouter.post('/billing/payments/verify', async (req, res) => {
         INSERT INTO financial_ledger (id, partner_id, transaction_type, reference_id, debit, credit, running_balance, remarks)
         VALUES (?, ?, 'payment_received', ?, 0.0, ?, (COALESCE((SELECT running_balance FROM financial_ledger WHERE partner_id = ? ORDER BY created_at DESC LIMIT 1), 0) - ?), ?)
       `, [`led-${Date.now()}`, payment.partner_id, payment.id, payment.amount_paid, payment.partner_id, payment.amount_paid, `Payment received UTR: ${payment.transaction_reference_utr || 'Direct'}`]);
+            await logAuditEvent({
+                userId: currentUser.id,
+                actionType: 'VERIFY_PAYMENT',
+                moduleKey: 'billing',
+                tableAffected: 'payments_received',
+                recordId: payment_id,
+                oldValueJson: { status: payment.verified_status },
+                newValueJson: { status: 'verified', amount: payment.amount_paid },
+                delegationId: delegation === null || delegation === void 0 ? void 0 : delegation.id,
+                ipAddress: req.ip,
+            });
             return res.json({ success: true, status: 'verified' });
         }
         else {
             await (0, localDb_1.run)(`
         UPDATE payments_received
-        SET verified_status = 'rejected', rejection_remarks = ?, verified_at = CURRENT_TIMESTAMP
+        SET verified_status = 'rejected', rejection_remarks = ?, verified_at = CURRENT_TIMESTAMP, verified_by = ?
         WHERE id = ?
-      `, [rejection_remarks || 'Screenshot mismatch or invalid UTR', payment_id]);
+      `, [rejection_remarks || 'Screenshot mismatch or invalid UTR', currentUser.id, payment_id]);
+            await logAuditEvent({
+                userId: currentUser.id,
+                actionType: 'REJECT_PAYMENT',
+                moduleKey: 'billing',
+                tableAffected: 'payments_received',
+                recordId: payment_id,
+                oldValueJson: { status: payment.verified_status },
+                newValueJson: { status: 'rejected', remarks: rejection_remarks },
+                delegationId: delegation === null || delegation === void 0 ? void 0 : delegation.id,
+                ipAddress: req.ip,
+            });
             return res.json({ success: true, status: 'rejected' });
         }
     }
@@ -1355,12 +1814,33 @@ exports.apiRouter.post('/courier/dispatches', async (req, res) => {
     try {
         const { carrier_name, awb_number, recipient_name, recipient_phone, shipping_address, package_contents } = req.body;
         const id = `disp-${Date.now()}`;
-        const dispatch_number = `DSP-${Date.now().toString().slice(-6)}`;
+        const dispatch_number = await allocateNextReferenceNumber('courier_dispatch');
         await (0, localDb_1.run)(`
       INSERT INTO courier_dispatches (id, dispatch_number, carrier_name, awb_number, recipient_name, recipient_phone, shipping_address, package_contents, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manifested')
     `, [id, dispatch_number, carrier_name, awb_number, recipient_name, recipient_phone, shipping_address, package_contents]);
         return res.status(201).json({ success: true, id, dispatch_number });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.patch('/courier/dispatches/:id/status', async (req, res) => {
+    try {
+        const { status, proof_of_delivery_url, notes } = req.body;
+        if (!status) {
+            return res.status(400).json({ error: 'Status is required.' });
+        }
+        const deliveredAt = status === 'delivered' ? new Date().toISOString() : null;
+        await (0, localDb_1.run)(`
+      UPDATE courier_dispatches
+      SET status = ?,
+          proof_of_delivery_url = COALESCE(?, proof_of_delivery_url),
+          notes = COALESCE(?, notes),
+          delivered_at = CASE WHEN ? = 'delivered' THEN CURRENT_TIMESTAMP ELSE delivered_at END
+      WHERE id = ?
+    `, [status, proof_of_delivery_url, notes, status, req.params.id]);
+        return res.json({ success: true, message: `Courier status updated to ${status}.` });
     }
     catch (err) {
         return res.status(500).json({ error: err.message });
@@ -1543,12 +2023,21 @@ exports.apiRouter.post('/admin/settings/services', requireAdmin, async (req, res
     }
 });
 // E. Partner Edit API (Phase 3)
-exports.apiRouter.put('/partners/:id', async (req, res) => {
+exports.apiRouter.put('/partners/:id', requireAuth, async (req, res) => {
     try {
+        const currentUser = req.user;
         const { company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit, credit_period_days, status, } = req.body;
         const existing = await (0, localDb_1.queryOne)('SELECT * FROM partners WHERE id = ?', [req.params.id]);
         if (!existing)
             return res.status(404).json({ error: 'Partner not found' });
+        // Strict Security Guard: Only Super Admin (Level 0) or Partner Admin (Level 1) can modify credit limits or credit periods
+        if (credit_limit !== undefined || credit_period_days !== undefined) {
+            if (currentUser.hierarchy_level_order > 1) {
+                return res.status(403).json({ error: 'Security restriction: Only authorized administrators (Level 0/1) can modify credit limits and terms.' });
+            }
+        }
+        const newCreditLimit = credit_limit !== undefined ? Number(credit_limit) : existing.credit_limit;
+        const newCreditPeriod = credit_period_days !== undefined ? Number(credit_period_days) : existing.credit_period_days;
         await (0, localDb_1.run)(`
       UPDATE partners
       SET company_name = COALESCE(?, company_name),
@@ -1559,8 +2048,8 @@ exports.apiRouter.put('/partners/:id', async (req, res) => {
           pan = COALESCE(?, pan),
           billing_address = COALESCE(?, billing_address),
           state_code = COALESCE(?, state_code),
-          credit_limit = COALESCE(?, credit_limit),
-          credit_period_days = COALESCE(?, credit_period_days),
+          credit_limit = ?,
+          credit_period_days = ?,
           status = COALESCE(?, status)
       WHERE id = ?
     `, [
@@ -1572,12 +2061,542 @@ exports.apiRouter.put('/partners/:id', async (req, res) => {
             pan,
             billing_address,
             state_code,
-            credit_limit !== undefined ? Number(credit_limit) : null,
-            credit_period_days !== undefined ? Number(credit_period_days) : null,
+            newCreditLimit,
+            newCreditPeriod,
             status,
             req.params.id,
         ]);
+        if (credit_limit !== undefined && Number(credit_limit) !== existing.credit_limit) {
+            const partId = req.params.id;
+            await logAuditEvent({
+                userId: currentUser.id,
+                actionType: 'CHANGE_CREDIT_LIMIT',
+                moduleKey: 'partners',
+                tableAffected: 'partners',
+                recordId: Array.isArray(partId) ? partId[0] : partId,
+                oldValueJson: { credit_limit: existing.credit_limit, credit_period_days: existing.credit_period_days },
+                newValueJson: { credit_limit: newCreditLimit, credit_period_days: newCreditPeriod },
+                reason: 'Credit policy adjustment',
+                ipAddress: req.ip,
+            });
+        }
         return res.json({ success: true, message: 'Partner details updated successfully.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+// ==========================================
+// Central Master Configuration APIs (Phase 2)
+// ==========================================
+// 1. Certifying Authorities (CA)
+exports.apiRouter.get('/admin/masters/ca', async (_req, res) => {
+    try {
+        const authorities = await (0, localDb_1.queryAll)('SELECT * FROM certifying_authorities ORDER BY ca_name ASC');
+        return res.json({ authorities });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.post('/admin/masters/ca', requireAdmin, async (req, res) => {
+    try {
+        const { ca_name, ca_code, api_endpoint, support_contact } = req.body;
+        if (!ca_name || !ca_code) {
+            return res.status(400).json({ error: 'CA Name and CA Code are required.' });
+        }
+        const id = `ca-${Date.now()}`;
+        await (0, localDb_1.run)(`
+      INSERT INTO certifying_authorities (id, ca_name, ca_code, api_endpoint, support_contact, is_active)
+      VALUES (?, ?, ?, ?, ?, 1)
+    `, [id, ca_name.trim(), ca_code.trim().toUpperCase(), api_endpoint || null, support_contact || null]);
+        const currentUser = req.user;
+        await logAuditEvent({
+            userId: currentUser.id,
+            actionType: 'CREATE_CA_MASTER',
+            moduleKey: 'admin_users',
+            tableAffected: 'certifying_authorities',
+            recordId: id,
+            newValueJson: { ca_name, ca_code },
+            ipAddress: req.ip,
+        });
+        return res.status(201).json({ success: true, id, message: 'Certifying Authority added.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.patch('/admin/masters/ca/:id/deactivate', requireAdmin, async (req, res) => {
+    try {
+        const { is_active } = req.body;
+        const newStatus = is_active !== undefined ? (is_active ? 1 : 0) : 0;
+        await (0, localDb_1.run)('UPDATE certifying_authorities SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
+        return res.json({ success: true, is_active: Boolean(newStatus) });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+// 2. Hardware Vendors
+exports.apiRouter.get('/admin/masters/vendors', async (_req, res) => {
+    try {
+        const vendors = await (0, localDb_1.queryAll)('SELECT * FROM hardware_vendors ORDER BY vendor_name ASC');
+        return res.json({ vendors });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.post('/admin/masters/vendors', requireAdmin, async (req, res) => {
+    try {
+        const { vendor_name, contact_person, email, phone, gstin, address } = req.body;
+        if (!vendor_name)
+            return res.status(400).json({ error: 'Vendor name is required.' });
+        const id = `ven-${Date.now()}`;
+        await (0, localDb_1.run)(`
+      INSERT INTO hardware_vendors (id, vendor_name, contact_person, email, phone, gstin, address, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+    `, [id, vendor_name.trim(), contact_person || null, email || null, phone || null, gstin || null, address || null]);
+        const currentUser = req.user;
+        await logAuditEvent({
+            userId: currentUser.id,
+            actionType: 'CREATE_VENDOR_MASTER',
+            moduleKey: 'admin_users',
+            tableAffected: 'hardware_vendors',
+            recordId: id,
+            newValueJson: { vendor_name },
+            ipAddress: req.ip,
+        });
+        return res.status(201).json({ success: true, id, message: 'Hardware vendor added.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+// 3. Stock Adjustment Reasons
+exports.apiRouter.get('/admin/masters/reasons', async (_req, res) => {
+    try {
+        const reasons = await (0, localDb_1.queryAll)('SELECT * FROM stock_adjustment_reasons ORDER BY reason_label ASC');
+        return res.json({ reasons });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.post('/admin/masters/reasons', requireAdmin, async (req, res) => {
+    try {
+        const { reason_code, reason_label, adjustment_type } = req.body;
+        if (!reason_code || !reason_label)
+            return res.status(400).json({ error: 'Reason code and label are required.' });
+        const id = `rsn-${Date.now()}`;
+        await (0, localDb_1.run)(`
+      INSERT INTO stock_adjustment_reasons (id, reason_code, reason_label, adjustment_type, is_active)
+      VALUES (?, ?, ?, ?, 1)
+    `, [id, reason_code.trim().toUpperCase(), reason_label.trim(), adjustment_type || 'DAMAGE']);
+        return res.status(201).json({ success: true, id, message: 'Adjustment reason added.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.patch('/admin/masters/reasons/:id/deactivate', requireAdmin, async (req, res) => {
+    try {
+        const { is_active } = req.body;
+        const newStatus = is_active !== undefined ? (is_active ? 1 : 0) : 0;
+        await (0, localDb_1.run)('UPDATE stock_adjustment_reasons SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
+        return res.json({ success: true, is_active: Boolean(newStatus) });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+// 3b. CRM Lead Sources Master
+exports.apiRouter.get('/crm/lead-sources', async (_req, res) => {
+    try {
+        const sources = await (0, localDb_1.queryAll)('SELECT * FROM crm_lead_sources ORDER BY source_name ASC');
+        return res.json({ sources });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.post('/crm/lead-sources', requireAdmin, async (req, res) => {
+    try {
+        const { source_name } = req.body;
+        if (!source_name)
+            return res.status(400).json({ error: 'Lead source name is required.' });
+        const id = `src-${Date.now()}`;
+        await (0, localDb_1.run)('INSERT INTO crm_lead_sources (id, source_name, is_active) VALUES (?, ?, 1)', [id, source_name.trim()]);
+        return res.status(201).json({ success: true, id, message: 'Lead source added.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.patch('/crm/lead-sources/:id/deactivate', requireAdmin, async (req, res) => {
+    try {
+        const { is_active } = req.body;
+        const newStatus = is_active !== undefined ? (is_active ? 1 : 0) : 0;
+        await (0, localDb_1.run)('UPDATE crm_lead_sources SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
+        return res.json({ success: true, is_active: Boolean(newStatus) });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+// 3c. Master Entities Deactivate / Update Endpoints
+exports.apiRouter.patch('/admin/masters/vendors/:id/deactivate', requireAdmin, async (req, res) => {
+    try {
+        const { is_active } = req.body;
+        const newStatus = is_active !== undefined ? (is_active ? 1 : 0) : 0;
+        await (0, localDb_1.run)('UPDATE hardware_vendors SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
+        return res.json({ success: true, is_active: Boolean(newStatus) });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.patch('/admin/settings/tokens/:id/deactivate', requireAdmin, async (req, res) => {
+    try {
+        const { is_active } = req.body;
+        const newStatus = is_active !== undefined ? (is_active ? 1 : 0) : 0;
+        await (0, localDb_1.run)('UPDATE token_models SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
+        return res.json({ success: true, is_active: Boolean(newStatus) });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.patch('/admin/settings/couriers/:id/deactivate', requireAdmin, async (req, res) => {
+    try {
+        const { is_active } = req.body;
+        const newStatus = is_active !== undefined ? (is_active ? 1 : 0) : 0;
+        await (0, localDb_1.run)('UPDATE courier_partners SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
+        return res.json({ success: true, is_active: Boolean(newStatus) });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.patch('/admin/settings/services/:id/deactivate', requireAdmin, async (req, res) => {
+    try {
+        const { is_active } = req.body;
+        const newStatus = is_active !== undefined ? (is_active ? 1 : 0) : 0;
+        await (0, localDb_1.run)('UPDATE services_catalog SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
+        return res.json({ success: true, is_active: Boolean(newStatus) });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+// Branches List Endpoint
+exports.apiRouter.get('/admin/branches', async (_req, res) => {
+    try {
+        const branches = await (0, localDb_1.queryAll)('SELECT * FROM branches ORDER BY branch_name ASC');
+        return res.json({ branches });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+// 4. Central Numbering Series Configuration Master
+exports.apiRouter.get('/admin/numbering', requireAdmin, async (_req, res) => {
+    try {
+        const configs = await (0, localDb_1.queryAll)('SELECT * FROM numbering_series_configs ORDER BY document_type ASC');
+        return res.json({ configs });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.post('/admin/numbering', requireAdmin, async (req, res) => {
+    try {
+        const currentUser = req.user;
+        const { series_name, document_type, prefix, suffix, separator = '-', parts_order = '["prefix", "fy", "counter", "suffix"]', fy_format = 'YY-YY', company_code, branch_code, counter_padding = 5, starting_counter = 1001, current_counter = 1000, } = req.body;
+        if (!series_name || !document_type) {
+            return res.status(400).json({ error: 'Series name and document type are required.' });
+        }
+        const id = `num-${document_type}`;
+        await (0, localDb_1.run)(`
+      INSERT INTO numbering_series_configs (
+        id, series_name, document_type, prefix, suffix, separator, parts_order, fy_format,
+        company_code, branch_code, counter_padding, starting_counter, current_counter, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+      ON CONFLICT(document_type) DO UPDATE SET
+        series_name = excluded.series_name,
+        prefix = excluded.prefix,
+        suffix = excluded.suffix,
+        separator = excluded.separator,
+        parts_order = excluded.parts_order,
+        fy_format = excluded.fy_format,
+        company_code = excluded.company_code,
+        branch_code = excluded.branch_code,
+        counter_padding = excluded.counter_padding,
+        updated_at = CURRENT_TIMESTAMP
+    `, [
+            id,
+            series_name.trim(),
+            document_type.trim(),
+            prefix ? prefix.trim().toUpperCase() : null,
+            suffix ? suffix.trim().toUpperCase() : null,
+            separator,
+            typeof parts_order === 'string' ? parts_order : JSON.stringify(parts_order),
+            fy_format,
+            company_code ? company_code.trim().toUpperCase() : null,
+            branch_code ? branch_code.trim().toUpperCase() : null,
+            parseInt(counter_padding, 10) || 5,
+            parseInt(starting_counter, 10) || 1001,
+            parseInt(current_counter, 10) || 1000,
+        ]);
+        await logAuditEvent({
+            userId: currentUser.id,
+            actionType: 'UPDATE_NUMBERING_CONFIG',
+            moduleKey: 'admin_users',
+            tableAffected: 'numbering_series_configs',
+            recordId: id,
+            newValueJson: req.body,
+            reason: 'Numbering series pattern configuration update',
+            ipAddress: req.ip,
+        });
+        return res.status(200).json({ success: true, message: 'Numbering configuration saved successfully.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+// Numbering Live Preview API
+exports.apiRouter.post('/admin/numbering/preview', requireAdmin, async (req, res) => {
+    try {
+        const { prefix, suffix, separator = '-', parts_order = '["prefix", "fy", "counter", "suffix"]', fy_format = 'YY-YY', company_code, branch_code, counter_padding = 5, counter = 1, } = req.body;
+        const mockConfig = {
+            id: 'preview',
+            series_name: 'Preview',
+            document_type: 'preview',
+            prefix,
+            suffix,
+            separator,
+            parts_order: typeof parts_order === 'string' ? parts_order : JSON.stringify(parts_order),
+            fy_format,
+            company_code,
+            branch_code,
+            counter_padding: parseInt(counter_padding, 10) || 5,
+            current_counter: counter,
+            starting_counter: counter,
+            is_active: 1,
+        };
+        const preview = (0, numberingEngine_1.formatReferenceNumber)(mockConfig, counter, {
+            companyCode: company_code,
+            branchCode: branch_code,
+        });
+        return res.json({ preview });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+// 5. Hardware Token Serials Import & Uniqueness API
+exports.apiRouter.post('/inventory/tokens/serials', requirePermission('inventory', 'can_create'), async (req, res) => {
+    try {
+        const currentUser = req.user;
+        const { serial_numbers = [], token_model, branch_id, batch_id } = req.body;
+        if (!Array.isArray(serial_numbers) || serial_numbers.length === 0 || !token_model || !branch_id) {
+            return res.status(400).json({ error: 'List of serial numbers, token model, and branch ID are required.' });
+        }
+        const inserted = [];
+        const duplicates = [];
+        for (const rawSerial of serial_numbers) {
+            const serial = String(rawSerial).trim().toUpperCase();
+            if (!serial)
+                continue;
+            const exists = await (0, localDb_1.queryOne)('SELECT id FROM token_serials WHERE serial_number = ?', [serial]);
+            if (exists) {
+                duplicates.push(serial);
+            }
+            else {
+                const id = `ser-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+                await (0, localDb_1.run)(`
+          INSERT INTO token_serials (id, serial_number, token_model, batch_id, branch_id, status)
+          VALUES (?, ?, ?, ?, ?, 'in_stock')
+        `, [id, serial, token_model, batch_id || null, branch_id]);
+                inserted.push(serial);
+            }
+        }
+        await logAuditEvent({
+            userId: currentUser.id,
+            actionType: 'IMPORT_TOKEN_SERIALS',
+            moduleKey: 'inventory',
+            tableAffected: 'token_serials',
+            newValueJson: { inserted_count: inserted.length, duplicate_count: duplicates.length, token_model, branch_id },
+            reason: 'Physical token serial numbers import',
+            ipAddress: req.ip,
+        });
+        return res.status(201).json({
+            success: true,
+            insertedCount: inserted.length,
+            duplicateCount: duplicates.length,
+            duplicates,
+            message: `Imported ${inserted.length} token serials successfully.`,
+        });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+// ==========================================
+// Temporary Delegations Management (Phase 4)
+// ==========================================
+exports.apiRouter.get('/admin/delegations', requireAdmin, async (_req, res) => {
+    try {
+        const delegations = await (0, localDb_1.queryAll)(`
+      SELECT d.*,
+             g.full_name as grantor_name, g.email as grantor_email,
+             r.full_name as recipient_name, r.email as recipient_email
+      FROM temporary_delegations d
+      JOIN user_profiles g ON d.grantor_user_id = g.id
+      JOIN user_profiles r ON d.recipient_user_id = r.id
+      ORDER BY d.created_at DESC
+    `);
+        return res.json({ delegations });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.post('/admin/delegations', requireAuth, async (req, res) => {
+    try {
+        const currentUser = req.user;
+        const { recipient_user_id, module_key, action_key, valid_from, valid_until, reason, can_delegate_further, parent_delegation_id } = req.body;
+        // Only Level 0 (Super Admin) or Level 1-2 users with explicit delegation authority or valid parent delegation can grant
+        if (currentUser.hierarchy_level_order > 2 && !parent_delegation_id) {
+            return res.status(403).json({ error: 'You do not have delegation authority.' });
+        }
+        if (!recipient_user_id || !module_key || !action_key || !valid_from || !valid_until || !reason) {
+            return res.status(400).json({ error: 'Recipient, module, action, validity window, and reason are required.' });
+        }
+        // Verify recipient existence and status
+        const recipient = await (0, localDb_1.queryOne)(`
+      SELECT u.*, h.level_order as hierarchy_level_order
+      FROM user_profiles u
+      JOIN hierarchy_levels h ON u.hierarchy_level_id = h.id
+      WHERE u.id = ?
+    `, [recipient_user_id]);
+        if (!recipient) {
+            return res.status(404).json({ error: 'Recipient user not found.' });
+        }
+        if (recipient.status !== 'active') {
+            return res.status(400).json({ error: 'Cannot delegate to an inactive account.' });
+        }
+        if (recipient.permissions_frozen) {
+            return res.status(400).json({ error: 'Cannot delegate to an account whose permissions are frozen.' });
+        }
+        // Downward Delegation Rule: Cannot delegate to equal or higher tier
+        if (currentUser.hierarchy_level_order >= recipient.hierarchy_level_order && currentUser.hierarchy_level_order !== 0) {
+            return res.status(403).json({
+                error: `Strict Downward Rule: Level ${currentUser.hierarchy_level_order} cannot delegate permissions to Level ${recipient.hierarchy_level_order}.`
+            });
+        }
+        // Security Rule: If onward delegation, ensure grantor holds a valid parent delegation that allows further delegation
+        if (parent_delegation_id) {
+            const parent = await (0, localDb_1.queryOne)('SELECT * FROM temporary_delegations WHERE id = ?', [parent_delegation_id]);
+            if (!parent || parent.status !== 'active') {
+                return res.status(400).json({ error: 'Parent delegation is inactive or revoked.' });
+            }
+            if (!parent.can_delegate_further) {
+                return res.status(403).json({ error: 'Parent delegation does not permit onward delegation.' });
+            }
+            if (new Date(valid_until).getTime() > new Date(parent.valid_until).getTime()) {
+                return res.status(400).json({ error: 'Child delegation expiry cannot exceed parent delegation expiry date.' });
+            }
+        }
+        const id = `del-${Date.now()}`;
+        await (0, localDb_1.run)(`
+      INSERT INTO temporary_delegations (
+        id, grantor_user_id, recipient_user_id, module_key, action_key, valid_from, valid_until, reason, can_delegate_further, parent_delegation_id, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+    `, [id, currentUser.id, recipient_user_id, module_key, action_key, valid_from, valid_until, reason.trim(), can_delegate_further ? 1 : 0, parent_delegation_id || null]);
+        await logAuditEvent({
+            userId: currentUser.id,
+            actionType: 'GRANT_TEMPORARY_DELEGATION',
+            moduleKey: 'admin_users',
+            tableAffected: 'temporary_delegations',
+            recordId: id,
+            newValueJson: { recipient_user_id, module_key, action_key, valid_from, valid_until, reason },
+            reason,
+            ipAddress: req.ip,
+        });
+        return res.status(201).json({ success: true, id, message: 'Temporary delegation granted successfully.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+// Revoke temporary delegation with cascading dependent invalidation
+exports.apiRouter.patch('/admin/delegations/:id/revoke', requireAdmin, async (req, res) => {
+    try {
+        const currentUser = req.user;
+        const delegation = await (0, localDb_1.queryOne)('SELECT * FROM temporary_delegations WHERE id = ?', [req.params.id]);
+        if (!delegation)
+            return res.status(404).json({ error: 'Delegation record not found.' });
+        const nowIso = new Date().toISOString();
+        // 1. Revoke parent delegation
+        await (0, localDb_1.run)(`
+      UPDATE temporary_delegations
+      SET status = 'revoked', revoked_at = ?, revoked_by = ?
+      WHERE id = ?
+    `, [nowIso, currentUser.id, req.params.id]);
+        // 2. Cascading invalidation of all child delegations in chain
+        await (0, localDb_1.run)(`
+      UPDATE temporary_delegations
+      SET status = 'revoked', revoked_at = ?, revoked_by = ?
+      WHERE parent_delegation_id = ?
+    `, [nowIso, currentUser.id, req.params.id]);
+        // Also invalidate any grand-children (multi-level chain)
+        await (0, localDb_1.run)(`
+      UPDATE temporary_delegations
+      SET status = 'revoked', revoked_at = ?, revoked_by = ?
+      WHERE parent_delegation_id IN (SELECT id FROM temporary_delegations WHERE parent_delegation_id = ?)
+    `, [nowIso, currentUser.id, req.params.id]);
+        const delId = req.params.id;
+        await logAuditEvent({
+            userId: currentUser.id,
+            actionType: 'REVOKE_DELEGATION',
+            moduleKey: 'admin_users',
+            tableAffected: 'temporary_delegations',
+            recordId: Array.isArray(delId) ? delId[0] : delId,
+            reason: 'Administrator manual revocation with cascading dependent invalidation',
+            ipAddress: req.ip,
+        });
+        return res.json({ success: true, message: 'Delegation and dependent grants successfully revoked.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+// ==========================================
+// Administrative Audit Logs Retrieval (Phase 5)
+// ==========================================
+exports.apiRouter.get('/admin/audit-logs', requireAdmin, async (req, res) => {
+    try {
+        const { page, limit, offset, isPaginated } = (0, pagination_1.parsePaginationParams)(req.query);
+        const selectSql = `
+      SELECT a.*, u.full_name as staff_name, u.email as staff_email
+      FROM audit_logs a
+      LEFT JOIN user_profiles u ON a.user_id = u.id
+      ORDER BY a.created_at DESC
+    `;
+        const countSql = 'SELECT COUNT(*) as count FROM audit_logs';
+        if (isPaginated) {
+            const result = await (0, pagination_1.executePaginatedQuery)(selectSql, countSql, [], { page, limit, offset });
+            return res.json({
+                logs: result.data,
+                page: result.page,
+                limit: result.limit,
+                totalCount: result.totalCount,
+                totalPages: result.totalPages,
+            });
+        }
+        const logs = await (0, localDb_1.queryAll)(selectSql);
+        return res.json({ logs, totalCount: logs.length });
     }
     catch (err) {
         return res.status(500).json({ error: err.message });
