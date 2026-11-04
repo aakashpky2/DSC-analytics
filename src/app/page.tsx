@@ -1,4 +1,4 @@
-// Executive Overview Dashboard & KPI Cards (Section 5, 7)
+// Executive Overview Dashboard & KPI Cards (Section 5, 7) + Visual Analytics Charts (Part 5)
 import React from 'react'
 import {
   Users2,
@@ -12,6 +12,8 @@ import {
   CreditCard,
   Truck
 } from 'lucide-react'
+import AnalyticsDashboard from '@/components/AnalyticsDashboard'
+import { PartnerRecord, TokenPurchaseBatchRecord, CrmLeadRecord, InvoiceRecord } from '@/types/models'
 
 async function getDashboardData() {
   const port = process.env.PORT || '3000'
@@ -27,11 +29,11 @@ async function getDashboardData() {
 
     return {
       health: healthRes.ok ? await healthRes.json() : null,
-      partners: partnersRes.ok ? (await partnersRes.json()).partners : [],
+      partners: partnersRes.ok ? (await partnersRes.json()).partners as PartnerRecord[] : [],
       catalog: dscRes.ok ? (await dscRes.json()).catalog : [],
-      batches: batchesRes.ok ? (await batchesRes.json()).batches : [],
-      leads: leadsRes.ok ? (await leadsRes.json()).leads : [],
-      invoices: invoicesRes.ok ? (await invoicesRes.json()).invoices : [],
+      batches: batchesRes.ok ? (await batchesRes.json()).batches as TokenPurchaseBatchRecord[] : [],
+      leads: leadsRes.ok ? (await leadsRes.json()).leads as CrmLeadRecord[] : [],
+      invoices: invoicesRes.ok ? (await invoicesRes.json()).invoices as InvoiceRecord[] : [],
     }
   } catch {
     return {
@@ -48,13 +50,13 @@ async function getDashboardData() {
 export default async function DashboardPage() {
   const data = await getDashboardData()
 
-  const totalOutstanding = data.invoices.reduce((sum: number, inv: any) => sum + (inv.outstanding_balance || 0), 0)
-  const totalInvoiced = data.invoices.reduce((sum: number, inv: any) => sum + (inv.total_amount || 0), 0)
-  const totalTokensPurchased = data.batches.reduce((sum: number, b: any) => sum + (b.quantity_purchased || 0), 0)
+  const totalOutstanding = data.invoices.reduce((sum: number, inv: InvoiceRecord) => sum + (inv.outstanding_balance || 0), 0)
+  const totalInvoiced = data.invoices.reduce((sum: number, inv: InvoiceRecord) => sum + (inv.total_amount || 0), 0)
+  const totalTokensPurchased = data.batches.reduce((sum: number, b: TokenPurchaseBatchRecord) => sum + (b.quantity_purchased || 0), 0)
   const avgLandedCost = data.batches.length > 0 ? (data.batches[0].unit_landed_cost || 366.0) : 366.0
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Header Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-slate-800">
         <div>
@@ -138,6 +140,9 @@ export default async function DashboardPage() {
         </div>
       </div>
 
+      {/* Part 5: Visual Analytics & Intelligence Charts */}
+      <AnalyticsDashboard />
+
       {/* Main Two-Column Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Recent Partners & Billing */}
@@ -167,7 +172,7 @@ export default async function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {data.partners.map((p: any) => (
+                  {data.partners.map((p: PartnerRecord) => (
                     <tr key={p.id} className="hover:bg-slate-800/40">
                       <td className="py-2.5 font-mono text-indigo-300">{p.partner_code}</td>
                       <td className="py-2.5 font-medium text-white">{p.company_name}</td>
@@ -214,7 +219,7 @@ export default async function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {data.invoices.map((inv: any) => (
+                  {data.invoices.map((inv: InvoiceRecord) => (
                     <tr key={inv.id} className="hover:bg-slate-800/40">
                       <td className="py-2.5 font-mono text-cyan-300">{inv.invoice_number}</td>
                       <td className="py-2.5 text-slate-200">{inv.partner_company || 'Apex Digital'}</td>
