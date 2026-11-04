@@ -1,9 +1,10 @@
 // Module 05: Customer Leads with Add Lead, Deduplication & Simple Wording
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Layers, ShieldAlert, GitMerge, UserCheck, Plus, Search } from 'lucide-react'
 import { AddLeadModal } from '@/components/AddLeadModal'
+import { Pagination } from '@/components/Pagination'
 import { CrmLeadRecord } from '@/types/models'
 import { UI_TERMS } from '@/lib/terms'
 
@@ -13,23 +14,44 @@ export default function CrmLeadsPage() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [loading, setLoading] = useState(true)
 
-  const loadLeads = () => {
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(5)
+  const [totalCount, setTotalCount] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+
+  const loadLeads = useCallback(() => {
     setLoading(true)
-    fetch('/api/crm/leads?mask=true')
+    const params = new URLSearchParams({
+      mask: 'true',
+      page: String(currentPage),
+      limit: String(pageSize),
+    })
+    if (search.trim()) params.append('search', search.trim())
+
+    fetch(`/api/crm/leads?${params.toString()}`)
       .then((r) => r.json())
-      .then((d) => setLeads(d.leads || []))
+      .then((d) => {
+        setLeads(d.leads || [])
+        setTotalCount(d.totalCount || 0)
+        setTotalPages(d.totalPages || 1)
+      })
       .finally(() => setLoading(false))
-  }
+  }, [currentPage, pageSize, search])
 
   useEffect(() => {
     loadLeads()
-  }, [])
+  }, [loadLeads])
 
-  const filteredLeads = leads.filter((l) =>
-    l.company_name.toLowerCase().includes(search.toLowerCase()) ||
-    l.contact_person.toLowerCase().includes(search.toLowerCase()) ||
-    l.lead_code.toLowerCase().includes(search.toLowerCase())
-  )
+  const handleSearchChange = (val: string) => {
+    setSearch(val)
+    setCurrentPage(1)
+  }
+
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size)
+    setCurrentPage(1)
+  }
 
   return (
     <div className="space-y-6">
@@ -78,7 +100,7 @@ export default function CrmLeadsPage() {
               type="text"
               placeholder="Search customer or phone..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => handleSearchChange(e.target.value)}
               className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white"
             />
           </div>
@@ -98,14 +120,20 @@ export default function CrmLeadsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {filteredLeads.length === 0 ? (
+              {loading && leads.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-6 text-center text-slate-500">
+                    Loading customer leads...
+                  </td>
+                </tr>
+              ) : leads.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="p-8 text-center text-slate-500">
                     No customer leads found matching your search.
                   </td>
                 </tr>
               ) : (
-                filteredLeads.map((l) => (
+                leads.map((l) => (
                   <tr key={l.id} className="hover:bg-slate-800/40">
                     <td className="p-3 font-mono text-purple-300 font-semibold">{l.lead_code}</td>
                     <td className="p-3 font-medium text-white">{l.company_name}</td>
@@ -131,6 +159,17 @@ export default function CrmLeadsPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Database Pagination for Leads */}
+        <Pagination
+          currentPage={currentPage}
+          pageSize={pageSize}
+          totalCount={totalCount}
+          totalPages={totalPages}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={handlePageSizeChange}
+          isLoading={loading}
+        />
       </div>
 
       <AddLeadModal

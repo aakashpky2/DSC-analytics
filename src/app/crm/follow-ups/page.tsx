@@ -1,15 +1,23 @@
 // Customer Follow-ups (/crm/follow-ups)
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, PhoneCall, MessageSquare, Mail, Plus, X, CheckCircle2, Clock } from 'lucide-react'
+import { Pagination } from '@/components/Pagination'
 
 export default function CrmFollowUpsPage() {
   const [followUps, setFollowUps] = useState<any[]>([])
   const [leads, setLeads] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [isModalOpen, setIsModalOpen] = useState(false)
+
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(5)
+  const [totalCount, setTotalCount] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+
   const [formData, setFormData] = useState({
     lead_id: '',
     contact_mode: 'phone_call',
@@ -19,14 +27,22 @@ export default function CrmFollowUpsPage() {
   })
   const [submitting, setSubmitting] = useState(false)
 
-  const loadData = () => {
+  const loadData = useCallback(() => {
     setLoading(true)
+    const params = new URLSearchParams({
+      page: String(currentPage),
+      limit: String(pageSize),
+    })
+
     Promise.all([
-      fetch('/api/crm/follow-ups').then((r) => r.json()),
+      fetch(`/api/crm/follow-ups?${params.toString()}`).then((r) => r.json()),
       fetch('/api/crm/leads?mask=true').then((r) => r.json()),
     ])
       .then(([fData, lData]) => {
         setFollowUps(fData.followUps || [])
+        setTotalCount(fData.totalCount || 0)
+        setTotalPages(fData.totalPages || 1)
+
         const activeLeads = lData.leads || []
         setLeads(activeLeads)
         if (activeLeads.length > 0 && !formData.lead_id) {
@@ -35,11 +51,16 @@ export default function CrmFollowUpsPage() {
       })
       .catch((err) => console.error(err))
       .finally(() => setLoading(false))
-  }
+  }, [currentPage, pageSize])
 
   useEffect(() => {
     loadData()
-  }, [])
+  }, [loadData])
+
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size)
+    setCurrentPage(1)
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -211,6 +232,17 @@ export default function CrmFollowUpsPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Database Pagination */}
+        <Pagination
+          currentPage={currentPage}
+          pageSize={pageSize}
+          totalCount={totalCount}
+          totalPages={totalPages}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={handlePageSizeChange}
+          isLoading={loading}
+        />
       </div>
 
       {/* Schedule Modal */}

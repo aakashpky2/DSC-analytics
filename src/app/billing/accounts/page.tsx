@@ -1,14 +1,22 @@
 // Bank Accounts Configuration (/billing/accounts)
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Landmark, QrCode, Plus, X, PowerOff, CheckCircle2 } from 'lucide-react'
+import { Pagination } from '@/components/Pagination'
 
 export default function BillingAccountsPage() {
   const [accounts, setAccounts] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [isModalOpen, setIsModalOpen] = useState(false)
+
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(5)
+  const [totalCount, setTotalCount] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+
   const [formData, setFormData] = useState({
     account_nickname: '',
     bank_name: '',
@@ -20,18 +28,32 @@ export default function BillingAccountsPage() {
   })
   const [submitting, setSubmitting] = useState(false)
 
-  const loadAccounts = () => {
+  const loadAccounts = useCallback(() => {
     setLoading(true)
-    fetch('/api/billing/accounts')
+    const params = new URLSearchParams({
+      page: String(currentPage),
+      limit: String(pageSize),
+    })
+
+    fetch(`/api/billing/accounts?${params.toString()}`)
       .then((r) => r.json())
-      .then((d) => setAccounts(d.accounts || []))
+      .then((d) => {
+        setAccounts(d.accounts || [])
+        setTotalCount(d.totalCount || 0)
+        setTotalPages(d.totalPages || 1)
+      })
       .catch((err) => console.error(err))
       .finally(() => setLoading(false))
-  }
+  }, [currentPage, pageSize])
 
   useEffect(() => {
     loadAccounts()
-  }, [])
+  }, [loadAccounts])
+
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size)
+    setCurrentPage(1)
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -130,6 +152,19 @@ export default function BillingAccountsPage() {
             </div>
           ))
         )}
+      </div>
+
+      {/* Database Pagination */}
+      <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
+        <Pagination
+          currentPage={currentPage}
+          pageSize={pageSize}
+          totalCount={totalCount}
+          totalPages={totalPages}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={handlePageSizeChange}
+          isLoading={loading}
+        />
       </div>
 
       {/* Add Account Modal */}

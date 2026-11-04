@@ -1,14 +1,22 @@
 // Other Business Services (/services)
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Sparkles, Plus, X, ChevronRight, FileCheck, Layers } from 'lucide-react'
+import { Pagination } from '@/components/Pagination'
 
 export default function ServicesPage() {
   const [orders, setOrders] = useState<any[]>([])
   const [partners, setPartners] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [isModalOpen, setIsModalOpen] = useState(false)
+
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(5)
+  const [totalCount, setTotalCount] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+
   const [formData, setFormData] = useState({
     service_type: 'trademark',
     partner_id: '',
@@ -20,14 +28,21 @@ export default function ServicesPage() {
   })
   const [submitting, setSubmitting] = useState(false)
 
-  const loadData = () => {
+  const loadData = useCallback(() => {
     setLoading(true)
+    const params = new URLSearchParams({
+      page: String(currentPage),
+      limit: String(pageSize),
+    })
+
     Promise.all([
-      fetch('/api/services/orders').then((r) => r.json()),
+      fetch(`/api/services/orders?${params.toString()}`).then((r) => r.json()),
       fetch('/api/partners').then((r) => r.json()),
     ])
       .then(([sData, pData]) => {
         setOrders(sData.orders || [])
+        setTotalCount(sData.totalCount || 0)
+        setTotalPages(sData.totalPages || 1)
         const pList = pData.partners || []
         setPartners(pList)
         if (pList.length > 0 && !formData.partner_id) {
@@ -36,11 +51,16 @@ export default function ServicesPage() {
       })
       .catch((err) => console.error(err))
       .finally(() => setLoading(false))
-  }
+  }, [currentPage, pageSize])
 
   useEffect(() => {
     loadData()
-  }, [])
+  }, [loadData])
+
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size)
+    setCurrentPage(1)
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -156,6 +176,17 @@ export default function ServicesPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Database Pagination */}
+        <Pagination
+          currentPage={currentPage}
+          pageSize={pageSize}
+          totalCount={totalCount}
+          totalPages={totalPages}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={handlePageSizeChange}
+          isLoading={loading}
+        />
       </div>
 
       {/* New Service Application Modal */}

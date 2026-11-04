@@ -1,14 +1,22 @@
 // DSC Products & Pricing (/dsc/catalog)
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { FileCheck2, Tag, Plus, Edit2, CheckCircle2, X } from 'lucide-react'
+import { Pagination } from '@/components/Pagination'
 
 export default function DscCatalogPage() {
   const [catalog, setCatalog] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingItem, setEditingItem] = useState<any | null>(null)
+
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(5)
+  const [totalCount, setTotalCount] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+
   const [formData, setFormData] = useState({
     class_type: 'class_3_individual',
     certificate_type: 'combo_signing_encryption',
@@ -19,18 +27,32 @@ export default function DscCatalogPage() {
   })
   const [submitting, setSubmitting] = useState(false)
 
-  const loadCatalog = () => {
+  const loadCatalog = useCallback(() => {
     setLoading(true)
-    fetch('/api/dsc/catalog')
+    const params = new URLSearchParams({
+      page: String(currentPage),
+      limit: String(pageSize),
+    })
+
+    fetch(`/api/dsc/catalog?${params.toString()}`)
       .then((r) => r.json())
-      .then((d) => setCatalog(d.catalog || []))
+      .then((d) => {
+        setCatalog(d.catalog || [])
+        setTotalCount(d.totalCount || 0)
+        setTotalPages(d.totalPages || 1)
+      })
       .catch((err) => console.error(err))
       .finally(() => setLoading(false))
-  }
+  }, [currentPage, pageSize])
 
   useEffect(() => {
     loadCatalog()
-  }, [])
+  }, [loadCatalog])
+
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size)
+    setCurrentPage(1)
+  }
 
   const handleOpenAdd = () => {
     setEditingItem(null)
@@ -182,6 +204,17 @@ export default function DscCatalogPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Database Pagination Bar */}
+        <Pagination
+          currentPage={currentPage}
+          pageSize={pageSize}
+          totalCount={totalCount}
+          totalPages={totalPages}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={handlePageSizeChange}
+          isLoading={loading}
+        />
       </div>
 
       {/* Add / Edit Modal */}

@@ -1,29 +1,65 @@
 // Invoices (/billing/invoices)
-import React from 'react'
+'use client'
+
+import React, { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Receipt, Landmark, QrCode, CreditCard, ArrowRight, Plus } from 'lucide-react'
+import { Receipt, Landmark, QrCode, CreditCard, ArrowRight, Plus, Search } from 'lucide-react'
+import { Pagination } from '@/components/Pagination'
 
-async function getBillingData() {
-  const port = process.env.PORT || '3000'
-  try {
-    const [invRes, accRes, serRes] = await Promise.all([
-      fetch(`http://127.0.0.1:${port}/api/billing/invoices`, { cache: 'no-store' }),
-      fetch(`http://127.0.0.1:${port}/api/billing/accounts`, { cache: 'no-store' }),
-      fetch(`http://127.0.0.1:${port}/api/billing/series`, { cache: 'no-store' }),
+export default function BillingInvoicesPage() {
+  const [invoices, setInvoices] = useState<any[]>([])
+  const [accounts, setAccounts] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(5)
+  const [totalCount, setTotalCount] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+
+  const loadData = useCallback(() => {
+    setLoading(true)
+    const params = new URLSearchParams({
+      page: String(currentPage),
+      limit: String(pageSize),
+    })
+    if (search.trim()) params.append('search', search.trim())
+    if (statusFilter) params.append('status', statusFilter)
+
+    Promise.all([
+      fetch(`/api/billing/invoices?${params.toString()}`).then((r) => r.json()),
+      fetch('/api/billing/accounts').then((r) => r.json()),
     ])
+      .then(([invData, accData]) => {
+        setInvoices(invData.invoices || [])
+        setTotalCount(invData.totalCount || 0)
+        setTotalPages(invData.totalPages || 1)
+        setAccounts(accData.accounts || [])
+      })
+      .catch((err) => console.error(err))
+      .finally(() => setLoading(false))
+  }, [currentPage, pageSize, search, statusFilter])
 
-    return {
-      invoices: invRes.ok ? (await invRes.json()).invoices : [],
-      accounts: accRes.ok ? (await accRes.json()).accounts : [],
-      series: serRes.ok ? (await serRes.json()).series : [],
-    }
-  } catch {
-    return { invoices: [], accounts: [], series: [] }
+  useEffect(() => {
+    loadData()
+  }, [loadData])
+
+  const handleSearchChange = (val: string) => {
+    setSearch(val)
+    setCurrentPage(1)
   }
-}
 
-export default async function BillingInvoicesPage() {
-  const { invoices, accounts } = await getBillingData()
+  const handleStatusFilterChange = (st: string) => {
+    setStatusFilter(st)
+    setCurrentPage(1)
+  }
+
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size)
+    setCurrentPage(1)
+  }
 
   return (
     <div className="space-y-6">
@@ -67,8 +103,32 @@ export default async function BillingInvoicesPage() {
 
       {/* Invoices Register */}
       <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-          <div className="text-xs font-semibold text-white">Invoice Records & Balance</div>
+        <div className="p-4 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="text-xs font-semibold text-white">Invoice Records & Balance ({totalCount})</div>
+          
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={statusFilter}
+              onChange={(e) => handleStatusFilterChange(e.target.value)}
+              className="bg-slate-950 border border-slate-800 text-white rounded-md px-2.5 py-1.5 text-xs"
+            >
+              <option value="">All Statuses</option>
+              <option value="unpaid">Payment Pending</option>
+              <option value="paid">Paid in Full</option>
+              <option value="partially_paid">Partially Paid</option>
+            </select>
+
+            <div className="relative w-full sm:w-64">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search invoice number or partner..."
+                value={search}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white"
+              />
+            </div>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -87,35 +147,60 @@ export default async function BillingInvoicesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {invoices.map((inv: any) => {
-                const totalGst = (inv.cgst_amount || 0) + (inv.sgst_amount || 0) + (inv.igst_amount || 0)
-                return (
-                  <tr key={inv.id} className="hover:bg-slate-800/40">
-                    <td className="p-3 font-mono text-cyan-300 font-semibold">{inv.invoice_number}</td>
-                    <td className="p-3 font-medium text-white">{inv.partner_company}</td>
-                    <td className="p-3 text-slate-400 font-mono">{inv.invoice_date}</td>
-                    <td className="p-3 text-slate-400 font-mono">{inv.due_date}</td>
-                    <td className="p-3 text-right text-slate-300">₹{inv.subtotal?.toLocaleString('en-IN')}</td>
-                    <td className="p-3 text-right text-slate-400">₹{totalGst.toLocaleString('en-IN')}</td>
-                    <td className="p-3 text-right font-bold text-white">₹{inv.total_amount?.toLocaleString('en-IN')}</td>
-                    <td className="p-3 text-right font-bold text-amber-400">
-                      ₹{inv.outstanding_balance?.toLocaleString('en-IN')}
-                    </td>
-                    <td className="p-3">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
-                        inv.status === 'paid'
-                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                          : 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
-                      }`}>
-                        {inv.status === 'paid' ? 'Paid in Full' : 'Payment Pending'}
-                      </span>
-                    </td>
-                  </tr>
-                )
-              })}
+              {loading && invoices.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="p-8 text-center text-slate-500">
+                    Loading invoices...
+                  </td>
+                </tr>
+              ) : invoices.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="p-8 text-center text-slate-500">
+                    No invoices found.
+                  </td>
+                </tr>
+              ) : (
+                invoices.map((inv: any) => {
+                  const totalGst = (inv.cgst_amount || 0) + (inv.sgst_amount || 0) + (inv.igst_amount || 0)
+                  return (
+                    <tr key={inv.id} className="hover:bg-slate-800/40">
+                      <td className="p-3 font-mono text-cyan-300 font-semibold">{inv.invoice_number}</td>
+                      <td className="p-3 font-medium text-white">{inv.partner_company}</td>
+                      <td className="p-3 text-slate-400 font-mono">{inv.invoice_date}</td>
+                      <td className="p-3 text-slate-400 font-mono">{inv.due_date}</td>
+                      <td className="p-3 text-right text-slate-300">₹{inv.subtotal?.toLocaleString('en-IN')}</td>
+                      <td className="p-3 text-right text-slate-400">₹{totalGst.toLocaleString('en-IN')}</td>
+                      <td className="p-3 text-right font-bold text-white">₹{inv.total_amount?.toLocaleString('en-IN')}</td>
+                      <td className="p-3 text-right font-bold text-amber-400">
+                        ₹{inv.outstanding_balance?.toLocaleString('en-IN')}
+                      </td>
+                      <td className="p-3">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                          inv.status === 'paid'
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            : 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
+                        }`}>
+                          {inv.status === 'paid' ? 'Paid in Full' : 'Payment Pending'}
+                        </span>
+                      </td>
+                    </tr>
+                  )
+                })
+              )}
             </tbody>
           </table>
         </div>
+
+        {/* Database Pagination */}
+        <Pagination
+          currentPage={currentPage}
+          pageSize={pageSize}
+          totalCount={totalCount}
+          totalPages={totalPages}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={handlePageSizeChange}
+          isLoading={loading}
+        />
       </div>
     </div>
   )

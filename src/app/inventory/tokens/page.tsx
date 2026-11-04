@@ -1,9 +1,10 @@
 // Module 04: Token Stock Management with Record Purchase Modal & Simple Wording
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Cpu, Calculator, PackageCheck, AlertTriangle, Plus } from 'lucide-react'
 import { AddTokenBatchModal } from '@/components/AddTokenBatchModal'
+import { Pagination } from '@/components/Pagination'
 import { TokenPurchaseBatchRecord, BranchStockRecord } from '@/types/models'
 import { UI_TERMS } from '@/lib/terms'
 
@@ -13,22 +14,48 @@ export default function InventoryTokensPage() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [loading, setLoading] = useState(true)
 
-  const loadData = () => {
+  // Pagination states for Batches
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(5)
+  const [totalCount, setTotalCount] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+
+  // Pagination states for Branch Stock matrix
+  const [stockPage, setStockPage] = useState(1)
+  const [stockPageSize, setStockPageSize] = useState(5)
+
+  const loadData = useCallback(() => {
     setLoading(true)
+    const params = new URLSearchParams({
+      page: String(currentPage),
+      limit: String(pageSize),
+    })
+
     Promise.all([
-      fetch('/api/inventory/batches').then((r) => r.json()),
+      fetch(`/api/inventory/batches?${params.toString()}`).then((r) => r.json()),
       fetch('/api/inventory/branches').then((r) => r.json()),
     ])
       .then(([bData, sData]) => {
         setBatches(bData.batches || [])
+        setTotalCount(bData.totalCount || 0)
+        setTotalPages(bData.totalPages || 1)
         setStock(sData.stock || [])
       })
       .finally(() => setLoading(false))
-  }
+  }, [currentPage, pageSize])
 
   useEffect(() => {
     loadData()
-  }, [])
+  }, [loadData])
+
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size)
+    setCurrentPage(1)
+  }
+
+  // Paginated view for Branch Stock matrix
+  const paginatedStock = stock.slice((stockPage - 1) * stockPageSize, stockPage * stockPageSize)
+  const stockTotalPages = Math.max(1, Math.ceil(stock.length / stockPageSize))
 
   return (
     <div className="space-y-6">
@@ -80,31 +107,56 @@ export default function InventoryTokensPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {batches.map((b) => (
-                <tr key={b.id} className="hover:bg-slate-800/40">
-                  <td className="p-3 font-mono text-cyan-300 font-semibold">{b.batch_number}</td>
-                  <td className="p-3 text-white uppercase">{b.token_model.replace('_', ' ')}</td>
-                  <td className="p-3 text-slate-300">{b.vendor_name}</td>
-                  <td className="p-3 text-right font-semibold text-white">{b.quantity_purchased}</td>
-                  <td className="p-3 text-right text-slate-400">₹{b.base_unit_price?.toFixed(2)}</td>
-                  <td className="p-3 text-right text-slate-400">₹{b.inward_shipping_cost?.toFixed(2)}</td>
-                  <td className="p-3 text-right text-slate-400">₹{b.customs_or_taxes?.toFixed(2)}</td>
-                  <td className="p-3 text-right text-slate-400">₹{b.handling_charges?.toFixed(2)}</td>
-                  <td className="p-3 text-right font-bold text-white">₹{b.total_landed_cost?.toLocaleString('en-IN')}</td>
-                  <td className="p-3 text-right font-bold text-cyan-400 bg-cyan-950/20">
-                    ₹{b.unit_landed_cost?.toFixed(2)}
+              {loading && batches.length === 0 ? (
+                <tr>
+                  <td colSpan={10} className="p-6 text-center text-slate-500">
+                    Loading batches...
                   </td>
                 </tr>
-              ))}
+              ) : batches.length === 0 ? (
+                <tr>
+                  <td colSpan={10} className="p-6 text-center text-slate-500">
+                    No purchase batches found.
+                  </td>
+                </tr>
+              ) : (
+                batches.map((b) => (
+                  <tr key={b.id} className="hover:bg-slate-800/40">
+                    <td className="p-3 font-mono text-cyan-300 font-semibold">{b.batch_number}</td>
+                    <td className="p-3 text-white uppercase">{b.token_model.replace('_', ' ')}</td>
+                    <td className="p-3 text-slate-300">{b.vendor_name}</td>
+                    <td className="p-3 text-right font-semibold text-white">{b.quantity_purchased}</td>
+                    <td className="p-3 text-right text-slate-400">₹{b.base_unit_price?.toFixed(2)}</td>
+                    <td className="p-3 text-right text-slate-400">₹{b.inward_shipping_cost?.toFixed(2)}</td>
+                    <td className="p-3 text-right text-slate-400">₹{b.customs_or_taxes?.toFixed(2)}</td>
+                    <td className="p-3 text-right text-slate-400">₹{b.handling_charges?.toFixed(2)}</td>
+                    <td className="p-3 text-right font-bold text-white">₹{b.total_landed_cost?.toLocaleString('en-IN')}</td>
+                    <td className="p-3 text-right font-bold text-cyan-400 bg-cyan-950/20">
+                      ₹{b.unit_landed_cost?.toFixed(2)}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
+
+        {/* Database Pagination for Batches */}
+        <Pagination
+          currentPage={currentPage}
+          pageSize={pageSize}
+          totalCount={totalCount}
+          totalPages={totalPages}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={handlePageSizeChange}
+          isLoading={loading}
+        />
       </div>
 
       {/* Branch Stock Matrix */}
       <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-          <div className="text-xs font-semibold text-white">Stock in Branch & Damaged Token Quarantine</div>
+          <div className="text-xs font-semibold text-white">Stock in Branch & Damaged Token Quarantine ({stock.length})</div>
         </div>
 
         <div className="overflow-x-auto">
@@ -120,19 +172,40 @@ export default function InventoryTokensPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {stock.map((s) => (
-                <tr key={s.id} className="hover:bg-slate-800/40">
-                  <td className="p-3 font-semibold text-white">{s.branch_name}</td>
-                  <td className="p-3 font-mono text-indigo-300">{s.branch_code}</td>
-                  <td className="p-3 text-slate-200 uppercase">{s.token_model.replace('_', ' ')}</td>
-                  <td className="p-3 text-right font-bold text-emerald-400">{s.quantity_on_hand}</td>
-                  <td className="p-3 text-right text-red-400">{s.quarantine_damaged}</td>
-                  <td className="p-3 text-right text-slate-400">{s.min_threshold}</td>
+              {paginatedStock.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="p-6 text-center text-slate-500">
+                    No branch stock records.
+                  </td>
                 </tr>
-              ))}
+              ) : (
+                paginatedStock.map((s) => (
+                  <tr key={s.id} className="hover:bg-slate-800/40">
+                    <td className="p-3 font-semibold text-white">{s.branch_name}</td>
+                    <td className="p-3 font-mono text-indigo-300">{s.branch_code}</td>
+                    <td className="p-3 text-slate-200 uppercase">{s.token_model.replace('_', ' ')}</td>
+                    <td className="p-3 text-right font-bold text-emerald-400">{s.quantity_on_hand}</td>
+                    <td className="p-3 text-right text-red-400">{s.quarantine_damaged}</td>
+                    <td className="p-3 text-right text-slate-400">{s.min_threshold}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
+
+        {/* Pagination for Branch Stock */}
+        <Pagination
+          currentPage={stockPage}
+          pageSize={stockPageSize}
+          totalCount={stock.length}
+          totalPages={stockTotalPages}
+          onPageChange={setStockPage}
+          onPageSizeChange={(sz) => {
+            setStockPageSize(sz)
+            setStockPage(1)
+          }}
+        />
       </div>
 
       <AddTokenBatchModal

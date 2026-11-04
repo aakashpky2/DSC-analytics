@@ -1,13 +1,22 @@
 // Courier Dispatches (/courier)
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Truck, Plus, X, Search, CheckCircle2, Clock, MapPin } from 'lucide-react'
+import { Pagination } from '@/components/Pagination'
 
 export default function CourierPage() {
   const [dispatches, setDispatches] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const [search, setSearch] = useState('')
+
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(5)
+  const [totalCount, setTotalCount] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+
   const [formData, setFormData] = useState({
     carrier_name: 'Blue Dart',
     awb_number: '',
@@ -18,18 +27,38 @@ export default function CourierPage() {
   })
   const [submitting, setSubmitting] = useState(false)
 
-  const loadDispatches = () => {
+  const loadDispatches = useCallback(() => {
     setLoading(true)
-    fetch('/api/courier/dispatches')
+    const params = new URLSearchParams({
+      page: String(currentPage),
+      limit: String(pageSize),
+    })
+    if (search.trim()) params.append('search', search.trim())
+
+    fetch(`/api/courier/dispatches?${params.toString()}`)
       .then((r) => r.json())
-      .then((d) => setDispatches(d.dispatches || []))
+      .then((d) => {
+        setDispatches(d.dispatches || [])
+        setTotalCount(d.totalCount || 0)
+        setTotalPages(d.totalPages || 1)
+      })
       .catch((err) => console.error(err))
       .finally(() => setLoading(false))
-  }
+  }, [currentPage, pageSize, search])
 
   useEffect(() => {
     loadDispatches()
-  }, [])
+  }, [loadDispatches])
+
+  const handleSearchChange = (val: string) => {
+    setSearch(val)
+    setCurrentPage(1)
+  }
+
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size)
+    setCurrentPage(1)
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -78,8 +107,19 @@ export default function CourierPage() {
 
       {/* Dispatches Table */}
       <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-          <div className="text-xs font-semibold text-white">Shipment Records ({dispatches.length})</div>
+        <div className="p-4 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="text-xs font-semibold text-white">Shipment Records ({totalCount})</div>
+          
+          <div className="relative w-full sm:w-64">
+            <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search dispatch #, carrier, AWB..."
+              value={search}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white"
+            />
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -131,6 +171,17 @@ export default function CourierPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Database Pagination */}
+        <Pagination
+          currentPage={currentPage}
+          pageSize={pageSize}
+          totalCount={totalCount}
+          totalPages={totalPages}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={handlePageSizeChange}
+          isLoading={loading}
+        />
       </div>
 
       {/* Book Waybill Modal */}

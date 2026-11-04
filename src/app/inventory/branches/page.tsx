@@ -1,10 +1,11 @@
 // Stock Given to Branch (/inventory/branches)
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Building2, FileText, CheckCircle2, Truck, Plus, RefreshCw, Eye } from 'lucide-react'
 import { IssueDeliveryNoteModal } from '@/components/IssueDeliveryNoteModal'
+import { Pagination } from '@/components/Pagination'
 
 export default function BranchInventoryPage() {
   const [stock, setStock] = useState<any[]>([])
@@ -15,26 +16,52 @@ export default function BranchInventoryPage() {
   const [selectedStock, setSelectedStock] = useState<any | null>(null)
   const [receiveLoading, setReceiveLoading] = useState<string | null>(null)
 
-  const loadData = () => {
+  // Pagination states for Branch Stock
+  const [stockPage, setStockPage] = useState(1)
+  const [stockPageSize, setStockPageSize] = useState(5)
+  const [stockTotalCount, setStockTotalCount] = useState(0)
+  const [stockTotalPages, setStockTotalPages] = useState(1)
+
+  // Pagination states for Transfers History
+  const [transferPage, setTransferPage] = useState(1)
+  const [transferPageSize, setTransferPageSize] = useState(5)
+  const [transferTotalCount, setTransferTotalCount] = useState(0)
+  const [transferTotalPages, setTransferTotalPages] = useState(1)
+
+  const loadData = useCallback(() => {
     setLoading(true)
+    const stockParams = new URLSearchParams({
+      page: String(stockPage),
+      limit: String(stockPageSize),
+    })
+    const transferParams = new URLSearchParams({
+      page: String(transferPage),
+      limit: String(transferPageSize),
+    })
+
     Promise.all([
-      fetch('/api/inventory/branches').then((r) => r.json()),
-      fetch('/api/inventory/transfers').then((r) => r.json()),
+      fetch(`/api/inventory/branches?${stockParams.toString()}`).then((r) => r.json()),
+      fetch(`/api/inventory/transfers?${transferParams.toString()}`).then((r) => r.json()),
     ])
       .then(([bData, tData]) => {
         setStock(bData.stock || [])
+        setStockTotalCount(bData.totalCount || 0)
+        setStockTotalPages(bData.totalPages || 1)
         setBranches(bData.branches || [])
+
         setTransfers(tData.challans || [])
+        setTransferTotalCount(tData.totalCount || 0)
+        setTransferTotalPages(tData.totalPages || 1)
       })
       .catch((err) => {
         console.error('Failed to load branch stock:', err)
       })
       .finally(() => setLoading(false))
-  }
+  }, [stockPage, stockPageSize, transferPage, transferPageSize])
 
   useEffect(() => {
     loadData()
-  }, [])
+  }, [loadData])
 
   const handleOpenTransferModal = (rowStock?: any) => {
     setSelectedStock(rowStock || stock[0] || null)
@@ -152,6 +179,20 @@ export default function BranchInventoryPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Database Pagination for Branch Stock */}
+        <Pagination
+          currentPage={stockPage}
+          pageSize={stockPageSize}
+          totalCount={stockTotalCount}
+          totalPages={stockTotalPages}
+          onPageChange={setStockPage}
+          onPageSizeChange={(sz) => {
+            setStockPageSize(sz)
+            setStockPage(1)
+          }}
+          isLoading={loading}
+        />
       </div>
 
       {/* Inter-Branch Transfer History & Delivery Challan Log */}
@@ -243,6 +284,20 @@ export default function BranchInventoryPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Database Pagination for Transfers */}
+        <Pagination
+          currentPage={transferPage}
+          pageSize={transferPageSize}
+          totalCount={transferTotalCount}
+          totalPages={transferTotalPages}
+          onPageChange={setTransferPage}
+          onPageSizeChange={(sz) => {
+            setTransferPageSize(sz)
+            setTransferPage(1)
+          }}
+          isLoading={loading}
+        />
       </div>
 
       <IssueDeliveryNoteModal

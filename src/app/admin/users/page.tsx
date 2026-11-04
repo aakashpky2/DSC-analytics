@@ -1,35 +1,62 @@
 // Staff & Roles (/admin/users)
 'use client'
 
-import React, { useState, useEffect } from 'react'
-import { Shield, UserCheck, Lock, Unlock, EyeOff, Plus, UserPlus } from 'lucide-react'
+import React, { useState, useEffect, useCallback } from 'react'
+import { Shield, UserCheck, Lock, Unlock, EyeOff, Plus, UserPlus, Search } from 'lucide-react'
 import { AddStaffModal } from '@/components/AddStaffModal'
+import { Pagination } from '@/components/Pagination'
 
 export default function UsersPage() {
   const [users, setUsers] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
 
-  const fetchUsers = () => {
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(5)
+  const [totalCount, setTotalCount] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+
+  const fetchUsers = useCallback(() => {
     setLoading(true)
-    fetch('/api/admin/users?mask=false')
+    const params = new URLSearchParams({
+      mask: 'false',
+      page: String(currentPage),
+      limit: String(pageSize),
+    })
+    if (search.trim()) params.append('search', search.trim())
+
+    fetch(`/api/admin/users?${params.toString()}`)
       .then((res) => {
         if (!res.ok) throw new Error('Unauthorized')
         return res.json()
       })
       .then((data) => {
         setUsers(data.users || [])
+        setTotalCount(data.totalCount || 0)
+        setTotalPages(data.totalPages || 1)
       })
       .catch((err) => {
         console.error('Failed to load users:', err)
       })
       .finally(() => setLoading(false))
-  }
+  }, [currentPage, pageSize, search])
 
   useEffect(() => {
     fetchUsers()
-  }, [])
+  }, [fetchUsers])
+
+  const handleSearchChange = (val: string) => {
+    setSearch(val)
+    setCurrentPage(1)
+  }
+
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size)
+    setCurrentPage(1)
+  }
 
   const handleToggleFreeze = async (userId: string, currentFrozen: number) => {
     setActionLoading(userId)
@@ -100,11 +127,24 @@ export default function UsersPage() {
 
       {/* Users Data Table */}
       <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-          <div className="text-xs font-semibold text-white">Employee Accounts ({users.length})</div>
-          <div className="flex items-center gap-1.5 text-xs text-amber-400">
-            <EyeOff className="w-3.5 h-3.5" />
-            <span className="text-[11px]">Field staff see masked contacts</span>
+        <div className="p-4 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-semibold text-white">Employee Accounts ({totalCount})</span>
+            <div className="flex items-center gap-1.5 text-xs text-amber-400">
+              <EyeOff className="w-3.5 h-3.5" />
+              <span className="text-[11px]">Field staff see masked contacts</span>
+            </div>
+          </div>
+
+          <div className="relative w-full sm:w-64">
+            <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search staff name, email, role..."
+              value={search}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white"
+            />
           </div>
         </div>
 
@@ -216,6 +256,17 @@ export default function UsersPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Database Pagination */}
+        <Pagination
+          currentPage={currentPage}
+          pageSize={pageSize}
+          totalCount={totalCount}
+          totalPages={totalPages}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={handlePageSizeChange}
+          isLoading={loading}
+        />
       </div>
 
       <AddStaffModal

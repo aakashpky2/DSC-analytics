@@ -1,10 +1,11 @@
 // Module 02: Partner Directory with Add Partner Action & Plain English Wording
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { Users2, Wallet, CreditCard, ShieldCheck, ArrowRight, Plus, Search } from 'lucide-react'
 import { AddPartnerModal } from '@/components/AddPartnerModal'
+import { Pagination } from '@/components/Pagination'
 import { PartnerRecord } from '@/types/models'
 import { UI_TERMS } from '@/lib/terms'
 
@@ -14,26 +15,66 @@ export default function PartnersPage() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [loading, setLoading] = useState(true)
 
-  const loadPartners = () => {
-    setLoading(true)
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(5)
+  const [totalCount, setTotalCount] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+
+  // System overview KPIs (all records)
+  const [kpis, setKpis] = useState({ totalPartners: 0, totalWallet: 0, totalCreditLimit: 0 })
+
+  const loadKpis = () => {
     fetch('/api/partners?mask=true')
       .then((r) => r.json())
-      .then((d) => setPartners(d.partners || []))
-      .finally(() => setLoading(false))
+      .then((d) => {
+        const all: PartnerRecord[] = d.partners || []
+        const totalWallet = all.reduce((sum, p) => sum + (p.wallet_balance || 0), 0)
+        const totalCreditLimit = all.reduce((sum, p) => sum + (p.credit_limit || 0), 0)
+        setKpis({ totalPartners: all.length, totalWallet, totalCreditLimit })
+      })
+      .catch(() => {})
   }
+
+  const loadPartners = useCallback(() => {
+    setLoading(true)
+    const params = new URLSearchParams({
+      mask: 'true',
+      page: String(currentPage),
+      limit: String(pageSize),
+    })
+    if (search.trim()) {
+      params.append('search', search.trim())
+    }
+
+    fetch(`/api/partners?${params.toString()}`)
+      .then((r) => r.json())
+      .then((d) => {
+        setPartners(d.partners || [])
+        setTotalCount(d.totalCount || 0)
+        setTotalPages(d.totalPages || 1)
+      })
+      .catch((err) => console.error(err))
+      .finally(() => setLoading(false))
+  }, [currentPage, pageSize, search])
+
+  useEffect(() => {
+    loadKpis()
+  }, [])
 
   useEffect(() => {
     loadPartners()
-  }, [])
+  }, [loadPartners])
 
-  const filteredPartners = partners.filter((p) =>
-    p.company_name.toLowerCase().includes(search.toLowerCase()) ||
-    p.contact_person.toLowerCase().includes(search.toLowerCase()) ||
-    p.partner_code.toLowerCase().includes(search.toLowerCase())
-  )
+  const handleSearchChange = (val: string) => {
+    setSearch(val)
+    setCurrentPage(1) // Reset to page 1 on search
+  }
 
-  const totalWallet = partners.reduce((sum, p) => sum + (p.wallet_balance || 0), 0)
-  const totalCreditLimit = partners.reduce((sum, p) => sum + (p.credit_limit || 0), 0)
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size)
+    setCurrentPage(1) // Reset to page 1 on page size change
+  }
 
   return (
     <div className="space-y-6">
@@ -63,20 +104,20 @@ export default function PartnersPage() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
           <div className="text-xs text-slate-400">Active Partners</div>
-          <div className="text-2xl font-bold text-white mt-1">{partners.length}</div>
+          <div className="text-2xl font-bold text-white mt-1">{kpis.totalPartners}</div>
           <div className="text-[11px] text-emerald-400 mt-1">100% Documents Verified</div>
         </div>
         <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
           <div className="text-xs text-slate-400">Total Wallet Balance</div>
           <div className="text-2xl font-bold text-emerald-400 mt-1">
-            ₹{totalWallet.toLocaleString('en-IN')}
+            ₹{kpis.totalWallet.toLocaleString('en-IN')}
           </div>
           <div className="text-[11px] text-slate-400 mt-1">Available to issue certificates</div>
         </div>
         <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
           <div className="text-xs text-slate-400">Authorized Credit Lines</div>
           <div className="text-2xl font-bold text-indigo-400 mt-1">
-            ₹{totalCreditLimit.toLocaleString('en-IN')}
+            ₹{kpis.totalCreditLimit.toLocaleString('en-IN')}
           </div>
           <div className="text-[11px] text-slate-400 mt-1">Net-30 / Net-45 credit terms</div>
         </div>
@@ -92,8 +133,8 @@ export default function PartnersPage() {
               type="text"
               placeholder="Search partner name or code..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white"
+              onChange={(e) => handleSearchChange(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
             />
           </div>
         </div>
@@ -113,14 +154,20 @@ export default function PartnersPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {filteredPartners.length === 0 ? (
+              {loading && partners.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="p-8 text-center text-slate-400">
+                    Loading partners...
+                  </td>
+                </tr>
+              ) : partners.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="p-8 text-center text-slate-500">
                     No partners found matching your search.
                   </td>
                 </tr>
               ) : (
-                filteredPartners.map((p) => (
+                partners.map((p) => (
                   <tr key={p.id} className="hover:bg-slate-800/40">
                     <td className="p-3 font-mono text-indigo-400 font-semibold">{p.partner_code}</td>
                     <td className="p-3">
@@ -154,12 +201,26 @@ export default function PartnersPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Database Pagination Bar */}
+        <Pagination
+          currentPage={currentPage}
+          pageSize={pageSize}
+          totalCount={totalCount}
+          totalPages={totalPages}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={handlePageSizeChange}
+          isLoading={loading}
+        />
       </div>
 
       <AddPartnerModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        onSuccess={loadPartners}
+        onSuccess={() => {
+          loadPartners()
+          loadKpis()
+        }}
       />
     </div>
   )

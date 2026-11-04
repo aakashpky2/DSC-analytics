@@ -3,6 +3,7 @@ import { queryAll, queryOne, run } from '../localDb'
 import { calculateLandedCost, evaluateLeadDuplicates, calculateGst } from '../../lib/businessLogic'
 import { applyPiiMasking } from '../../lib/masking'
 import { validateDelegationAuthority, validateSubPermissionCap } from '../../lib/permissions'
+import { parsePaginationParams, executePaginatedQuery } from '../pagination'
 import {
   SESSION_COOKIE_NAME,
   createSession,
@@ -331,18 +332,56 @@ apiRouter.get('/admin/roles', requireAdmin, async (_req: Request, res: Response)
 apiRouter.get('/admin/users', requireAdmin, async (req: Request, res: Response) => {
   try {
     const mask = req.query.mask === 'true'
-    const users = await queryAll(`
+    const search = req.query.search ? String(req.query.search).trim() : ''
+    const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+
+    let whereClause = ''
+    const params: any[] = []
+    if (search) {
+      whereClause = ` WHERE (u.full_name LIKE ? OR u.email LIKE ? OR u.phone_number LIKE ? OR r.name LIKE ?)`
+      const s = `%${search}%`
+      params.push(s, s, s, s)
+    }
+
+    const selectSql = `
       SELECT u.id, u.email, u.full_name, u.phone_number, u.can_grant_permissions, u.permissions_frozen, u.status, u.created_at,
              r.name as role_name, h.level_order, h.level_name, b.branch_name
       FROM user_profiles u
       LEFT JOIN roles r ON u.role_id = r.id
       LEFT JOIN hierarchy_levels h ON u.hierarchy_level_id = h.id
       LEFT JOIN branches b ON u.branch_id = b.id
+      ${whereClause}
       ORDER BY h.level_order ASC, u.created_at DESC
-    `)
+    `
 
+    const countSql = `
+      SELECT COUNT(*) as count
+      FROM user_profiles u
+      LEFT JOIN roles r ON u.role_id = r.id
+      ${whereClause}
+    `
+
+    if (isPaginated) {
+      const result = await executePaginatedQuery(selectSql, countSql, params, { page, limit, offset })
+      const sanitized = result.data.map((u: any) => applyPiiMasking(u, mask))
+      return res.json({
+        users: sanitized,
+        page: result.page,
+        limit: result.limit,
+        totalCount: result.totalCount,
+        totalPages: result.totalPages,
+      })
+    }
+
+    const users = await queryAll(selectSql, params)
     const sanitized = users.map((u: any) => applyPiiMasking(u, mask))
-    return res.json({ users: sanitized })
+    return res.json({
+      users: sanitized,
+      page: 1,
+      limit: sanitized.length,
+      totalCount: sanitized.length,
+      totalPages: 1,
+    })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }
@@ -399,9 +438,41 @@ apiRouter.patch('/admin/users/:id/freeze', requireAdmin, async (req: Request, re
 apiRouter.get('/partners', async (req: Request, res: Response) => {
   try {
     const mask = req.query.mask === 'true'
-    const partners = await queryAll('SELECT * FROM partners ORDER BY created_at DESC')
+    const search = req.query.search ? String(req.query.search).trim() : ''
+    const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+
+    let whereClause = ''
+    const params: any[] = []
+    if (search) {
+      whereClause = ` WHERE (company_name LIKE ? OR contact_person LIKE ? OR partner_code LIKE ? OR email LIKE ? OR phone LIKE ?)`
+      const s = `%${search}%`
+      params.push(s, s, s, s, s)
+    }
+
+    const selectSql = `SELECT * FROM partners ${whereClause} ORDER BY created_at DESC`
+    const countSql = `SELECT COUNT(*) as count FROM partners ${whereClause}`
+
+    if (isPaginated) {
+      const result = await executePaginatedQuery(selectSql, countSql, params, { page, limit, offset })
+      const sanitized = result.data.map((p: any) => applyPiiMasking(p, mask))
+      return res.json({
+        partners: sanitized,
+        page: result.page,
+        limit: result.limit,
+        totalCount: result.totalCount,
+        totalPages: result.totalPages,
+      })
+    }
+
+    const partners = await queryAll(selectSql, params)
     const sanitized = partners.map((p: any) => applyPiiMasking(p, mask))
-    return res.json({ partners: sanitized })
+    return res.json({
+      partners: sanitized,
+      page: 1,
+      limit: sanitized.length,
+      totalCount: sanitized.length,
+      totalPages: 1,
+    })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }
@@ -461,10 +532,31 @@ apiRouter.post('/partners', async (req: Request, res: Response) => {
 // ==========================================
 // 4. DSC Catalogue & Applications
 // ==========================================
-apiRouter.get('/dsc/catalog', async (_req: Request, res: Response) => {
+apiRouter.get('/dsc/catalog', async (req: Request, res: Response) => {
   try {
-    const items = await queryAll('SELECT * FROM dsc_catalog ORDER BY class_type, validity_years')
-    return res.json({ catalog: items })
+    const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+    const selectSql = 'SELECT * FROM dsc_catalog ORDER BY class_type, validity_years'
+    const countSql = 'SELECT COUNT(*) as count FROM dsc_catalog'
+
+    if (isPaginated) {
+      const result = await executePaginatedQuery(selectSql, countSql, [], { page, limit, offset })
+      return res.json({
+        catalog: result.data,
+        page: result.page,
+        limit: result.limit,
+        totalCount: result.totalCount,
+        totalPages: result.totalPages,
+      })
+    }
+
+    const items = await queryAll(selectSql)
+    return res.json({
+      catalog: items,
+      page: 1,
+      limit: items.length,
+      totalCount: items.length,
+      totalPages: 1,
+    })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }
@@ -507,15 +599,63 @@ apiRouter.put('/dsc/catalog/:id', requireAdmin, async (req: Request, res: Respon
 apiRouter.get('/dsc/applications', async (req: Request, res: Response) => {
   try {
     const mask = req.query.mask === 'true'
-    const apps = await queryAll(`
+    const stage = req.query.stage ? String(req.query.stage).trim() : ''
+    const search = req.query.search ? String(req.query.search).trim() : ''
+    const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+
+    const conditions: string[] = []
+    const params: any[] = []
+
+    if (stage) {
+      conditions.push('a.stage = ?')
+      params.push(stage)
+    }
+
+    if (search) {
+      conditions.push('(a.applicant_name LIKE ? OR a.application_number LIKE ? OR a.applicant_pan LIKE ? OR p.company_name LIKE ?)')
+      const s = `%${search}%`
+      params.push(s, s, s, s)
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+    const selectSql = `
       SELECT a.*, p.company_name as partner_company, c.class_type, c.certificate_type, c.validity_years
       FROM dsc_applications a
       LEFT JOIN partners p ON a.partner_id = p.id
       LEFT JOIN dsc_catalog c ON a.catalog_id = c.id
+      ${whereClause}
       ORDER BY a.created_at DESC
-    `)
+    `
+
+    const countSql = `
+      SELECT COUNT(*) as count
+      FROM dsc_applications a
+      LEFT JOIN partners p ON a.partner_id = p.id
+      ${whereClause}
+    `
+
+    if (isPaginated) {
+      const result = await executePaginatedQuery(selectSql, countSql, params, { page, limit, offset })
+      const sanitized = result.data.map((app: any) => applyPiiMasking(app, mask))
+      return res.json({
+        applications: sanitized,
+        page: result.page,
+        limit: result.limit,
+        totalCount: result.totalCount,
+        totalPages: result.totalPages,
+      })
+    }
+
+    const apps = await queryAll(selectSql, params)
     const sanitized = apps.map((app: any) => applyPiiMasking(app, mask))
-    return res.json({ applications: sanitized })
+    return res.json({
+      applications: sanitized,
+      page: 1,
+      limit: sanitized.length,
+      totalCount: sanitized.length,
+      totalPages: 1,
+    })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }
@@ -559,10 +699,31 @@ apiRouter.patch('/dsc/applications/:id/stage', async (req: Request, res: Respons
 // ==========================================
 // 5. Hardware Token Inventory & Landed Cost
 // ==========================================
-apiRouter.get('/inventory/batches', async (_req: Request, res: Response) => {
+apiRouter.get('/inventory/batches', async (req: Request, res: Response) => {
   try {
-    const batches = await queryAll('SELECT * FROM token_purchase_batches ORDER BY created_at DESC')
-    return res.json({ batches })
+    const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+    const selectSql = 'SELECT * FROM token_purchase_batches ORDER BY created_at DESC'
+    const countSql = 'SELECT COUNT(*) as count FROM token_purchase_batches'
+
+    if (isPaginated) {
+      const result = await executePaginatedQuery(selectSql, countSql, [], { page, limit, offset })
+      return res.json({
+        batches: result.data,
+        page: result.page,
+        limit: result.limit,
+        totalCount: result.totalCount,
+        totalPages: result.totalPages,
+      })
+    }
+
+    const batches = await queryAll(selectSql)
+    return res.json({
+      batches,
+      page: 1,
+      limit: batches.length,
+      totalCount: batches.length,
+      totalPages: 1,
+    })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }
@@ -617,25 +778,54 @@ apiRouter.post('/inventory/batches', async (req: Request, res: Response) => {
   }
 })
 
-apiRouter.get('/inventory/branches', async (_req: Request, res: Response) => {
+apiRouter.get('/inventory/branches', async (req: Request, res: Response) => {
   try {
-    const stock = await queryAll(`
+    const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+    const selectSql = `
       SELECT s.*, b.branch_name, b.branch_code
       FROM branch_token_stocks s
       JOIN branches b ON s.branch_id = b.id
       ORDER BY b.branch_name ASC
-    `)
+    `
+    const countSql = `
+      SELECT COUNT(*) as count
+      FROM branch_token_stocks s
+      JOIN branches b ON s.branch_id = b.id
+    `
+
     const branches = await queryAll('SELECT id, branch_name, branch_code, city, state_code FROM branches ORDER BY branch_name ASC')
-    return res.json({ stock, branches })
+
+    if (isPaginated) {
+      const result = await executePaginatedQuery(selectSql, countSql, [], { page, limit, offset })
+      return res.json({
+        stock: result.data,
+        branches,
+        page: result.page,
+        limit: result.limit,
+        totalCount: result.totalCount,
+        totalPages: result.totalPages,
+      })
+    }
+
+    const stock = await queryAll(selectSql)
+    return res.json({
+      stock,
+      branches,
+      page: 1,
+      limit: stock.length,
+      totalCount: stock.length,
+      totalPages: 1,
+    })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }
 })
 
 // Transfer History: List Delivery Challans / Notes
-apiRouter.get('/inventory/transfers', async (_req: Request, res: Response) => {
+apiRouter.get('/inventory/transfers', async (req: Request, res: Response) => {
   try {
-    const challans = await queryAll(`
+    const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+    const selectSql = `
       SELECT dc.*, 
              sb.branch_name as source_branch_name, sb.branch_code as source_branch_code,
              db.branch_name as destination_branch_name, db.branch_code as destination_branch_code,
@@ -645,8 +835,28 @@ apiRouter.get('/inventory/transfers', async (_req: Request, res: Response) => {
       LEFT JOIN branches db ON dc.destination_branch_id = db.id
       LEFT JOIN user_profiles u ON dc.issued_by = u.id
       ORDER BY dc.created_at DESC
-    `)
-    return res.json({ challans })
+    `
+    const countSql = `SELECT COUNT(*) as count FROM delivery_challans`
+
+    if (isPaginated) {
+      const result = await executePaginatedQuery(selectSql, countSql, [], { page, limit, offset })
+      return res.json({
+        challans: result.data,
+        page: result.page,
+        limit: result.limit,
+        totalCount: result.totalCount,
+        totalPages: result.totalPages,
+      })
+    }
+
+    const challans = await queryAll(selectSql)
+    return res.json({
+      challans,
+      page: 1,
+      limit: challans.length,
+      totalCount: challans.length,
+      totalPages: 1,
+    })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }
@@ -761,15 +971,52 @@ apiRouter.patch('/inventory/transfers/:id/receive', requireAuth, async (req: Req
 apiRouter.get('/crm/leads', async (req: Request, res: Response) => {
   try {
     const mask = req.query.mask === 'true'
-    const leads = await queryAll(`
+    const search = req.query.search ? String(req.query.search).trim() : ''
+    const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+
+    let whereClause = 'WHERE l.is_merged = 0'
+    const params: any[] = []
+    if (search) {
+      whereClause += ' AND (l.company_name LIKE ? OR l.contact_person LIKE ? OR l.lead_code LIKE ? OR l.email LIKE ? OR l.phone LIKE ?)'
+      const s = `%${search}%`
+      params.push(s, s, s, s, s)
+    }
+
+    const selectSql = `
       SELECT l.*, u.full_name as assigned_agent_name
       FROM crm_leads l
       LEFT JOIN user_profiles u ON l.assigned_to = u.id
-      WHERE l.is_merged = 0
+      ${whereClause}
       ORDER BY l.created_at DESC
-    `)
+    `
+
+    const countSql = `
+      SELECT COUNT(*) as count
+      FROM crm_leads l
+      ${whereClause}
+    `
+
+    if (isPaginated) {
+      const result = await executePaginatedQuery(selectSql, countSql, params, { page, limit, offset })
+      const sanitized = result.data.map((l: any) => applyPiiMasking(l, mask))
+      return res.json({
+        leads: sanitized,
+        page: result.page,
+        limit: result.limit,
+        totalCount: result.totalCount,
+        totalPages: result.totalPages,
+      })
+    }
+
+    const leads = await queryAll(selectSql, params)
     const sanitized = leads.map((l: any) => applyPiiMasking(l, mask))
-    return res.json({ leads: sanitized })
+    return res.json({
+      leads: sanitized,
+      page: 1,
+      limit: sanitized.length,
+      totalCount: sanitized.length,
+      totalPages: 1,
+    })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }
@@ -834,17 +1081,42 @@ apiRouter.post('/crm/leads/merge', async (req: Request, res: Response) => {
 })
 
 // CRM Follow-Up Actions & Agenda
-apiRouter.get('/crm/follow-ups', async (_req: Request, res: Response) => {
+apiRouter.get('/crm/follow-ups', async (req: Request, res: Response) => {
   try {
-    const followUps = await queryAll(`
+    const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+    const selectSql = `
       SELECT f.id, f.lead_id, f.channel as contact_mode, f.scheduled_at as follow_up_date, f.status, f.disposition, f.notes,
              l.company_name, l.contact_person, l.phone, l.email, l.lead_code, u.full_name as conducted_by_name
       FROM crm_follow_ups f
       JOIN crm_leads l ON f.lead_id = l.id
       LEFT JOIN user_profiles u ON f.conducted_by = u.id
       ORDER BY f.scheduled_at ASC
-    `)
-    return res.json({ followUps })
+    `
+    const countSql = `
+      SELECT COUNT(*) as count
+      FROM crm_follow_ups f
+      JOIN crm_leads l ON f.lead_id = l.id
+    `
+
+    if (isPaginated) {
+      const result = await executePaginatedQuery(selectSql, countSql, [], { page, limit, offset })
+      return res.json({
+        followUps: result.data,
+        page: result.page,
+        limit: result.limit,
+        totalCount: result.totalCount,
+        totalPages: result.totalPages,
+      })
+    }
+
+    const followUps = await queryAll(selectSql)
+    return res.json({
+      followUps,
+      page: 1,
+      limit: followUps.length,
+      totalCount: followUps.length,
+      totalPages: 1,
+    })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }
@@ -883,15 +1155,36 @@ apiRouter.patch('/crm/follow-ups/:id/complete', requireAuth, async (req: Request
 // ==========================================
 // 7. Additional Business Services Hub
 // ==========================================
-apiRouter.get('/services/orders', async (_req: Request, res: Response) => {
+apiRouter.get('/services/orders', async (req: Request, res: Response) => {
   try {
-    const orders = await queryAll(`
+    const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+    const selectSql = `
       SELECT s.*, p.company_name as partner_company
       FROM service_orders s
       LEFT JOIN partners p ON s.partner_id = p.id
       ORDER BY s.created_at DESC
-    `)
-    return res.json({ orders })
+    `
+    const countSql = `SELECT COUNT(*) as count FROM service_orders`
+
+    if (isPaginated) {
+      const result = await executePaginatedQuery(selectSql, countSql, [], { page, limit, offset })
+      return res.json({
+        orders: result.data,
+        page: result.page,
+        limit: result.limit,
+        totalCount: result.totalCount,
+        totalPages: result.totalPages,
+      })
+    }
+
+    const orders = await queryAll(selectSql)
+    return res.json({
+      orders,
+      page: 1,
+      limit: orders.length,
+      totalCount: orders.length,
+      totalPages: 1,
+    })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }
@@ -917,10 +1210,31 @@ apiRouter.post('/services/orders', async (req: Request, res: Response) => {
 // ==========================================
 // 8. Multi-Account Billing & Payments Queue
 // ==========================================
-apiRouter.get('/billing/accounts', async (_req: Request, res: Response) => {
+apiRouter.get('/billing/accounts', async (req: Request, res: Response) => {
   try {
-    const accounts = await queryAll('SELECT * FROM bank_accounts WHERE is_active = 1')
-    return res.json({ accounts })
+    const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+    const selectSql = 'SELECT * FROM bank_accounts WHERE is_active = 1 ORDER BY account_nickname ASC'
+    const countSql = 'SELECT COUNT(*) as count FROM bank_accounts WHERE is_active = 1'
+
+    if (isPaginated) {
+      const result = await executePaginatedQuery(selectSql, countSql, [], { page, limit, offset })
+      return res.json({
+        accounts: result.data,
+        page: result.page,
+        limit: result.limit,
+        totalCount: result.totalCount,
+        totalPages: result.totalPages,
+      })
+    }
+
+    const accounts = await queryAll(selectSql)
+    return res.json({
+      accounts,
+      page: 1,
+      limit: accounts.length,
+      totalCount: accounts.length,
+      totalPages: 1,
+    })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }
@@ -965,16 +1279,63 @@ apiRouter.get('/billing/series', async (_req: Request, res: Response) => {
   }
 })
 
-apiRouter.get('/billing/invoices', async (_req: Request, res: Response) => {
+apiRouter.get('/billing/invoices', async (req: Request, res: Response) => {
   try {
-    const invoices = await queryAll(`
+    const search = req.query.search ? String(req.query.search).trim() : ''
+    const status = req.query.status ? String(req.query.status).trim() : ''
+    const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+
+    const conditions: string[] = []
+    const params: any[] = []
+
+    if (status) {
+      conditions.push('i.status = ?')
+      params.push(status)
+    }
+
+    if (search) {
+      conditions.push('(i.invoice_number LIKE ? OR p.company_name LIKE ? OR b.bank_name LIKE ?)')
+      const s = `%${search}%`
+      params.push(s, s, s)
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+    const selectSql = `
       SELECT i.*, p.company_name as partner_company, b.bank_name, b.account_number, b.upi_id
       FROM invoices i
       LEFT JOIN partners p ON i.partner_id = p.id
       LEFT JOIN bank_accounts b ON i.bank_account_snapshot_id = b.id
+      ${whereClause}
       ORDER BY i.created_at DESC
-    `)
-    return res.json({ invoices })
+    `
+
+    const countSql = `
+      SELECT COUNT(*) as count
+      FROM invoices i
+      LEFT JOIN partners p ON i.partner_id = p.id
+      ${whereClause}
+    `
+
+    if (isPaginated) {
+      const result = await executePaginatedQuery(selectSql, countSql, params, { page, limit, offset })
+      return res.json({
+        invoices: result.data,
+        page: result.page,
+        limit: result.limit,
+        totalCount: result.totalCount,
+        totalPages: result.totalPages,
+      })
+    }
+
+    const invoices = await queryAll(selectSql, params)
+    return res.json({
+      invoices,
+      page: 1,
+      limit: invoices.length,
+      totalCount: invoices.length,
+      totalPages: 1,
+    })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }
@@ -1034,9 +1395,10 @@ apiRouter.post('/billing/invoices', async (req: Request, res: Response) => {
 })
 
 // Payment screenshot verification queue
-apiRouter.get('/billing/payments/queue', async (_req: Request, res: Response) => {
+apiRouter.get('/billing/payments/queue', async (req: Request, res: Response) => {
   try {
-    const queue = await queryAll(`
+    const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+    const selectSql = `
       SELECT p.*, i.invoice_number, i.total_amount, i.outstanding_balance, i.line_items,
              pt.company_name as partner_company, b.bank_name, b.account_number
       FROM payments_received p
@@ -1044,8 +1406,33 @@ apiRouter.get('/billing/payments/queue', async (_req: Request, res: Response) =>
       JOIN partners pt ON p.partner_id = pt.id
       LEFT JOIN bank_accounts b ON p.bank_account_id = b.id
       ORDER BY p.created_at DESC
-    `)
-    return res.json({ queue })
+    `
+    const countSql = `
+      SELECT COUNT(*) as count
+      FROM payments_received p
+      JOIN invoices i ON p.invoice_id = i.id
+      JOIN partners pt ON p.partner_id = pt.id
+    `
+
+    if (isPaginated) {
+      const result = await executePaginatedQuery(selectSql, countSql, [], { page, limit, offset })
+      return res.json({
+        queue: result.data,
+        page: result.page,
+        limit: result.limit,
+        totalCount: result.totalCount,
+        totalPages: result.totalPages,
+      })
+    }
+
+    const queue = await queryAll(selectSql)
+    return res.json({
+      queue,
+      page: 1,
+      limit: queue.length,
+      totalCount: queue.length,
+      totalPages: 1,
+    })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }
@@ -1097,10 +1484,41 @@ apiRouter.post('/billing/payments/verify', async (req: Request, res: Response) =
 // ==========================================
 // 9. Logistics, Couriers & POD Tracking
 // ==========================================
-apiRouter.get('/courier/dispatches', async (_req: Request, res: Response) => {
+apiRouter.get('/courier/dispatches', async (req: Request, res: Response) => {
   try {
-    const dispatches = await queryAll('SELECT * FROM courier_dispatches ORDER BY dispatched_at DESC')
-    return res.json({ dispatches })
+    const search = req.query.search ? String(req.query.search).trim() : ''
+    const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+
+    let whereClause = ''
+    const params: any[] = []
+    if (search) {
+      whereClause = 'WHERE (dispatch_number LIKE ? OR carrier_name LIKE ? OR awb_number LIKE ? OR recipient_name LIKE ?)'
+      const s = `%${search}%`
+      params.push(s, s, s, s)
+    }
+
+    const selectSql = `SELECT * FROM courier_dispatches ${whereClause} ORDER BY dispatched_at DESC`
+    const countSql = `SELECT COUNT(*) as count FROM courier_dispatches ${whereClause}`
+
+    if (isPaginated) {
+      const result = await executePaginatedQuery(selectSql, countSql, params, { page, limit, offset })
+      return res.json({
+        dispatches: result.data,
+        page: result.page,
+        limit: result.limit,
+        totalCount: result.totalCount,
+        totalPages: result.totalPages,
+      })
+    }
+
+    const dispatches = await queryAll(selectSql, params)
+    return res.json({
+      dispatches,
+      page: 1,
+      limit: dispatches.length,
+      totalCount: dispatches.length,
+      totalPages: 1,
+    })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }
