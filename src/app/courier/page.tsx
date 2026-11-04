@@ -1,6 +1,6 @@
-// Module 09: Courier Dispatch & POD Tracking (/courier)
+// Courier Dispatches (/courier)
 import React from 'react'
-import { Truck, CheckCircle2, Clock, PackageCheck, AlertCircle } from 'lucide-react'
+import { Truck } from 'lucide-react'
 
 async function getDispatches() {
   const port = process.env.PORT || '3000'
@@ -22,14 +22,9 @@ export default async function CourierPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold text-white">Logistics & Courier Dispatch Hub</h1>
-            <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-blue-500/20 text-blue-400 border border-blue-500/30">
-              Module 09
-            </span>
-          </div>
+          <h1 className="text-xl font-bold text-white">Courier Dispatches</h1>
           <p className="text-xs text-slate-400 mt-1">
-            Waybill dispatch records across DTDC, Blue Dart, Speed Post & Delhivery with Proof of Delivery (POD) uploads.
+            Dispatch records across Blue Dart, DTDC, Speed Post, and Delhivery with tracking numbers.
           </p>
         </div>
       </div>
@@ -37,7 +32,7 @@ export default async function CourierPage() {
       {/* Dispatches Table */}
       <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-          <div className="text-xs font-semibold text-white">Dispatch Records & AWB Tracking</div>
+          <div className="text-xs font-semibold text-white">Shipment Records</div>
         </div>
 
         <div className="overflow-x-auto">
@@ -45,9 +40,9 @@ export default async function CourierPage() {
             <thead>
               <tr className="text-slate-400 bg-slate-900/80 border-b border-slate-800">
                 <th className="p-3">Dispatch #</th>
-                <th className="p-3">Carrier</th>
-                <th className="p-3">AWB Tracking #</th>
-                <th className="p-3">Recipient & Contact</th>
+                <th className="p-3">Courier Partner</th>
+                <th className="p-3">Tracking Number</th>
+                <th className="p-3">Recipient & Phone</th>
                 <th className="p-3">Package Contents</th>
                 <th className="p-3">Dispatched Date</th>
                 <th className="p-3">Status</th>
@@ -57,7 +52,7 @@ export default async function CourierPage() {
               {dispatches.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="p-8 text-center text-slate-500">
-                    No active dispatches. Waybills generated from Token Delivery Challans will appear here.
+                    No active dispatches. Shipments generated from delivery notes will appear here.
                   </td>
                 </tr>
               ) : (
@@ -74,7 +69,7 @@ export default async function CourierPage() {
                     <td className="p-3 text-slate-400 font-mono">{d.dispatched_at}</td>
                     <td className="p-3">
                       <span className="px-2 py-0.5 rounded-full text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 capitalize">
-                        {d.status}
+                        {d.status === 'manifested' ? 'Booked & Manifested' : d.status}
                       </span>
                     </td>
                   </tr>
@@ -87,4 +82,3 @@ export default async function CourierPage() {
     </div>
   )
 }
-

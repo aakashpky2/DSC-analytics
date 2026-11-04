@@ -1,7 +1,7 @@
-// Module 03: DSC Catalogue & Pricing Matrix (/dsc/catalog)
+// DSC Pricing & Products (/dsc/catalog)
 import React from 'react'
 import Link from 'next/link'
-import { FileCheck2, ShieldCheck, Tag } from 'lucide-react'
+import { FileCheck2, Tag } from 'lucide-react'
 
 async function getCatalog() {
   const port = process.env.PORT || '3000'
@@ -23,14 +23,9 @@ export default async function DscCatalogPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold text-white">DSC Pricing Catalogue & Slabs</h1>
-            <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
-              Module 03
-            </span>
-          </div>
+          <h1 className="text-xl font-bold text-white">DSC Products & Pricing</h1>
           <p className="text-xs text-slate-400 mt-1">
-            Standard pricing matrix across Class 3, DGFT, and Foreign National certificates (1, 2, 3 Years).
+            Price list for Class 3, DGFT, and Foreign National certificates (1, 2, and 3 Years).
           </p>
         </div>
       </div>
@@ -38,7 +33,7 @@ export default async function DscCatalogPage() {
       {/* Catalog Table */}
       <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-          <div className="text-xs font-semibold text-white">Active Product Slabs</div>
+          <div className="text-xs font-semibold text-white">Active Product Prices</div>
         </div>
 
         <div className="overflow-x-auto">
@@ -48,10 +43,10 @@ export default async function DscCatalogPage() {
                 <th className="p-3">Class Type</th>
                 <th className="p-3">Certificate Type</th>
                 <th className="p-3">Validity</th>
-                <th className="p-3 text-right">Vendor Base Price</th>
-                <th className="p-3 text-right">Partner Slab</th>
-                <th className="p-3 text-right">Standard MRP</th>
-                <th className="p-3 text-right">Margin / Unit</th>
+                <th className="p-3 text-right">Base Cost</th>
+                <th className="p-3 text-right">Partner Price</th>
+                <th className="p-3 text-right">Retail MRP</th>
+                <th className="p-3 text-right">Profit / Unit</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
@@ -86,4 +81,3 @@ export default async function DscCatalogPage() {
     </div>
   )
 }
-

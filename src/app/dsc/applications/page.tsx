@@ -1,7 +1,7 @@
-// Module 03: DSC Application Lifecycle Kanban Pipeline (/dsc/applications)
+// DSC Application Progress (/dsc/applications)
 import React from 'react'
 import Link from 'next/link'
-import { ArrowLeft, FileCheck2, Clock, CheckCircle2, AlertCircle, Video, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, Clock, CheckCircle2, AlertCircle } from 'lucide-react'
 
 async function getApplications() {
   const port = process.env.PORT || '3000'
@@ -16,10 +16,10 @@ async function getApplications() {
 }
 
 const STAGES = [
-  { key: 'intake', label: 'Intake Form', color: 'border-blue-500/40 text-blue-400' },
+  { key: 'intake', label: 'Application Received', color: 'border-blue-500/40 text-blue-400' },
   { key: 'document_verification', label: 'Document Review', color: 'border-amber-500/40 text-amber-400' },
   { key: 'video_recording', label: 'Video Verification', color: 'border-purple-500/40 text-purple-400' },
-  { key: 'ca_portal_approval', label: 'CA Approval', color: 'border-cyan-500/40 text-cyan-400' },
+  { key: 'ca_portal_approval', label: 'Approval in Progress', color: 'border-cyan-500/40 text-cyan-400' },
   { key: 'issued_dispatched', label: 'Issued & Dispatched', color: 'border-emerald-500/40 text-emerald-400' },
 ]
 
@@ -33,19 +33,14 @@ export default async function DscApplicationsPage() {
         <div>
           <div className="flex items-center gap-2 text-xs text-slate-400 mb-1">
             <Link href="/dsc/catalog" className="hover:text-white flex items-center gap-1">
-              <ArrowLeft className="w-3.5 h-3.5" /> DSC Catalog
+              <ArrowLeft className="w-3.5 h-3.5" /> Products & Prices
             </Link>
             <span>/</span>
-            <span className="text-white">Issuance Pipeline</span>
+            <span className="text-white">Application Progress</span>
           </div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold text-white">DSC Application Lifecycle Kanban Pipeline</h1>
-            <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
-              Module 03 Pipeline
-            </span>
-          </div>
+          <h1 className="text-xl font-bold text-white">DSC Application Progress</h1>
           <p className="text-xs text-slate-400 mt-1">
-            End-to-end lifecycle: Intake Form &rarr; Document Verification &rarr; Video Recording &rarr; CA Approval &rarr; Issuance & Dispatch.
+            Track certificate processing from intake to document checks, video verification, and dispatch.
           </p>
         </div>
       </div>
@@ -65,7 +60,7 @@ export default async function DscApplicationsPage() {
 
               <div className="space-y-2 min-h-[300px]">
                 {stageApps.length === 0 ? (
-                  <div className="p-4 text-center text-[11px] text-slate-600 italic">No apps</div>
+                  <div className="p-4 text-center text-[11px] text-slate-600 italic">No applications</div>
                 ) : (
                   stageApps.map((a: any) => (
                     <div key={a.id} className="p-3 rounded-lg bg-slate-950 border border-slate-800/80 space-y-1.5 shadow-sm">
@@ -87,4 +82,3 @@ export default async function DscApplicationsPage() {
     </div>
   )
 }
-

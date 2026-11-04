@@ -1,7 +1,7 @@
-// Module 04: Branch Inventory & Delivery Challans (/inventory/branches)
+// Stock Given to Branch (/inventory/branches)
 import React from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Building2, FileText, Send, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, Building2, FileText } from 'lucide-react'
 
 async function getBranchData() {
   const port = process.env.PORT || '3000'
@@ -25,19 +25,14 @@ export default async function BranchInventoryPage() {
         <div>
           <div className="flex items-center gap-2 text-xs text-slate-400 mb-1">
             <Link href="/inventory/tokens" className="hover:text-white flex items-center gap-1">
-              <ArrowLeft className="w-3.5 h-3.5" /> Token Landed Cost
+              <ArrowLeft className="w-3.5 h-3.5" /> Token Stock
             </Link>
             <span>/</span>
-            <span className="text-white">Branch Hubs & Stock Transfers</span>
+            <span className="text-white">Branch Locations</span>
           </div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold text-white">Branch Inventory & Delivery Challans (DC)</h1>
-            <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
-              Module 04 Branch DC
-            </span>
-          </div>
+          <h1 className="text-xl font-bold text-white">Stock Given to Branch</h1>
           <p className="text-xs text-slate-400 mt-1">
-            Inter-branch stock rebalancing, low-threshold alarms & automated Delivery Challan logging.
+            Track token balances across branch offices, damaged pieces, and delivery notes.
           </p>
         </div>
       </div>
@@ -45,20 +40,20 @@ export default async function BranchInventoryPage() {
       {/* Branch Stock Table */}
       <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-          <div className="text-xs font-semibold text-white">Branch Stocks & Damaged Token Quarantine</div>
+          <div className="text-xs font-semibold text-white">Branch Stock & Damaged Units</div>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="text-slate-400 bg-slate-900/80 border-b border-slate-800">
-                <th className="p-3">Branch Name</th>
+                <th className="p-3">Branch Location</th>
                 <th className="p-3">Branch Code</th>
                 <th className="p-3">Token Model</th>
-                <th className="p-3 text-right">Available On Hand</th>
-                <th className="p-3 text-right">Quarantined / Faulty</th>
-                <th className="p-3 text-right">Min Threshold</th>
-                <th className="p-3 text-center">Delivery Challan</th>
+                <th className="p-3 text-right">Available in Stock</th>
+                <th className="p-3 text-right">Damaged Stock</th>
+                <th className="p-3 text-right">Low Stock Alert Level</th>
+                <th className="p-3 text-center">Delivery Note</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
@@ -74,7 +69,7 @@ export default async function BranchInventoryPage() {
                     <button
                       className="px-2.5 py-1 rounded bg-cyan-600/20 hover:bg-cyan-600/40 text-cyan-300 font-medium text-[10px] border border-cyan-500/40 inline-flex items-center gap-1"
                     >
-                      <FileText className="w-2.5 h-2.5" /> Issue Challan
+                      <FileText className="w-2.5 h-2.5" /> Issue Delivery Note
                     </button>
                   </td>
                 </tr>
@@ -86,4 +81,3 @@ export default async function BranchInventoryPage() {
     </div>
   )
 }
-

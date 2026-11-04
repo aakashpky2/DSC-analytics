@@ -1,7 +1,7 @@
-// Module 08: Receivables Aging & Partner Statements (/billing/ledger)
+// Account Statements & Overdue Payments (/billing/ledger)
 import React from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Clock, Calendar, AlertTriangle, Send } from 'lucide-react'
+import { ArrowLeft, Send } from 'lucide-react'
 import { FinancialLedgerRecord, PartnerRecord } from '@/types/models'
 
 async function getLedgerData() {
@@ -51,19 +51,14 @@ export default async function LedgerAgingPage() {
         <div>
           <div className="flex items-center gap-2 text-xs text-slate-400 mb-1">
             <Link href="/billing/invoices" className="hover:text-white flex items-center gap-1">
-              <ArrowLeft className="w-3.5 h-3.5" /> Billing Invoices
+              <ArrowLeft className="w-3.5 h-3.5" /> Invoices
             </Link>
             <span>/</span>
-            <span className="text-white">Receivables Aging & Ledger</span>
+            <span className="text-white">Account Statements</span>
           </div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold text-white">Receivables Aging Analysis & Partner Ledgers</h1>
-            <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
-              Module 08
-            </span>
-          </div>
+          <h1 className="text-xl font-bold text-white">Account Statements & Overdue Payments</h1>
           <p className="text-xs text-slate-400 mt-1">
-            Overdue bucket analysis (0-30, 31-60, 61-90, 90+ days) with automated WhatsApp & Email payment reminders.
+            Track partner running balances, credit lines, and overdue payment aging periods.
           </p>
         </div>
       </div>
@@ -71,34 +66,34 @@ export default async function LedgerAgingPage() {
       {/* Aging Analysis Buckets */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <div className="p-4 rounded-xl bg-slate-900/60 border border-emerald-500/30">
-          <div className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider">Current / 0-30 Days</div>
+          <div className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider">Current (0-30 Days)</div>
           <div className="text-2xl font-bold text-white mt-1">₹{bucket0to30.toLocaleString('en-IN')}</div>
-          <div className="text-[10px] text-slate-400 mt-1">Within standard credit terms</div>
+          <div className="text-[10px] text-slate-400 mt-1">Within standard credit term</div>
         </div>
 
         <div className="p-4 rounded-xl bg-slate-900/60 border border-amber-500/30">
           <div className="text-[11px] font-semibold text-amber-400 uppercase tracking-wider">31-60 Days Overdue</div>
           <div className="text-2xl font-bold text-amber-300 mt-1">₹{bucket31to60.toLocaleString('en-IN')}</div>
-          <div className="text-[10px] text-slate-400 mt-1">First reminder notice issued</div>
+          <div className="text-[10px] text-slate-400 mt-1">First reminder sent</div>
         </div>
 
         <div className="p-4 rounded-xl bg-slate-900/60 border border-orange-500/30">
           <div className="text-[11px] font-semibold text-orange-400 uppercase tracking-wider">61-90 Days Overdue</div>
           <div className="text-2xl font-bold text-orange-300 mt-1">₹{bucket61to90.toLocaleString('en-IN')}</div>
-          <div className="text-[10px] text-slate-400 mt-1">Escalated payment follow-up</div>
+          <div className="text-[10px] text-slate-400 mt-1">Payment follow-up needed</div>
         </div>
 
         <div className="p-4 rounded-xl bg-slate-900/60 border border-rose-500/30">
-          <div className="text-[11px] font-semibold text-rose-400 uppercase tracking-wider">90+ Days Critical</div>
+          <div className="text-[11px] font-semibold text-rose-400 uppercase tracking-wider">Over 90 Days</div>
           <div className="text-2xl font-bold text-rose-300 mt-1">₹{bucket90Plus.toLocaleString('en-IN')}</div>
-          <div className="text-[10px] text-rose-400 mt-1">Credit hold automatically applied</div>
+          <div className="text-[10px] text-rose-400 mt-1">Account on hold</div>
         </div>
       </div>
 
       {/* Partner Ledger Summaries */}
       <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-          <div className="text-xs font-semibold text-white">Partner Credit Limits & Running Balances</div>
+          <div className="text-xs font-semibold text-white">Partner Credit Balances & Statements</div>
         </div>
 
         <div className="overflow-x-auto">
@@ -107,10 +102,10 @@ export default async function LedgerAgingPage() {
               <tr className="text-slate-400 bg-slate-900/80 border-b border-slate-800">
                 <th className="p-3">Partner Code</th>
                 <th className="p-3">Company Name</th>
-                <th className="p-3">Credit Term</th>
+                <th className="p-3">Payment Term</th>
                 <th className="p-3 text-right">Credit Line</th>
                 <th className="p-3 text-right">Wallet Balance</th>
-                <th className="p-3 text-right font-semibold text-amber-400">Ledger Outstanding</th>
+                <th className="p-3 text-right font-semibold text-amber-400">Total Pending</th>
                 <th className="p-3 text-center">Reminders</th>
               </tr>
             </thead>
@@ -132,7 +127,6 @@ export default async function LedgerAgingPage() {
                     <td className="p-3 text-center">
                       <button
                         className="px-2.5 py-1 rounded bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 font-medium text-[10px] border border-indigo-500/40 inline-flex items-center gap-1"
-                        title="Send payment statement via WhatsApp & Email"
                       >
                         <Send className="w-2.5 h-2.5" /> Send Reminder
                       </button>
@@ -147,4 +141,3 @@ export default async function LedgerAgingPage() {
     </div>
   )
 }
-

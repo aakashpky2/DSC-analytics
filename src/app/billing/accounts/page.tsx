@@ -1,7 +1,7 @@
-// Module 07: Bank Account Register & Dynamic QR Upload (/billing/accounts)
+// Bank Accounts Configuration (/billing/accounts)
 import React from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Landmark, QrCode, Plus } from 'lucide-react'
+import { ArrowLeft, Landmark, QrCode } from 'lucide-react'
 
 async function getAccounts() {
   const port = process.env.PORT || '3000'
@@ -25,19 +25,14 @@ export default async function BillingAccountsPage() {
         <div>
           <div className="flex items-center gap-2 text-xs text-slate-400 mb-1">
             <Link href="/billing/invoices" className="hover:text-white flex items-center gap-1">
-              <ArrowLeft className="w-3.5 h-3.5" /> Billing Invoices
+              <ArrowLeft className="w-3.5 h-3.5" /> Invoices
             </Link>
             <span>/</span>
-            <span className="text-white">Bank Accounts Register</span>
+            <span className="text-white">Bank Accounts</span>
           </div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold text-white">Bank Account Configuration & Dynamic QR</h1>
-            <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-              Module 07 Accounts
-            </span>
-          </div>
+          <h1 className="text-xl font-bold text-white">Bank Accounts & Payment QR</h1>
           <p className="text-xs text-slate-400 mt-1">
-            Configure bank credentials, UPI handles, IFSC & dynamic payment QR codes mapped to invoice series.
+            Official company bank accounts, UPI IDs, and dynamic payment QR codes attached to invoices.
           </p>
         </div>
       </div>
@@ -52,14 +47,14 @@ export default async function BillingAccountsPage() {
                 <span className="text-sm font-bold text-white">{acc.account_nickname}</span>
               </div>
               <div className="text-xs text-slate-200">{acc.bank_name} &bull; A/C: {acc.account_number}</div>
-              <div className="text-xs text-slate-400">Holder: {acc.account_holder_name}</div>
+              <div className="text-xs text-slate-400">Account Holder: {acc.account_holder_name}</div>
               <div className="text-[11px] text-slate-400">IFSC: {acc.ifsc_code} &bull; Branch: {acc.branch_name}</div>
               <div className="text-xs text-cyan-400 font-mono">UPI ID: {acc.upi_id}</div>
             </div>
 
             <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-center">
               <QrCode className="w-10 h-10 text-white mx-auto" />
-              <span className="text-[9px] text-emerald-400 font-mono mt-1 block">Active UPI</span>
+              <span className="text-[9px] text-emerald-400 font-mono mt-1 block">Active UPI QR</span>
             </div>
           </div>
         ))}
@@ -67,4 +62,3 @@ export default async function BillingAccountsPage() {
     </div>
   )
 }
-

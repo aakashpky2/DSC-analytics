@@ -1,4 +1,4 @@
-// Analytics Hub: Graphs, Charts & Visual Business Intelligence (Part 5)
+// Visual Analytics Charts: Simplified Customer Wording
 'use client'
 
 import React, { useState, useEffect } from 'react'
@@ -8,10 +8,7 @@ import {
   PieChart as PieIcon,
   Layers,
   Calendar,
-  DollarSign,
-  ArrowUpRight,
-  ShieldCheck,
-  Cpu
+  DollarSign
 } from 'lucide-react'
 import {
   ResponsiveContainer,
@@ -24,8 +21,6 @@ import {
   PieChart,
   Pie,
   Cell,
-  LineChart,
-  Line,
   AreaChart,
   Area
 } from 'recharts'
@@ -74,25 +69,25 @@ export default function AnalyticsDashboard() {
 
   // 2. DSC Application Status Breakdown
   const dscStatusData = [
-    { name: 'Intake', value: 12, color: '#38bdf8' },
-    { name: 'Doc Review', value: 8, color: '#f59e0b' },
-    { name: 'Video KYC', value: 5, color: '#a855f7' },
-    { name: 'CA Approval', value: 15, color: '#06b6d4' },
-    { name: 'Dispatched', value: 45, color: '#10b981' },
+    { name: 'Application Received', value: 12, color: '#38bdf8' },
+    { name: 'Document Check', value: 8, color: '#f59e0b' },
+    { name: 'Video Verification', value: 5, color: '#a855f7' },
+    { name: 'Approval in Progress', value: 15, color: '#06b6d4' },
+    { name: 'Dispatched to Customer', value: 45, color: '#10b981' },
   ]
 
   // 3. Lead Conversion Funnel
   const leadFunnelData = [
-    { stage: 'New Leads', count: 48 },
+    { stage: 'New Inquiries', count: 48 },
     { stage: 'Contacted', count: 35 },
-    { stage: 'Requirements', count: 24 },
-    { stage: 'Quoted', count: 18 },
-    { stage: 'Won', count: 12 },
+    { stage: 'Requirement Gathered', count: 24 },
+    { stage: 'Quotation Sent', count: 18 },
+    { stage: 'Orders Won', count: 12 },
   ]
 
   // 4. Token Landed Cost vs Vendor Base Price
   const tokenCostData = data.batches.map((b) => ({
-    model: b.token_model.replace('_', ' ').slice(0, 10),
+    model: b.token_model.replace('_', ' ').slice(0, 12),
     basePrice: b.base_unit_price,
     landedCost: b.unit_landed_cost,
   }))
@@ -101,28 +96,23 @@ export default function AnalyticsDashboard() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl font-bold text-white">Visual Analytics & Performance Intelligence</h2>
-            <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
-              Part 5 Charts
-            </span>
-          </div>
+          <h2 className="text-xl font-bold text-white">Business Performance</h2>
           <p className="text-xs text-slate-400 mt-1">
-            Real-time business aggregations across sales revenue, DSC application pipeline, lead conversion, and landed margins.
+            Sales overview, DSC application status, customer inquiries, and token purchase costs.
           </p>
         </div>
       </div>
 
       {/* Grid of Visual Analytics Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Chart 1: Revenue vs Collections */}
+        {/* Chart 1: Monthly Sales & Payments */}
         <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-semibold text-white">Monthly Sales vs Collections Trend</h3>
-              <p className="text-[11px] text-slate-400">Invoiced B2B turnover compared with realized bank receipts</p>
+              <h3 className="text-sm font-semibold text-white">Monthly Sales & Payments</h3>
+              <p className="text-[11px] text-slate-400">Total invoice value compared with payments received</p>
             </div>
-            <span className="text-xs font-mono text-emerald-400 font-semibold">92.4% Recovery Rate</span>
+            <span className="text-xs font-mono text-emerald-400 font-semibold">92.4% Collected</span>
           </div>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
@@ -143,21 +133,21 @@ export default function AnalyticsDashboard() {
                 <Tooltip
                   contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '11px' }}
                 />
-                <Area type="monotone" dataKey="sales" stroke="#6366f1" fillOpacity={1} fill="url(#salesGrad)" name="Sales Raised" />
-                <Area type="monotone" dataKey="collections" stroke="#10b981" fillOpacity={1} fill="url(#colGrad)" name="Bank Collections" />
+                <Area type="monotone" dataKey="sales" stroke="#6366f1" fillOpacity={1} fill="url(#salesGrad)" name="Total Invoices" />
+                <Area type="monotone" dataKey="collections" stroke="#10b981" fillOpacity={1} fill="url(#colGrad)" name="Payments Received" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Chart 2: DSC Application Pipeline Status */}
+        {/* Chart 2: DSC Application Status */}
         <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-semibold text-white">DSC Application Lifecycle Distribution</h3>
-              <p className="text-[11px] text-slate-400">Current workload across issuance stages</p>
+              <h3 className="text-sm font-semibold text-white">DSC Application Status</h3>
+              <p className="text-[11px] text-slate-400">Current progress of certificates in processing</p>
             </div>
-            <span className="text-xs font-mono text-cyan-400 font-semibold">85 Certificates Active</span>
+            <span className="text-xs font-mono text-cyan-400 font-semibold">85 Active</span>
           </div>
           <div className="h-64 flex items-center justify-center">
             <ResponsiveContainer width="100%" height="100%">
@@ -192,38 +182,38 @@ export default function AnalyticsDashboard() {
           </div>
         </div>
 
-        {/* Chart 3: CRM Lead Funnel */}
+        {/* Chart 3: Customer Lead Conversion */}
         <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-semibold text-white">CRM Lead Conversion Funnel</h3>
-              <p className="text-[11px] text-slate-400">Intake velocity through negotiation to Won</p>
+              <h3 className="text-sm font-semibold text-white">Customer Lead Conversion</h3>
+              <p className="text-[11px] text-slate-400">Inquiry progress to completed orders</p>
             </div>
-            <span className="text-xs font-mono text-purple-400 font-semibold">25% Win Ratio</span>
+            <span className="text-xs font-mono text-purple-400 font-semibold">25% Won</span>
           </div>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={leadFunnelData} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
                 <XAxis type="number" stroke="#64748b" fontSize={11} />
-                <YAxis dataKey="stage" type="category" stroke="#64748b" fontSize={11} width={90} />
+                <YAxis dataKey="stage" type="category" stroke="#64748b" fontSize={11} width={120} />
                 <Tooltip
                   contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '11px' }}
                 />
-                <Bar dataKey="count" fill="#8b5cf6" radius={[0, 4, 4, 0]} name="Leads" />
+                <Bar dataKey="count" fill="#8b5cf6" radius={[0, 4, 4, 0]} name="Inquiries" />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Chart 4: Landed Cost Variance */}
+        {/* Chart 4: Token Purchase Cost vs Base Price */}
         <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-semibold text-white">Token Landed Cost Impact</h3>
-              <p className="text-[11px] text-slate-400">Base vendor price vs True Landed Cost with freight & taxes</p>
+              <h3 className="text-sm font-semibold text-white">Token Purchase Cost</h3>
+              <p className="text-[11px] text-slate-400">Vendor base price compared with total cost including freight and tax</p>
             </div>
-            <span className="text-xs font-mono text-cyan-400 font-semibold">Section 6.1 Formula</span>
+            <span className="text-xs font-mono text-cyan-400 font-semibold">Accurate Costing</span>
           </div>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
@@ -234,8 +224,8 @@ export default function AnalyticsDashboard() {
                 <Tooltip
                   contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '11px' }}
                 />
-                <Bar dataKey="basePrice" fill="#0284c7" name="Base Unit Price (₹)" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="landedCost" fill="#06b6d4" name="Unit Landed Cost (₹)" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="basePrice" fill="#0284c7" name="Base Price (₹)" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="landedCost" fill="#06b6d4" name="Total Cost per Unit (₹)" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -244,4 +234,3 @@ export default function AnalyticsDashboard() {
     </div>
   )
 }
-
