@@ -1,4 +1,4 @@
-// Visual Analytics Charts: Simplified Customer Wording
+// Visual Analytics Charts: Refined, Muted Professional Color Palette
 'use client'
 
 import React, { useState, useEffect } from 'react'
@@ -67,13 +67,13 @@ export default function AnalyticsDashboard() {
     { month: 'Mar 26', sales: 520000, collections: 490000 },
   ]
 
-  // 2. DSC Application Status Breakdown
+  // 2. DSC Application Status Breakdown (Muted Corporate Tones)
   const dscStatusData = [
-    { name: 'Application Received', value: 12, color: '#38bdf8' },
-    { name: 'Document Check', value: 8, color: '#f59e0b' },
-    { name: 'Video Verification', value: 5, color: '#a855f7' },
-    { name: 'Approval in Progress', value: 15, color: '#06b6d4' },
-    { name: 'Dispatched to Customer', value: 45, color: '#10b981' },
+    { name: 'Application Received', value: 12, color: '#6486B0' }, // Muted Blue
+    { name: 'Document Check', value: 8, color: '#C49A53' },      // Muted Amber
+    { name: 'Video Verification', value: 5, color: '#7F56AD' },  // Muted Purple
+    { name: 'Approval in Progress', value: 15, color: '#4E7EAB' },// Softer Slate Cyan
+    { name: 'Dispatched to Customer', value: 45, color: '#3F9C83' }, // Muted Green
   ]
 
   // 3. Lead Conversion Funnel
@@ -119,22 +119,22 @@ export default function AnalyticsDashboard() {
               <AreaChart data={monthlyRevenue}>
                 <defs>
                   <linearGradient id="salesGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4} />
-                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0} />
+                    <stop offset="5%" stopColor="#5968C5" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#5968C5" stopOpacity={0.0} />
                   </linearGradient>
                   <linearGradient id="colGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+                    <stop offset="5%" stopColor="#3F9C83" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#3F9C83" stopOpacity={0.0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                <XAxis dataKey="month" stroke="#64748b" fontSize={11} />
-                <YAxis stroke="#64748b" fontSize={11} tickFormatter={(v) => `₹${v / 1000}k`} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#232F42" />
+                <XAxis dataKey="month" stroke="#64748B" fontSize={11} />
+                <YAxis stroke="#64748B" fontSize={11} tickFormatter={(v) => `₹${v / 1000}k`} />
                 <Tooltip
-                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '11px' }}
+                  contentStyle={{ backgroundColor: '#111827', borderColor: '#29354A', borderRadius: '8px', fontSize: '11px', color: '#F1F5F9' }}
                 />
-                <Area type="monotone" dataKey="sales" stroke="#6366f1" fillOpacity={1} fill="url(#salesGrad)" name="Total Invoices" />
-                <Area type="monotone" dataKey="collections" stroke="#10b981" fillOpacity={1} fill="url(#colGrad)" name="Payments Received" />
+                <Area type="monotone" dataKey="sales" stroke="#5968C5" fillOpacity={1} fill="url(#salesGrad)" name="Total Invoices" />
+                <Area type="monotone" dataKey="collections" stroke="#3F9C83" fillOpacity={1} fill="url(#colGrad)" name="Payments Received" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -158,7 +158,7 @@ export default function AnalyticsDashboard() {
                   cy="50%"
                   innerRadius={60}
                   outerRadius={85}
-                  paddingAngle={5}
+                  paddingAngle={4}
                   dataKey="value"
                 >
                   {dscStatusData.map((entry, index) => (
@@ -166,7 +166,7 @@ export default function AnalyticsDashboard() {
                   ))}
                 </Pie>
                 <Tooltip
-                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '11px' }}
+                  contentStyle={{ backgroundColor: '#111827', borderColor: '#29354A', borderRadius: '8px', fontSize: '11px', color: '#F1F5F9' }}
                 />
               </PieChart>
             </ResponsiveContainer>
@@ -189,18 +189,18 @@ export default function AnalyticsDashboard() {
               <h3 className="text-sm font-semibold text-white">Customer Lead Conversion</h3>
               <p className="text-[11px] text-slate-400">Inquiry progress to completed orders</p>
             </div>
-            <span className="text-xs font-mono text-purple-400 font-semibold">25% Won</span>
+            <span className="text-xs font-mono text-indigo-400 font-semibold">25% Won</span>
           </div>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={leadFunnelData} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                <XAxis type="number" stroke="#64748b" fontSize={11} />
-                <YAxis dataKey="stage" type="category" stroke="#64748b" fontSize={11} width={120} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#232F42" />
+                <XAxis type="number" stroke="#64748B" fontSize={11} />
+                <YAxis dataKey="stage" type="category" stroke="#64748B" fontSize={11} width={120} />
                 <Tooltip
-                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '11px' }}
+                  contentStyle={{ backgroundColor: '#111827', borderColor: '#29354A', borderRadius: '8px', fontSize: '11px', color: '#F1F5F9' }}
                 />
-                <Bar dataKey="count" fill="#8b5cf6" radius={[0, 4, 4, 0]} name="Inquiries" />
+                <Bar dataKey="count" fill="#5968C5" radius={[0, 4, 4, 0]} name="Inquiries" />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -218,14 +218,14 @@ export default function AnalyticsDashboard() {
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={tokenCostData.length > 0 ? tokenCostData : [{ model: 'ePass Auto', basePrice: 340, landedCost: 366 }]}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                <XAxis dataKey="model" stroke="#64748b" fontSize={11} />
-                <YAxis stroke="#64748b" fontSize={11} tickFormatter={(v) => `₹${v}`} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#232F42" />
+                <XAxis dataKey="model" stroke="#64748B" fontSize={11} />
+                <YAxis stroke="#64748B" fontSize={11} tickFormatter={(v) => `₹${v}`} />
                 <Tooltip
-                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '11px' }}
+                  contentStyle={{ backgroundColor: '#111827', borderColor: '#29354A', borderRadius: '8px', fontSize: '11px', color: '#F1F5F9' }}
                 />
-                <Bar dataKey="basePrice" fill="#0284c7" name="Base Price (₹)" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="landedCost" fill="#06b6d4" name="Total Cost per Unit (₹)" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="basePrice" fill="#4E7EAB" name="Base Price (₹)" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="landedCost" fill="#6486B0" name="Total Cost per Unit (₹)" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
