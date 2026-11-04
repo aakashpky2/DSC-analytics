@@ -1,21 +1,74 @@
 // Other Business Services (/services)
-import React from 'react'
-import { Sparkles } from 'lucide-react'
+'use client'
 
-async function getServices() {
-  const port = process.env.PORT || '3000'
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/services/orders`, { cache: 'no-store' })
-    if (!res.ok) return []
-    const data = await res.json()
-    return data.orders || []
-  } catch {
-    return []
+import React, { useState, useEffect } from 'react'
+import { Sparkles, Plus, X, ChevronRight, FileCheck, Layers } from 'lucide-react'
+
+export default function ServicesPage() {
+  const [orders, setOrders] = useState<any[]>([])
+  const [partners, setPartners] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [formData, setFormData] = useState({
+    service_type: 'trademark',
+    partner_id: '',
+    client_name: '',
+    client_contact: '',
+    government_fees: '4500',
+    professional_fees: '2500',
+    notes: '',
+  })
+  const [submitting, setSubmitting] = useState(false)
+
+  const loadData = () => {
+    setLoading(true)
+    Promise.all([
+      fetch('/api/services/orders').then((r) => r.json()),
+      fetch('/api/partners').then((r) => r.json()),
+    ])
+      .then(([sData, pData]) => {
+        setOrders(sData.orders || [])
+        const pList = pData.partners || []
+        setPartners(pList)
+        if (pList.length > 0 && !formData.partner_id) {
+          setFormData((prev) => ({ ...prev, partner_id: pList[0].id }))
+        }
+      })
+      .catch((err) => console.error(err))
+      .finally(() => setLoading(false))
   }
-}
 
-export default async function ServicesPage() {
-  const orders = await getServices()
+  useEffect(() => {
+    loadData()
+  }, [])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSubmitting(true)
+    try {
+      const res = await fetch('/api/services/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...formData,
+          government_fees: parseFloat(formData.government_fees) || 0,
+          professional_fees: parseFloat(formData.professional_fees) || 0,
+        }),
+      })
+      if (res.ok) {
+        setIsModalOpen(false)
+        setFormData((prev) => ({
+          ...prev,
+          client_name: '',
+          client_contact: '',
+          notes: '',
+        }))
+        loadData()
+      }
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -27,6 +80,13 @@ export default async function ServicesPage() {
             Track filings for Trademarks, FSSAI Food Licenses, GST Registrations, and Company Incorporation.
           </p>
         </div>
+
+        <button
+          onClick={() => setIsModalOpen(true)}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-pink-600 hover:bg-pink-500 text-white font-medium text-xs shadow-md shadow-pink-600/20 transition cursor-pointer"
+        >
+          <Plus className="w-4 h-4" /> New Service Application
+        </button>
       </div>
 
       {/* Services Portfolio Grid */}
@@ -47,7 +107,7 @@ export default async function ServicesPage() {
       {/* Orders Table */}
       <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-          <div className="text-xs font-semibold text-white">Active Service Applications</div>
+          <div className="text-xs font-semibold text-white">Active Service Applications ({orders.length})</div>
         </div>
 
         <div className="overflow-x-auto">
@@ -64,10 +124,16 @@ export default async function ServicesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {orders.length === 0 ? (
+              {loading ? (
                 <tr>
                   <td colSpan={7} className="p-8 text-center text-slate-500">
-                    No active service orders in progress.
+                    Loading service orders...
+                  </td>
+                </tr>
+              ) : orders.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-8 text-center text-slate-500">
+                    No active service orders in progress. Click New Service Application to start one.
                   </td>
                 </tr>
               ) : (
@@ -91,6 +157,127 @@ export default async function ServicesPage() {
           </table>
         </div>
       </div>
+
+      {/* New Service Application Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-md rounded-2xl bg-slate-900 border border-slate-800 p-6 shadow-2xl text-xs space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <h3 className="font-semibold text-white text-sm">New Legal & Business Service Order</h3>
+              <button
+                onClick={() => setIsModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-3">
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Service Type *</label>
+                <select
+                  value={formData.service_type}
+                  onChange={(e) => setFormData({ ...formData, service_type: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
+                >
+                  <option value="trademark">Trademark Filing</option>
+                  <option value="fssai_basic">FSSAI Basic Food Registration</option>
+                  <option value="fssai_state">FSSAI State License</option>
+                  <option value="fssai_central">FSSAI Central License</option>
+                  <option value="gst_registration">GST Registration</option>
+                  <option value="company_incorporation">Private Limited Company Incorporation</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Originating Partner *</label>
+                <select
+                  required
+                  value={formData.partner_id}
+                  onChange={(e) => setFormData({ ...formData, partner_id: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
+                >
+                  {partners.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.company_name} ({p.partner_code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Client Entity / Individual Name *</label>
+                <input
+                  required
+                  placeholder="e.g. Apex Health Foods LLP"
+                  value={formData.client_name}
+                  onChange={(e) => setFormData({ ...formData, client_name: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Client Contact Number *</label>
+                <input
+                  required
+                  placeholder="+91 9876543210"
+                  value={formData.client_contact}
+                  onChange={(e) => setFormData({ ...formData, client_contact: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">Government Fees (₹)</label>
+                  <input
+                    type="number"
+                    value={formData.government_fees}
+                    onChange={(e) => setFormData({ ...formData, government_fees: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">Service Fee (₹)</label>
+                  <input
+                    type="number"
+                    value={formData.professional_fees}
+                    onChange={(e) => setFormData({ ...formData, professional_fees: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white font-semibold text-emerald-300"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Filing Notes / Reference</label>
+                <input
+                  placeholder="e.g. Logo mark search conducted, ready for portal intake"
+                  value={formData.notes}
+                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-slate-800 flex justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="px-4 py-1.5 rounded-lg bg-pink-600 hover:bg-pink-500 text-white font-medium shadow-md transition disabled:opacity-50"
+                >
+                  {submitting ? 'Creating...' : 'Create Order'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

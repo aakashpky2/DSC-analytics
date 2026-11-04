@@ -1,19 +1,9 @@
 // DSC Application Progress (/dsc/applications)
-import React from 'react'
-import Link from 'next/link'
-import { ArrowLeft, Clock, CheckCircle2, AlertCircle } from 'lucide-react'
+'use client'
 
-async function getApplications() {
-  const port = process.env.PORT || '3000'
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/dsc/applications?mask=true`, { cache: 'no-store' })
-    if (!res.ok) return []
-    const data = await res.json()
-    return data.applications || []
-  } catch {
-    return []
-  }
-}
+import React, { useState, useEffect } from 'react'
+import Link from 'next/link'
+import { ArrowLeft, Clock, CheckCircle2, AlertCircle, Plus, X, ChevronRight, FileCheck } from 'lucide-react'
 
 const STAGES = [
   { key: 'intake', label: 'Application Received', color: 'border-blue-500/40 text-blue-400' },
@@ -23,8 +13,92 @@ const STAGES = [
   { key: 'issued_dispatched', label: 'Issued & Dispatched', color: 'border-emerald-500/40 text-emerald-400' },
 ]
 
-export default async function DscApplicationsPage() {
-  const apps = await getApplications()
+export default function DscApplicationsPage() {
+  const [apps, setApps] = useState<any[]>([])
+  const [partners, setPartners] = useState<any[]>([])
+  const [catalog, setCatalog] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [formData, setFormData] = useState({
+    partner_id: '',
+    catalog_id: '',
+    applicant_name: '',
+    applicant_email: '',
+    applicant_phone: '',
+    applicant_pan: '',
+  })
+  const [submitting, setSubmitting] = useState(false)
+
+  const loadData = () => {
+    setLoading(true)
+    Promise.all([
+      fetch('/api/dsc/applications?mask=true').then((r) => r.json()),
+      fetch('/api/partners').then((r) => r.json()),
+      fetch('/api/dsc/catalog').then((r) => r.json()),
+    ])
+      .then(([aData, pData, cData]) => {
+        setApps(aData.applications || [])
+        const pList = pData.partners || []
+        const cList = cData.catalog || []
+        setPartners(pList)
+        setCatalog(cList)
+        if (pList.length > 0 && !formData.partner_id) {
+          setFormData((prev) => ({ ...prev, partner_id: pList[0].id }))
+        }
+        if (cList.length > 0 && !formData.catalog_id) {
+          setFormData((prev) => ({ ...prev, catalog_id: cList[0].id }))
+        }
+      })
+      .catch((err) => console.error(err))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    loadData()
+  }, [])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSubmitting(true)
+    try {
+      const res = await fetch('/api/dsc/applications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      })
+      if (res.ok) {
+        setIsModalOpen(false)
+        setFormData((prev) => ({
+          ...prev,
+          applicant_name: '',
+          applicant_email: '',
+          applicant_phone: '',
+          applicant_pan: '',
+        }))
+        loadData()
+      }
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleAdvanceStage = async (id: string, currentStage: string) => {
+    const stageKeys = STAGES.map((s) => s.key)
+    const nextIndex = stageKeys.indexOf(currentStage) + 1
+    if (nextIndex < stageKeys.length) {
+      const nextStage = stageKeys[nextIndex]
+      await fetch(`/api/dsc/applications/${id}/stage`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stage: nextStage,
+          ca_reference_no: nextStage === 'ca_portal_approval' ? `CA-REF-${Date.now().toString().slice(-4)}` : undefined,
+          notes: `Progressed to ${nextStage.replace('_', ' ')} by operations staff`,
+        }),
+      })
+      loadData()
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -43,6 +117,13 @@ export default async function DscApplicationsPage() {
             Track certificate processing from intake to document checks, video verification, and dispatch.
           </p>
         </div>
+
+        <button
+          onClick={() => setIsModalOpen(true)}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs shadow-md shadow-indigo-600/20 transition cursor-pointer"
+        >
+          <Plus className="w-4 h-4" /> New DSC Application
+        </button>
       </div>
 
       {/* Kanban Pipeline Columns */}
@@ -58,19 +139,35 @@ export default async function DscApplicationsPage() {
                 </span>
               </div>
 
-              <div className="space-y-2 min-h-[300px]">
-                {stageApps.length === 0 ? (
+              <div className="space-y-2 min-h-[350px]">
+                {loading ? (
+                  <div className="p-4 text-center text-[11px] text-slate-600">Loading...</div>
+                ) : stageApps.length === 0 ? (
                   <div className="p-4 text-center text-[11px] text-slate-600 italic">No applications</div>
                 ) : (
                   stageApps.map((a: any) => (
-                    <div key={a.id} className="p-3 rounded-lg bg-slate-950 border border-slate-800/80 space-y-1.5 shadow-sm">
+                    <div key={a.id} className="p-3 rounded-lg bg-slate-950 border border-slate-800/80 space-y-1.5 shadow-sm group">
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] font-mono text-cyan-400 font-semibold">{a.application_number}</span>
-                        <span className="text-[9px] uppercase px-1 rounded bg-slate-800 text-slate-400">2-Yr</span>
+                        <span className="text-[9px] uppercase px-1 rounded bg-slate-800 text-slate-400">Class 3</span>
                       </div>
-                      <div className="text-xs font-medium text-white truncate">{a.applicant_name}</div>
+                      <div className="text-xs font-semibold text-white truncate">{a.applicant_name}</div>
                       <div className="text-[10px] text-slate-400 truncate">{a.applicant_email}</div>
                       <div className="text-[10px] text-slate-400 truncate">{a.applicant_phone}</div>
+                      {a.ca_reference_no && (
+                        <div className="text-[9px] text-cyan-300 font-mono">Ref: {a.ca_reference_no}</div>
+                      )}
+
+                      {st.key !== 'issued_dispatched' && (
+                        <div className="pt-2 border-t border-slate-800/60 flex justify-end">
+                          <button
+                            onClick={() => handleAdvanceStage(a.id, a.stage)}
+                            className="px-2 py-0.5 rounded bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 text-[10px] font-medium flex items-center gap-1 transition cursor-pointer"
+                          >
+                            Advance <ChevronRight className="w-3 h-3" />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))
                 )}
@@ -79,6 +176,120 @@ export default async function DscApplicationsPage() {
           )
         })}
       </div>
+
+      {/* New Application Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-md rounded-2xl bg-slate-900 border border-slate-800 p-6 shadow-2xl text-xs space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <h3 className="font-semibold text-white text-sm">Create DSC Application</h3>
+              <button
+                onClick={() => setIsModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-3">
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Select Partner *</label>
+                <select
+                  required
+                  value={formData.partner_id}
+                  onChange={(e) => setFormData({ ...formData, partner_id: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
+                >
+                  {partners.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.company_name} ({p.partner_code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">DSC Product *</label>
+                <select
+                  required
+                  value={formData.catalog_id}
+                  onChange={(e) => setFormData({ ...formData, catalog_id: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
+                >
+                  {catalog.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.class_type.replace(/_/g, ' ')} - {c.certificate_type.replace(/_/g, ' ')} ({c.validity_years})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Applicant Full Name *</label>
+                <input
+                  required
+                  placeholder="e.g. Ramesh Kumar"
+                  value={formData.applicant_name}
+                  onChange={(e) => setFormData({ ...formData, applicant_name: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">Email *</label>
+                  <input
+                    required
+                    type="email"
+                    placeholder="name@email.com"
+                    value={formData.applicant_email}
+                    onChange={(e) => setFormData({ ...formData, applicant_email: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">Phone Number *</label>
+                  <input
+                    required
+                    type="tel"
+                    placeholder="+91 9876543210"
+                    value={formData.applicant_phone}
+                    onChange={(e) => setFormData({ ...formData, applicant_phone: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Applicant PAN Card</label>
+                <input
+                  placeholder="e.g. ABCDE1234F"
+                  value={formData.applicant_pan}
+                  onChange={(e) => setFormData({ ...formData, applicant_pan: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white uppercase font-mono"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-slate-800 flex justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium shadow-md transition disabled:opacity-50"
+                >
+                  {submitting ? 'Creating...' : 'Create Application'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

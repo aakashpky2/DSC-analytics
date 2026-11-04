@@ -1,23 +1,48 @@
 // Check Payments (/billing/payments)
-import React from 'react'
+'use client'
+
+import React, { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { CheckCircle2, XCircle, ArrowLeft, Landmark, Image as ImageIcon } from 'lucide-react'
+import { CheckCircle2, XCircle, ArrowLeft, Landmark, Image as ImageIcon, Eye } from 'lucide-react'
 import { PaymentReceivedRecord } from '@/types/models'
 
-async function getQueue(): Promise<PaymentReceivedRecord[]> {
-  const port = process.env.PORT || '3000'
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/billing/payments/queue`, { cache: 'no-store' })
-    if (!res.ok) return []
-    const data = await res.json()
-    return data.queue || []
-  } catch {
-    return []
-  }
-}
+export default function PaymentsVerificationPage() {
+  const [queue, setQueue] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [actionLoading, setActionLoading] = useState<string | null>(null)
 
-export default async function PaymentsVerificationPage() {
-  const queue = await getQueue()
+  const loadQueue = () => {
+    setLoading(true)
+    fetch('/api/billing/payments/queue')
+      .then((r) => r.json())
+      .then((d) => setQueue(d.queue || []))
+      .catch((err) => console.error(err))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    loadQueue()
+  }, [])
+
+  const handleAction = async (paymentId: string, action: 'verified' | 'rejected') => {
+    setActionLoading(paymentId)
+    try {
+      const res = await fetch('/api/billing/payments/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          payment_id: paymentId,
+          action,
+          rejection_remarks: action === 'rejected' ? 'UTR verification failed / screenshot mismatch' : undefined,
+        }),
+      })
+      if (res.ok) {
+        loadQueue()
+      }
+    } finally {
+      setActionLoading(null)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -31,14 +56,16 @@ export default async function PaymentsVerificationPage() {
             <span>/</span>
             <span className="text-white">Check Payments</span>
           </div>
-          <h1 className="text-xl font-bold text-white">Check Payments</h1>
+          <h1 className="text-xl font-bold text-white">Check Payments & UTR Audit</h1>
           <p className="text-xs text-slate-400 mt-1">
-            Verify customer payment receipts and UTR numbers to credit partner accounts.
+            Verify customer payment receipts and UTR numbers to credit partner accounts and reconcile invoices.
           </p>
         </div>
       </div>
 
-      {queue.length === 0 ? (
+      {loading ? (
+        <div className="p-12 text-center text-slate-500 text-xs">Loading verification queue...</div>
+      ) : queue.length === 0 ? (
         <div className="p-12 rounded-2xl bg-slate-900/40 border border-slate-800 text-center space-y-3">
           <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto" />
           <h3 className="text-sm font-semibold text-white">All Payments Verified</h3>
@@ -73,34 +100,28 @@ export default async function PaymentsVerificationPage() {
                 </div>
               </div>
 
-              {/* Split Screen Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-800">
-                {/* Left Screen: Payment Proof Screenshot Viewport */}
-                <div className="p-5 flex flex-col justify-center items-center bg-slate-950/70 min-h-[260px]">
-                  {p.screenshot_proof_url ? (
-                    <img
-                      src={p.screenshot_proof_url}
-                      alt="Payment Receipt"
-                      className="max-h-64 rounded-lg border border-slate-800 object-contain shadow-lg"
-                    />
-                  ) : (
-                    <div className="text-center space-y-2 text-slate-500">
-                      <ImageIcon className="w-12 h-12 mx-auto stroke-1" />
-                      <div className="text-xs font-mono">Bank Reference Slip</div>
-                      <div className="text-[11px] text-slate-400 font-mono bg-slate-900 px-3 py-1.5 rounded border border-slate-800">
-                        UTR: {p.transaction_reference_utr || 'Direct NEFT/RTGS'}
-                      </div>
+              {/* Card Body - Split Screen Audit */}
+              <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Left: Payment Proof Screenshot */}
+                <div className="space-y-3">
+                  <div className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                    <ImageIcon className="w-4 h-4 text-cyan-400" />
+                    <span>Payment Proof Screenshot</span>
+                  </div>
+
+                  <div className="aspect-[4/3] rounded-xl bg-slate-950 border border-slate-800 flex flex-col items-center justify-center p-6 text-center text-slate-500 relative overflow-hidden group">
+                    <div className="w-12 h-12 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center mb-2 text-cyan-400">
+                      <Landmark className="w-6 h-6" />
                     </div>
-                  )}
+                    <div className="text-xs font-medium text-slate-300">Bank Transfer / UPI Screenshot</div>
+                    <div className="text-[11px] text-slate-400 font-mono mt-1">UTR: {p.transaction_reference_utr || 'Direct Portal Transfer'}</div>
+                  </div>
                 </div>
 
-                {/* Right Screen: Invoice Audit Details & Actions */}
-                <div className="p-5 flex flex-col justify-between space-y-4">
-                  <div className="space-y-3">
-                    <div className="text-xs uppercase tracking-wider font-semibold text-slate-400">
-                      Payment Verification Details
-                    </div>
-
+                {/* Right: Reconciliation Details */}
+                <div className="flex flex-col justify-between space-y-4">
+                  <div>
+                    <div className="text-xs font-semibold text-slate-300 mb-3">Reconciliation Details</div>
                     <div className="space-y-1.5 text-xs">
                       <div className="flex justify-between py-1 border-b border-slate-800/80">
                         <span className="text-slate-400">Invoice Total:</span>
@@ -128,27 +149,23 @@ export default async function PaymentsVerificationPage() {
                   {/* Actions Bar */}
                   {p.verified_status === 'pending_verification' && (
                     <div className="flex items-center gap-3 pt-4 border-t border-slate-800">
-                      <form action="/api/billing/payments/verify" method="POST" className="flex-1">
-                        <input type="hidden" name="payment_id" value={p.id} />
-                        <input type="hidden" name="action" value="verified" />
-                        <button
-                          type="submit"
-                          className="w-full py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20"
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Confirm Payment
-                        </button>
-                      </form>
+                      <button
+                        onClick={() => handleAction(p.id, 'verified')}
+                        disabled={actionLoading === p.id}
+                        className="flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20 transition cursor-pointer disabled:opacity-50"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        {actionLoading === p.id ? 'Processing...' : 'Confirm Payment'}
+                      </button>
 
-                      <form action="/api/billing/payments/verify" method="POST" className="flex-1">
-                        <input type="hidden" name="payment_id" value={p.id} />
-                        <input type="hidden" name="action" value="rejected" />
-                        <button
-                          type="submit"
-                          className="w-full py-2 px-3 rounded-lg bg-rose-900/40 hover:bg-rose-900/60 border border-rose-700/50 text-rose-300 font-medium text-xs flex items-center justify-center gap-1.5"
-                        >
-                          <XCircle className="w-3.5 h-3.5" /> Reject Payment
-                        </button>
-                      </form>
+                      <button
+                        onClick={() => handleAction(p.id, 'rejected')}
+                        disabled={actionLoading === p.id}
+                        className="flex-1 py-2 px-3 rounded-lg bg-rose-900/40 hover:bg-rose-900/60 border border-rose-700/50 text-rose-300 font-medium text-xs flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                      >
+                        <XCircle className="w-3.5 h-3.5" />
+                        Reject Payment
+                      </button>
                     </div>
                   )}
                 </div>

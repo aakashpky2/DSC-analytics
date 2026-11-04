@@ -272,6 +272,23 @@ exports.apiRouter.get('/auth/me', async (req, res) => {
 // ==========================================
 // 2. User Administration & Granular RBAC
 // ==========================================
+exports.apiRouter.get('/admin/roles', requireAdmin, async (_req, res) => {
+    try {
+        const roles = await (0, localDb_1.queryAll)(`
+      SELECT r.*, h.level_order, h.level_name, COUNT(u.id) as staff_count
+      FROM roles r
+      JOIN hierarchy_levels h ON r.hierarchy_level_id = h.id
+      LEFT JOIN user_profiles u ON u.role_id = r.id
+      GROUP BY r.id
+      ORDER BY h.level_order ASC
+    `);
+        const levels = await (0, localDb_1.queryAll)('SELECT * FROM hierarchy_levels ORDER BY level_order ASC');
+        return res.json({ roles, levels });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
 exports.apiRouter.get('/admin/users', requireAdmin, async (req, res) => {
     try {
         const mask = req.query.mask === 'true';
@@ -388,6 +405,40 @@ exports.apiRouter.get('/dsc/catalog', async (_req, res) => {
     try {
         const items = await (0, localDb_1.queryAll)('SELECT * FROM dsc_catalog ORDER BY class_type, validity_years');
         return res.json({ catalog: items });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.post('/dsc/catalog', requireAdmin, async (req, res) => {
+    try {
+        const { class_type, certificate_type, validity_years, vendor_base_price, partner_price, mrp } = req.body;
+        if (!class_type || !certificate_type || !validity_years) {
+            return res.status(400).json({ error: 'Class type, certificate type, and validity are required.' });
+        }
+        const id = `cat-${Date.now()}`;
+        await (0, localDb_1.run)(`
+      INSERT INTO dsc_catalog (id, class_type, certificate_type, validity_years, vendor_base_price, partner_price, mrp, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+    `, [id, class_type, certificate_type, validity_years, parseFloat(vendor_base_price) || 0, parseFloat(partner_price) || 0, parseFloat(mrp) || 0]);
+        return res.status(201).json({ success: true, id, message: 'DSC Product added successfully.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.put('/dsc/catalog/:id', requireAdmin, async (req, res) => {
+    try {
+        const { vendor_base_price, partner_price, mrp, is_active } = req.body;
+        await (0, localDb_1.run)(`
+      UPDATE dsc_catalog
+      SET vendor_base_price = COALESCE(?, vendor_base_price),
+          partner_price = COALESCE(?, partner_price),
+          mrp = COALESCE(?, mrp),
+          is_active = COALESCE(?, is_active)
+      WHERE id = ?
+    `, [vendor_base_price, partner_price, mrp, is_active, req.params.id]);
+        return res.json({ success: true, message: 'Price slab updated successfully.' });
     }
     catch (err) {
         return res.status(500).json({ error: err.message });
@@ -669,6 +720,54 @@ exports.apiRouter.post('/crm/leads/merge', async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
+// CRM Follow-Up Actions & Agenda
+exports.apiRouter.get('/crm/follow-ups', async (_req, res) => {
+    try {
+        const followUps = await (0, localDb_1.queryAll)(`
+      SELECT f.id, f.lead_id, f.channel as contact_mode, f.scheduled_at as follow_up_date, f.status, f.disposition, f.notes,
+             l.company_name, l.contact_person, l.phone, l.email, l.lead_code, u.full_name as conducted_by_name
+      FROM crm_follow_ups f
+      JOIN crm_leads l ON f.lead_id = l.id
+      LEFT JOIN user_profiles u ON f.conducted_by = u.id
+      ORDER BY f.scheduled_at ASC
+    `);
+        return res.json({ followUps });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.post('/crm/follow-ups', requireAuth, async (req, res) => {
+    try {
+        const { lead_id, follow_up_date, contact_mode, notes, disposition } = req.body;
+        const currentUser = req.user;
+        if (!lead_id)
+            return res.status(400).json({ error: 'Lead is required.' });
+        const id = `fu-${Date.now()}`;
+        await (0, localDb_1.run)(`
+      INSERT INTO crm_follow_ups (id, lead_id, channel, scheduled_at, notes, disposition, conducted_by, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+    `, [id, lead_id, contact_mode || 'phone_call', follow_up_date || new Date().toISOString(), notes || null, disposition || null, currentUser.id]);
+        return res.status(201).json({ success: true, id, message: 'Follow-up scheduled.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.patch('/crm/follow-ups/:id/complete', requireAuth, async (req, res) => {
+    try {
+        const { disposition, notes } = req.body;
+        await (0, localDb_1.run)(`
+      UPDATE crm_follow_ups
+      SET status = 'completed', disposition = COALESCE(?, disposition), notes = COALESCE(?, notes)
+      WHERE id = ?
+    `, [disposition, notes, req.params.id]);
+        return res.json({ success: true, message: 'Follow-up completed.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
 // ==========================================
 // 7. Additional Business Services Hub
 // ==========================================
@@ -708,6 +807,32 @@ exports.apiRouter.get('/billing/accounts', async (_req, res) => {
     try {
         const accounts = await (0, localDb_1.queryAll)('SELECT * FROM bank_accounts WHERE is_active = 1');
         return res.json({ accounts });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.post('/billing/accounts', requireAdmin, async (req, res) => {
+    try {
+        const { account_nickname, bank_name, account_number, ifsc_code, branch_name, account_holder_name, upi_id } = req.body;
+        if (!account_nickname || !bank_name || !account_number || !ifsc_code) {
+            return res.status(400).json({ error: 'Account nickname, bank name, account number, and IFSC are required.' });
+        }
+        const id = `bank-${Date.now()}`;
+        await (0, localDb_1.run)(`
+      INSERT INTO bank_accounts (id, account_nickname, bank_name, account_number, ifsc_code, branch_name, account_holder_name, upi_id, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+    `, [id, account_nickname, bank_name, account_number, ifsc_code, branch_name || 'Main Branch', account_holder_name || account_nickname, upi_id || null]);
+        return res.status(201).json({ success: true, id, message: 'Bank account added successfully.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.patch('/billing/accounts/:id/deactivate', requireAdmin, async (req, res) => {
+    try {
+        await (0, localDb_1.run)('UPDATE bank_accounts SET is_active = 0 WHERE id = ?', [req.params.id]);
+        return res.json({ success: true, message: 'Bank account deactivated.' });
     }
     catch (err) {
         return res.status(500).json({ error: err.message });
