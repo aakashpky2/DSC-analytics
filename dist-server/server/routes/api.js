@@ -5,7 +5,230 @@ const express_1 = require("express");
 const localDb_1 = require("../localDb");
 const businessLogic_1 = require("../../lib/businessLogic");
 const masking_1 = require("../../lib/masking");
+const auth_1 = require("../auth");
 exports.apiRouter = (0, express_1.Router)();
+// ==========================================
+// RBAC & Session Security Middleware
+// ==========================================
+async function resolveUserContext(req, _res, next) {
+    var _a;
+    try {
+        const token = (_a = req.cookies) === null || _a === void 0 ? void 0 : _a[auth_1.SESSION_COOKIE_NAME];
+        if (token) {
+            const sessionUser = await (0, auth_1.validateSessionToken)(token);
+            if (sessionUser) {
+                ;
+                req.user = sessionUser;
+                return next();
+            }
+        }
+        const headerUserId = req.headers['x-user-id'];
+        if (headerUserId) {
+            const user = await (0, localDb_1.queryOne)(`
+        SELECT u.*, r.name as role_name, h.level_order as hierarchy_level_order, h.level_name
+        FROM user_profiles u
+        LEFT JOIN roles r ON u.role_id = r.id
+        LEFT JOIN hierarchy_levels h ON u.hierarchy_level_id = h.id
+        WHERE u.id = ?
+      `, [headerUserId]);
+            if (user) {
+                ;
+                req.user = user;
+                return next();
+            }
+        }
+        ;
+        req.user = null;
+        next();
+    }
+    catch (_b) {
+        ;
+        req.user = null;
+        next();
+    }
+}
+exports.apiRouter.use(resolveUserContext);
+function requireAuth(req, res, next) {
+    const user = req.user;
+    if (!user) {
+        return res.status(401).json({ error: 'Please enter your email and password to sign in.' });
+    }
+    if (user.status !== 'active') {
+        return res.status(403).json({ error: 'Your account is inactive. Please contact your administrator.' });
+    }
+    if (user.permissions_frozen) {
+        return res.status(403).json({ error: 'Your account access has been temporarily paused by an administrator.' });
+    }
+    next();
+}
+function requireAdmin(req, res, next) {
+    const user = req.user;
+    if (!user) {
+        return res.status(401).json({ error: 'Please enter your email and password to sign in.' });
+    }
+    if (user.hierarchy_level_order > 1) {
+        return res.status(403).json({ error: 'You do not have permission to open this page.' });
+    }
+    next();
+}
+// ==========================================
+// Authentication Endpoints (/api/auth/*)
+// ==========================================
+// 1. POST /api/auth/login
+exports.apiRouter.post('/auth/login', async (req, res) => {
+    try {
+        const { email, password, rememberMe } = req.body;
+        if (!email || typeof email !== 'string' || !email.trim()) {
+            return res.status(400).json({ error: 'Please enter your email address.' });
+        }
+        if (!password || typeof password !== 'string' || !password.trim()) {
+            return res.status(400).json({ error: 'Please enter your password.' });
+        }
+        const cleanEmail = email.trim().toLowerCase();
+        const user = await (0, localDb_1.queryOne)(`SELECT u.*, r.name as role_name, h.level_order as hierarchy_level_order, h.level_name
+       FROM user_profiles u
+       LEFT JOIN roles r ON u.role_id = r.id
+       LEFT JOIN hierarchy_levels h ON u.hierarchy_level_id = h.id
+       WHERE LOWER(u.email) = ?`, [cleanEmail]);
+        if (!user) {
+            return res.status(401).json({ error: 'Incorrect email or password. Please try again.' });
+        }
+        const isValid = await (0, auth_1.verifyUserPassword)(user, password);
+        if (!isValid) {
+            return res.status(401).json({ error: 'Incorrect email or password. Please try again.' });
+        }
+        if (user.status !== 'active') {
+            return res.status(403).json({ error: 'Your account is inactive. Please contact your administrator.' });
+        }
+        if (user.permissions_frozen) {
+            return res.status(403).json({ error: 'Your account access has been temporarily paused by an administrator.' });
+        }
+        const durationDays = rememberMe ? 30 : 1;
+        const token = await (0, auth_1.createSession)(user.id, durationDays);
+        res.cookie(auth_1.SESSION_COOKIE_NAME, token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            path: '/',
+            maxAge: durationDays * 24 * 60 * 60 * 1000,
+        });
+        return res.json({
+            success: true,
+            message: 'Signed in successfully.',
+            user: {
+                id: user.id,
+                email: user.email,
+                full_name: user.full_name,
+                role_name: user.role_name,
+                level_order: user.hierarchy_level_order,
+                level_name: user.level_name,
+            },
+        });
+    }
+    catch (err) {
+        return res.status(500).json({ error: 'An unexpected system error occurred. Please try again.' });
+    }
+});
+// 2. POST /api/auth/logout
+exports.apiRouter.post('/auth/logout', async (req, res) => {
+    var _a;
+    try {
+        const token = (_a = req.cookies) === null || _a === void 0 ? void 0 : _a[auth_1.SESSION_COOKIE_NAME];
+        if (token) {
+            await (0, auth_1.invalidateSession)(token);
+        }
+        res.clearCookie(auth_1.SESSION_COOKIE_NAME, {
+            httpOnly: true,
+            sameSite: 'lax',
+            path: '/',
+        });
+        return res.json({ success: true, message: 'You have been logged out successfully.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: 'Error logging out.' });
+    }
+});
+// 3. GET /api/auth/me
+exports.apiRouter.get('/auth/me', async (req, res) => {
+    try {
+        const user = req.user;
+        if (!user) {
+            return res.status(401).json({ error: 'Your login has expired. Please sign in again.' });
+        }
+        return res.json({
+            authenticated: true,
+            user: {
+                id: user.id,
+                email: user.email,
+                full_name: user.full_name,
+                phone_number: user.phone_number,
+                role_name: user.role_name,
+                hierarchy_level_order: user.hierarchy_level_order,
+                level_name: user.level_name,
+                status: user.status,
+                permissions_frozen: user.permissions_frozen,
+            },
+        });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+// 4. POST /api/auth/forgot-password
+exports.apiRouter.post('/auth/forgot-password', async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email || typeof email !== 'string' || !email.trim()) {
+            return res.status(400).json({ error: 'Please enter your email address.' });
+        }
+        const cleanEmail = email.trim().toLowerCase();
+        const user = await (0, localDb_1.queryOne)('SELECT id, email, full_name FROM user_profiles WHERE LOWER(email) = ?', [cleanEmail]);
+        if (user) {
+            const resetToken = (0, auth_1.generateToken)(32);
+            const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+            const resetId = `rst-${Date.now()}`;
+            await (0, localDb_1.run)(`INSERT INTO password_resets (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)`, [resetId, user.id, resetToken, expiresAt]);
+        }
+        return res.json({
+            success: true,
+            message: 'If an account exists with this email, you will receive password reset instructions.',
+        });
+    }
+    catch (err) {
+        return res.status(500).json({ error: 'Failed to process password reset request.' });
+    }
+});
+// 5. POST /api/auth/reset-password
+exports.apiRouter.post('/auth/reset-password', async (req, res) => {
+    try {
+        const { token, newPassword, confirmPassword } = req.body;
+        if (!token) {
+            return res.status(400).json({ error: 'Invalid or missing password reset link.' });
+        }
+        if (!newPassword || newPassword.length < 8) {
+            return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+        }
+        if (newPassword !== confirmPassword) {
+            return res.status(400).json({ error: 'Passwords do not match.' });
+        }
+        const nowIso = new Date().toISOString();
+        const resetRecord = await (0, localDb_1.queryOne)(`SELECT * FROM password_resets WHERE token = ? AND used = 0 AND expires_at > ?`, [token, nowIso]);
+        if (!resetRecord) {
+            return res.status(400).json({ error: 'This password reset link is invalid or has expired.' });
+        }
+        const hashedPassword = await (0, auth_1.hashPassword)(newPassword);
+        await (0, localDb_1.run)(`UPDATE user_profiles SET password_hash = ? WHERE id = ?`, [hashedPassword, resetRecord.user_id]);
+        await (0, localDb_1.run)(`UPDATE password_resets SET used = 1 WHERE id = ?`, [resetRecord.id]);
+        await (0, auth_1.invalidateAllUserSessions)(resetRecord.user_id);
+        return res.json({
+            success: true,
+            message: 'Your password has been reset successfully. You can now sign in with your new password.',
+        });
+    }
+    catch (err) {
+        return res.status(500).json({ error: 'Failed to reset password.' });
+    }
+});
 // ==========================================
 // 1. System Health & Session Context
 // ==========================================
@@ -49,7 +272,7 @@ exports.apiRouter.get('/auth/me', async (req, res) => {
 // ==========================================
 // 2. User Administration & Granular RBAC
 // ==========================================
-exports.apiRouter.get('/admin/users', async (req, res) => {
+exports.apiRouter.get('/admin/users', requireAdmin, async (req, res) => {
     try {
         const mask = req.query.mask === 'true';
         const users = await (0, localDb_1.queryAll)(`
@@ -68,24 +291,41 @@ exports.apiRouter.get('/admin/users', async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.post('/admin/users', async (req, res) => {
+exports.apiRouter.post('/admin/users', requireAdmin, async (req, res) => {
     try {
-        const { email, full_name, phone_number, role_id, hierarchy_level_id, branch_id } = req.body;
+        const { email, full_name, phone_number, role_id, hierarchy_level_id, branch_id, initial_password } = req.body;
+        if (!email || !full_name) {
+            return res.status(400).json({ error: 'Email and full name are required.' });
+        }
+        const cleanEmail = email.trim().toLowerCase();
+        const existing = await (0, localDb_1.queryOne)('SELECT id FROM user_profiles WHERE LOWER(email) = ?', [cleanEmail]);
+        if (existing) {
+            return res.status(400).json({ error: 'A staff member with this email address already exists.' });
+        }
         const id = `usr-${Date.now()}`;
+        const passwordPlain = initial_password && initial_password.length >= 8 ? initial_password : 'ChangeMe@123';
+        const password_hash = await (0, auth_1.hashPassword)(passwordPlain);
         await (0, localDb_1.run)(`
       INSERT INTO user_profiles (id, email, password_hash, full_name, phone_number, role_id, hierarchy_level_id, branch_id, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
-    `, [id, email, 'password123', full_name, phone_number, role_id, hierarchy_level_id, branch_id]);
-        return res.status(201).json({ success: true, id });
+    `, [id, cleanEmail, password_hash, full_name.trim(), phone_number || null, role_id || 'role-field-staff', hierarchy_level_id || 'tier-4', branch_id || null]);
+        return res.status(201).json({ success: true, id, message: 'Staff account created successfully.' });
     }
     catch (err) {
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.patch('/admin/users/:id/freeze', async (req, res) => {
+exports.apiRouter.patch('/admin/users/:id/freeze', requireAdmin, async (req, res) => {
     try {
         const { frozen } = req.body;
-        await (0, localDb_1.run)(`UPDATE user_profiles SET permissions_frozen = ? WHERE id = ?`, [frozen ? 1 : 0, req.params.id]);
+        const userId = req.params.id;
+        if (userId === 'usr-admin-root') {
+            return res.status(400).json({ error: 'The Master Super Admin account cannot be frozen.' });
+        }
+        await (0, localDb_1.run)(`UPDATE user_profiles SET permissions_frozen = ? WHERE id = ?`, [frozen ? 1 : 0, userId]);
+        if (frozen) {
+            await (0, auth_1.invalidateAllUserSessions)(userId);
+        }
         return res.json({ success: true, frozen: Boolean(frozen) });
     }
     catch (err) {

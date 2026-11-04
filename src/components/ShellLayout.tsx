@@ -1,8 +1,8 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard,
   ShieldCheck,
@@ -17,10 +17,10 @@ import {
   EyeOff,
   Building2,
   ChevronRight,
-  HelpCircle,
   Clock,
   Landmark,
-  CheckCircle2
+  CheckCircle2,
+  LogOut,
 } from 'lucide-react'
 import { UI_TERMS } from '@/lib/terms'
 
@@ -29,6 +29,16 @@ interface NavItem {
   href: string
   icon: React.ElementType
   badge?: string
+  minTier?: number // 0: Super Admin only, 1: Partner Admin, etc.
+}
+
+interface CurrentUser {
+  id: string
+  email: string
+  full_name: string
+  role_name: string
+  hierarchy_level_order: number
+  level_name: string
 }
 
 const mainNavItems: NavItem[] = [
@@ -46,12 +56,78 @@ const mainNavItems: NavItem[] = [
   { name: UI_TERMS.billingLedger, href: '/billing/ledger', icon: Receipt },
   { name: UI_TERMS.billingAccounts, href: '/billing/accounts', icon: Landmark },
   { name: UI_TERMS.courier, href: '/courier', icon: Truck },
-  { name: UI_TERMS.users, href: '/admin/users', icon: ShieldCheck },
+  { name: UI_TERMS.users, href: '/admin/users', icon: ShieldCheck, minTier: 1 },
 ]
 
 export default function ShellLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
+  const router = useRouter()
   const [maskPii, setMaskPii] = useState(true)
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null)
+  const [loggingOut, setLoggingOut] = useState(false)
+
+  // Do not render full shell layout on public authentication pages
+  const isAuthPage =
+    pathname.startsWith('/login') ||
+    pathname.startsWith('/forgot-password') ||
+    pathname.startsWith('/reset-password')
+
+  useEffect(() => {
+    if (!isAuthPage) {
+      fetch('/api/auth/me')
+        .then((res) => {
+          if (!res.ok) {
+            router.push('/login')
+            return null
+          }
+          return res.json()
+        })
+        .then((data) => {
+          if (data?.user) {
+            setCurrentUser(data.user)
+          }
+        })
+        .catch(() => {
+          router.push('/login')
+        })
+    }
+  }, [pathname, isAuthPage, router])
+
+  const handleLogout = async () => {
+    if (loggingOut) return
+    setLoggingOut(true)
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' })
+    } catch {
+      // Continue cleanup regardless
+    } finally {
+      // Redirect to login page and replace browser history to prevent back navigation
+      window.location.href = '/login'
+    }
+  }
+
+  if (isAuthPage) {
+    return <>{children}</>
+  }
+
+  // Filter navigation items based on current staff member's hierarchy tier
+  const visibleNavItems = mainNavItems.filter((item) => {
+    if (item.minTier !== undefined && currentUser) {
+      // If item requires tier <= minTier (where 0 is Super Admin, 1 is Partner Admin)
+      return currentUser.hierarchy_level_order <= item.minTier
+    }
+    return true
+  })
+
+  // User initials for avatar
+  const initials = currentUser?.full_name
+    ? currentUser.full_name
+        .split(' ')
+        .map((n) => n[0])
+        .slice(0, 2)
+        .join('')
+        .toUpperCase()
+    : 'SS'
 
   return (
     <div className="flex h-screen bg-slate-950 text-slate-100 font-sans antialiased overflow-hidden">
@@ -72,11 +148,11 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
           </div>
 
           {/* Navigation Links with Simple Business Terms */}
-          <nav className="p-3 space-y-0.5 overflow-y-auto max-h-[calc(100vh-175px)]">
+          <nav className="p-3 space-y-0.5 overflow-y-auto max-h-[calc(100vh-190px)]">
             <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
               Work Sections
             </div>
-            {mainNavItems.map((item) => {
+            {visibleNavItems.map((item) => {
               const active = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))
               const Icon = item.icon
               return (
@@ -104,7 +180,7 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
           </nav>
         </div>
 
-        {/* Bottom Staff Info & Privacy Control */}
+        {/* Bottom Staff Info, Privacy Control & Logout */}
         <div className="p-3 border-t border-slate-800 space-y-2 bg-slate-900/90">
           {/* Privacy Switch */}
           <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs">
@@ -114,7 +190,7 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
             </div>
             <button
               onClick={() => setMaskPii(!maskPii)}
-              className={`px-2 py-0.5 text-[10px] font-semibold rounded transition ${
+              className={`px-2 py-0.5 text-[10px] font-semibold rounded transition cursor-pointer ${
                 maskPii
                   ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                   : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
@@ -124,15 +200,31 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
             </button>
           </div>
 
-          {/* Logged in Employee Info */}
-          <div className="flex items-center gap-2.5 p-2 rounded-lg bg-slate-950/40 border border-slate-800/60">
-            <div className="w-8 h-8 rounded-full bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-xs font-bold text-indigo-400 shrink-0">
-              AD
+          {/* Logged in Employee Info & Logout Button */}
+          <div className="flex items-center justify-between p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-full bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-xs font-bold text-indigo-400 shrink-0">
+                {initials}
+              </div>
+              <div className="text-left overflow-hidden">
+                <div className="text-xs font-semibold text-white truncate">
+                  {currentUser?.full_name || 'Signed In Staff'}
+                </div>
+                <div className="text-[10px] text-emerald-400 font-medium truncate">
+                  {currentUser?.role_name || currentUser?.level_name || 'Active Session'}
+                </div>
+              </div>
             </div>
-            <div className="text-left overflow-hidden">
-              <div className="text-xs font-semibold text-white truncate">Administrator</div>
-              <div className="text-[10px] text-emerald-400 font-medium truncate">Office Staff &bull; Signed In</div>
-            </div>
+
+            {/* Logout Action Button */}
+            <button
+              onClick={handleLogout}
+              title="Sign Out"
+              disabled={loggingOut}
+              className="p-1.5 rounded-md text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition cursor-pointer shrink-0 disabled:opacity-50"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </aside>
@@ -151,8 +243,15 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-              System Connected
+              {currentUser ? currentUser.email : 'System Connected'}
             </div>
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-red-500/20 hover:text-red-300 text-slate-400 text-xs transition border border-slate-700/60 cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sign Out</span>
+            </button>
           </div>
         </header>
 

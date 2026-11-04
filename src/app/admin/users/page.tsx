@@ -1,21 +1,68 @@
 // Staff & Roles (/admin/users)
-import React from 'react'
-import { Shield, UserCheck, Lock, Unlock, EyeOff } from 'lucide-react'
+'use client'
 
-async function getUsers() {
-  const port = process.env.PORT || '3000'
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/admin/users?mask=true`, { cache: 'no-store' })
-    if (!res.ok) return []
-    const data = await res.json()
-    return data.users || []
-  } catch {
-    return []
+import React, { useState, useEffect } from 'react'
+import { Shield, UserCheck, Lock, Unlock, EyeOff, Plus, UserPlus } from 'lucide-react'
+import { AddStaffModal } from '@/components/AddStaffModal'
+
+export default function UsersPage() {
+  const [users, setUsers] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [actionLoading, setActionLoading] = useState<string | null>(null)
+
+  const fetchUsers = () => {
+    setLoading(true)
+    fetch('/api/admin/users?mask=false')
+      .then((res) => {
+        if (!res.ok) throw new Error('Unauthorized')
+        return res.json()
+      })
+      .then((data) => {
+        setUsers(data.users || [])
+      })
+      .catch((err) => {
+        console.error('Failed to load users:', err)
+      })
+      .finally(() => setLoading(false))
   }
-}
 
-export default async function UsersPage() {
-  const users = await getUsers()
+  useEffect(() => {
+    fetchUsers()
+  }, [])
+
+  const handleToggleFreeze = async (userId: string, currentFrozen: number) => {
+    setActionLoading(userId)
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/freeze`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ frozen: currentFrozen ? 0 : 1 }),
+      })
+      if (res.ok) {
+        fetchUsers()
+      }
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const handleToggleStatus = async (userId: string, currentStatus: string) => {
+    setActionLoading(userId)
+    try {
+      const newStatus = currentStatus === 'active' ? 'deactivated' : 'active'
+      const res = await fetch(`/api/admin/users/${userId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      })
+      if (res.ok) {
+        fetchUsers()
+      }
+    } finally {
+      setActionLoading(null)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -27,16 +74,22 @@ export default async function UsersPage() {
             Manage employee accounts, assign business roles, and control access to company records.
           </p>
         </div>
+        <button
+          onClick={() => setIsModalOpen(true)}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs shadow-md shadow-indigo-600/20 transition cursor-pointer self-start sm:self-auto"
+        >
+          <Plus className="w-4 h-4" /> Add Staff Member
+        </button>
       </div>
 
       {/* Staff Roles Legend */}
       <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
         {[
-          { title: 'Administrator', desc: 'Full office & company access', color: 'border-indigo-500/40 text-indigo-400' },
+          { title: 'Super Admin', desc: 'Full office & company access', color: 'border-indigo-500/40 text-indigo-400' },
           { title: 'Regional Partner Admin', desc: 'Partner network & pricing', color: 'border-blue-500/40 text-blue-400' },
           { title: 'Branch Manager', desc: 'Branch stock & approvals', color: 'border-cyan-500/40 text-cyan-400' },
           { title: 'Operations Executive', desc: 'DSC applications & invoicing', color: 'border-emerald-500/40 text-emerald-400' },
-          { title: 'Sales Staff', desc: 'Customer inquiries & calls', color: 'border-amber-500/40 text-amber-400' },
+          { title: 'Field Staff', desc: 'Customer inquiries & calls', color: 'border-amber-500/40 text-amber-400' },
         ].map((tier, idx) => (
           <div key={idx} className={`p-3 rounded-xl bg-slate-900/60 border ${tier.color} space-y-1`}>
             <div className="text-xs font-semibold text-white">{tier.title}</div>
@@ -48,10 +101,10 @@ export default async function UsersPage() {
       {/* Users Data Table */}
       <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-          <div className="text-xs font-semibold text-white">Employee Accounts</div>
+          <div className="text-xs font-semibold text-white">Employee Accounts ({users.length})</div>
           <div className="flex items-center gap-1.5 text-xs text-amber-400">
             <EyeOff className="w-3.5 h-3.5" />
-            <span className="text-[11px]">Personal contact details hidden</span>
+            <span className="text-[11px]">Field staff see masked contacts</span>
           </div>
         </div>
 
@@ -61,60 +114,115 @@ export default async function UsersPage() {
               <tr className="text-slate-400 bg-slate-900/80 border-b border-slate-800">
                 <th className="p-3">Staff Name & Contact</th>
                 <th className="p-3">Assigned Role</th>
-                <th className="p-3">Role Type</th>
+                <th className="p-3">Role Tier</th>
                 <th className="p-3">Can Grant Access</th>
+                <th className="p-3">Access State</th>
                 <th className="p-3">Account Status</th>
-                <th className="p-3">Status</th>
+                <th className="p-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {users.map((u: any) => (
-                <tr key={u.id} className="hover:bg-slate-800/40">
-                  <td className="p-3">
-                    <div className="font-semibold text-white">{u.full_name}</div>
-                    <div className="text-[11px] text-slate-400 font-mono">{u.email}</div>
-                  </td>
-                  <td className="p-3">
-                    <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                      {u.role_name || 'Staff Member'}
-                    </span>
-                  </td>
-                  <td className="p-3">
-                    <span className="text-indigo-300 font-medium">
-                      {u.level_name || 'Office Staff'}
-                    </span>
-                  </td>
-                  <td className="p-3">
-                    {u.can_grant_permissions ? (
-                      <span className="text-emerald-400 flex items-center gap-1 font-medium">
-                        <UserCheck className="w-3.5 h-3.5" /> Allowed
-                      </span>
-                    ) : (
-                      <span className="text-slate-500 font-medium">Standard</span>
-                    )}
-                  </td>
-                  <td className="p-3">
-                    {u.permissions_frozen ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-red-500/20 text-red-300 font-mono text-[10px] border border-red-500/30">
-                        <Lock className="w-3 h-3" /> Locked
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono text-[10px]">
-                        <Unlock className="w-3 h-3" /> Active
-                      </span>
-                    )}
-                  </td>
-                  <td className="p-3">
-                    <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 capitalize">
-                      {u.status}
-                    </span>
+              {loading ? (
+                <tr>
+                  <td colSpan={7} className="p-6 text-center text-slate-500 text-xs">
+                    Loading staff members...
                   </td>
                 </tr>
-              ))}
+              ) : users.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-6 text-center text-slate-500 text-xs">
+                    No staff records found.
+                  </td>
+                </tr>
+              ) : (
+                users.map((u: any) => (
+                  <tr key={u.id} className="hover:bg-slate-800/40">
+                    <td className="p-3">
+                      <div className="font-semibold text-white">{u.full_name}</div>
+                      <div className="text-[11px] text-slate-400 font-mono">{u.email}</div>
+                    </td>
+                    <td className="p-3">
+                      <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                        {u.role_name || 'Staff Member'}
+                      </span>
+                    </td>
+                    <td className="p-3">
+                      <span className="text-indigo-300 font-medium">
+                        {u.level_name || `Tier ${u.level_order}`}
+                      </span>
+                    </td>
+                    <td className="p-3">
+                      {u.can_grant_permissions ? (
+                        <span className="text-emerald-400 flex items-center gap-1 font-medium">
+                          <UserCheck className="w-3.5 h-3.5" /> Allowed
+                        </span>
+                      ) : (
+                        <span className="text-slate-500 font-medium">Standard</span>
+                      )}
+                    </td>
+                    <td className="p-3">
+                      {u.permissions_frozen ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-red-500/20 text-red-300 font-mono text-[10px] border border-red-500/30">
+                          <Lock className="w-3 h-3" /> Locked
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono text-[10px]">
+                          <Unlock className="w-3 h-3" /> Active
+                        </span>
+                      )}
+                    </td>
+                    <td className="p-3">
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] border capitalize ${
+                          u.status === 'active'
+                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                            : 'bg-red-500/10 text-red-400 border-red-500/20'
+                        }`}
+                      >
+                        {u.status}
+                      </span>
+                    </td>
+                    <td className="p-3 text-right">
+                      {u.id !== 'usr-admin-root' && (
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => handleToggleFreeze(u.id, u.permissions_frozen)}
+                            disabled={actionLoading === u.id}
+                            className={`px-2 py-1 rounded text-[11px] font-medium transition cursor-pointer ${
+                              u.permissions_frozen
+                                ? 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20'
+                                : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20'
+                            }`}
+                          >
+                            {u.permissions_frozen ? 'Unlock' : 'Lock'}
+                          </button>
+                          <button
+                            onClick={() => handleToggleStatus(u.id, u.status)}
+                            disabled={actionLoading === u.id}
+                            className={`px-2 py-1 rounded text-[11px] font-medium transition cursor-pointer ${
+                              u.status === 'active'
+                                ? 'bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20'
+                                : 'bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20'
+                            }`}
+                          >
+                            {u.status === 'active' ? 'Deactivate' : 'Activate'}
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
       </div>
+
+      <AddStaffModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onSuccess={fetchUsers}
+      />
     </div>
   )
 }
