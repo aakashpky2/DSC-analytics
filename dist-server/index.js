@@ -10,6 +10,7 @@ const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const next_1 = __importDefault(require("next"));
 const api_1 = require("./routes/api");
+const db_1 = require("./db");
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = process.env.HOSTNAME || '0.0.0.0';
 const port = parseInt(process.env.PORT || '3000', 10);
@@ -17,11 +18,13 @@ const port = parseInt(process.env.PORT || '3000', 10);
 const nextApp = (0, next_1.default)({ dev, hostname, port });
 const handle = nextApp.getRequestHandler();
 async function startServer() {
+    // Initialize Database tables and seeds
+    await (0, db_1.initDatabase)();
     await nextApp.prepare();
     const server = (0, express_1.default)();
     server.use((0, cors_1.default)());
-    server.use(express_1.default.json());
-    server.use(express_1.default.urlencoded({ extended: true }));
+    server.use(express_1.default.json({ limit: '10mb' }));
+    server.use(express_1.default.urlencoded({ extended: true, limit: '10mb' }));
     // Backend API endpoints mounted on /api
     server.use('/api', api_1.apiRouter);
     // Next.js handles all other page rendering via Server-Side Rendering (SSR)
@@ -31,7 +34,7 @@ async function startServer() {
     server.listen(port, () => {
         console.log(`> [DSC Analytics] Server running on http://${hostname}:${port}`);
         console.log(`> Backend API routes mounted at /api/*`);
-        console.log(`> Next.js SSR frontend handling page routes`);
+        console.log(`> Next.js SSR frontend handling all user interfaces`);
     });
 }
 startServer().catch((err) => {

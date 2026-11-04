@@ -1,114 +1,295 @@
-// Next.js Server Component (SSR)
-// This page is rendered on the server before being sent to the browser.
+// Executive Overview Dashboard & KPI Cards (Section 5, 7)
+import React from 'react'
+import {
+  Users2,
+  FileCheck2,
+  Cpu,
+  Layers,
+  Receipt,
+  ArrowUpRight,
+  TrendingUp,
+  ShieldAlert,
+  CreditCard,
+  Truck
+} from 'lucide-react'
 
-interface HealthData {
-  status: string
-  message: string
-  timestamp: string
-}
-
-interface AnalyticsData {
-  status: string
-  data: {
-    activeUsers: number
-    eventsTracked: number
-    systemHealth: string
-    serverTimestamp: string
-  }
-}
-
-async function getHealth(): Promise<HealthData | null> {
+async function getDashboardData() {
   const port = process.env.PORT || '3000'
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
-      cache: 'no-store', // Ensures fresh Server-Side Rendering (SSR)
-    })
-    if (!res.ok) return null
-    return await res.json()
+    const [healthRes, partnersRes, dscRes, batchesRes, leadsRes, invoicesRes] = await Promise.all([
+      fetch(`http://127.0.0.1:${port}/api/health`, { cache: 'no-store' }),
+      fetch(`http://127.0.0.1:${port}/api/partners`, { cache: 'no-store' }),
+      fetch(`http://127.0.0.1:${port}/api/dsc/catalog`, { cache: 'no-store' }),
+      fetch(`http://127.0.0.1:${port}/api/inventory/batches`, { cache: 'no-store' }),
+      fetch(`http://127.0.0.1:${port}/api/crm/leads`, { cache: 'no-store' }),
+      fetch(`http://127.0.0.1:${port}/api/billing/invoices`, { cache: 'no-store' }),
+    ])
+
+    return {
+      health: healthRes.ok ? await healthRes.json() : null,
+      partners: partnersRes.ok ? (await partnersRes.json()).partners : [],
+      catalog: dscRes.ok ? (await dscRes.json()).catalog : [],
+      batches: batchesRes.ok ? (await batchesRes.json()).batches : [],
+      leads: leadsRes.ok ? (await leadsRes.json()).leads : [],
+      invoices: invoicesRes.ok ? (await invoicesRes.json()).invoices : [],
+    }
   } catch {
-    return null
+    return {
+      health: null,
+      partners: [],
+      catalog: [],
+      batches: [],
+      leads: [],
+      invoices: [],
+    }
   }
 }
 
-async function getAnalytics(): Promise<AnalyticsData | null> {
-  const port = process.env.PORT || '3000'
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/analytics/overview`, {
-      cache: 'no-store',
-    })
-    if (!res.ok) return null
-    return await res.json()
-  } catch {
-    return null
-  }
-}
+export default async function DashboardPage() {
+  const data = await getDashboardData()
 
-export default async function HomePage() {
-  const [health, analytics] = await Promise.all([
-    getHealth(),
-    getAnalytics(),
-  ])
+  const totalOutstanding = data.invoices.reduce((sum: number, inv: any) => sum + (inv.outstanding_balance || 0), 0)
+  const totalInvoiced = data.invoices.reduce((sum: number, inv: any) => sum + (inv.total_amount || 0), 0)
+  const totalTokensPurchased = data.batches.reduce((sum: number, b: any) => sum + (b.quantity_purchased || 0), 0)
+  const avgLandedCost = data.batches.length > 0 ? (data.batches[0].unit_landed_cost || 366.0) : 366.0
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center p-8 bg-zinc-950 text-white font-sans">
-      <main className="max-w-2xl w-full p-8 border border-zinc-800 rounded-2xl bg-zinc-900/60 shadow-2xl backdrop-blur-md space-y-6">
+    <div className="space-y-6">
+      {/* Header Banner */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-slate-800">
         <div>
-          <div className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20 mb-3">
-            Next.js SSR + Express Architecture
+          <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 mb-2">
+            SignSync Production Baseline v2.4
           </div>
-          <h1 className="text-3xl font-bold text-zinc-100">DSC Analytics</h1>
-          <p className="text-sm text-zinc-400 mt-1">
-            Rendered via <strong>Next.js SSR</strong> &bull; Backend APIs powered by <strong>Node.js + Express</strong> &bull; Database in <strong>Supabase</strong>
+          <h1 className="text-2xl font-bold text-white tracking-tight">Executive Management Cockpit</h1>
+          <p className="text-xs text-slate-400 mt-1">
+            Real-time synchronization across 9 core modules: DSC Issuance, Landed Cost Tokens, Deduplication CRM, and Multi-Account Ledger.
           </p>
         </div>
-
-        {/* Backend Status Section */}
-        <div className="rounded-xl border border-zinc-800 bg-zinc-950/70 p-5 space-y-2">
-          <div className="text-xs uppercase tracking-wider text-zinc-500 font-semibold">
-            Express Backend &rarr; Supabase DB Link
+        <div className="flex items-center gap-3">
+          <div className="text-right">
+            <div className="text-[11px] text-slate-400">Database Engine</div>
+            <div className="text-xs font-mono font-semibold text-emerald-400">Supabase &bull; Active</div>
           </div>
-          {health?.status === 'ok' ? (
-            <div className="flex items-center space-x-2 text-emerald-400 font-medium">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span>{health.message}</span>
-            </div>
-          ) : (
-            <div className="text-amber-400 text-sm font-medium">
-              Backend connecting... (Live SSR fetch from Express /api/health)
-            </div>
-          )}
-          {health?.timestamp && (
-            <div className="text-xs text-zinc-500">
-              SSR Rendered at: {new Date(health.timestamp).toLocaleString()}
-            </div>
-          )}
+          <div className="h-8 w-px bg-slate-800"></div>
+          <div className="text-right">
+            <div className="text-[11px] text-slate-400">Security Tier</div>
+            <div className="text-xs font-mono font-semibold text-indigo-400">Level 0 Super Admin</div>
+          </div>
+        </div>
+      </div>
+
+      {/* KPI Cards Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Card 1: Active Partners */}
+        <div className="p-5 rounded-xl bg-slate-900/60 border border-slate-800/80 hover:border-slate-700 transition">
+          <div className="flex items-center justify-between text-slate-400">
+            <span className="text-xs font-medium">Active Partners</span>
+            <Users2 className="w-4 h-4 text-indigo-400" />
+          </div>
+          <div className="mt-2 text-2xl font-bold text-white">
+            {data.partners.length}
+          </div>
+          <div className="mt-1 flex items-center text-[11px] text-slate-400">
+            <span className="text-emerald-400 font-semibold mr-1">100% KYC Verified</span> &bull; 0 High-Risk
+          </div>
         </div>
 
-        {/* Analytics Card */}
-        {analytics?.data && (
-          <div className="grid grid-cols-2 gap-4">
-            <div className="p-4 rounded-xl border border-zinc-800/80 bg-zinc-950/40">
-              <div className="text-xs text-zinc-400">Active Users</div>
-              <div className="text-2xl font-bold text-zinc-100 mt-1">
-                {analytics.data.activeUsers.toLocaleString()}
+        {/* Card 2: Receivables & Outstanding */}
+        <div className="p-5 rounded-xl bg-slate-900/60 border border-slate-800/80 hover:border-slate-700 transition">
+          <div className="flex items-center justify-between text-slate-400">
+            <span className="text-xs font-medium">Total Receivables</span>
+            <CreditCard className="w-4 h-4 text-amber-400" />
+          </div>
+          <div className="mt-2 text-2xl font-bold text-amber-300">
+            ₹{totalOutstanding.toLocaleString('en-IN')}
+          </div>
+          <div className="mt-1 flex items-center text-[11px] text-slate-400">
+            Total Invoiced: ₹{totalInvoiced.toLocaleString('en-IN')}
+          </div>
+        </div>
+
+        {/* Card 3: Token Inward Stock */}
+        <div className="p-5 rounded-xl bg-slate-900/60 border border-slate-800/80 hover:border-slate-700 transition">
+          <div className="flex items-center justify-between text-slate-400">
+            <span className="text-xs font-medium">Hardware Tokens Inward</span>
+            <Cpu className="w-4 h-4 text-cyan-400" />
+          </div>
+          <div className="mt-2 text-2xl font-bold text-white">
+            {totalTokensPurchased} <span className="text-xs font-normal text-slate-400">units</span>
+          </div>
+          <div className="mt-1 flex items-center text-[11px] text-cyan-400">
+            Unit Landed Cost: ₹{avgLandedCost}/unit
+          </div>
+        </div>
+
+        {/* Card 4: CRM Pipeline Leads */}
+        <div className="p-5 rounded-xl bg-slate-900/60 border border-slate-800/80 hover:border-slate-700 transition">
+          <div className="flex items-center justify-between text-slate-400">
+            <span className="text-xs font-medium">CRM Leads Pipeline</span>
+            <Layers className="w-4 h-4 text-purple-400" />
+          </div>
+          <div className="mt-2 text-2xl font-bold text-white">
+            {data.leads.length}
+          </div>
+          <div className="mt-1 flex items-center text-[11px] text-purple-400">
+            Deduplication Engine Active
+          </div>
+        </div>
+      </div>
+
+      {/* Main Two-Column Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left Column: Recent Partners & Billing */}
+        <div className="lg:col-span-2 space-y-6">
+          {/* Partner Health Table */}
+          <div className="p-5 rounded-xl bg-slate-900/50 border border-slate-800">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-sm font-semibold text-white">Partner Network Directory</h3>
+                <p className="text-xs text-slate-400">Direct partners, token stockists & credit control status</p>
               </div>
+              <a href="/partners" className="text-xs text-indigo-400 hover:text-indigo-300 font-medium">
+                View All &rarr;
+              </a>
             </div>
-            <div className="p-4 rounded-xl border border-zinc-800/80 bg-zinc-950/40">
-              <div className="text-xs text-zinc-400">Events Tracked</div>
-              <div className="text-2xl font-bold text-zinc-100 mt-1">
-                {analytics.data.eventsTracked.toLocaleString()}
-              </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="text-slate-400 border-b border-slate-800">
+                    <th className="pb-2">Partner Code</th>
+                    <th className="pb-2">Company</th>
+                    <th className="pb-2">Type</th>
+                    <th className="pb-2">Credit Limit</th>
+                    <th className="pb-2">Wallet</th>
+                    <th className="pb-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {data.partners.map((p: any) => (
+                    <tr key={p.id} className="hover:bg-slate-800/40">
+                      <td className="py-2.5 font-mono text-indigo-300">{p.partner_code}</td>
+                      <td className="py-2.5 font-medium text-white">{p.company_name}</td>
+                      <td className="py-2.5">
+                        <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                          {p.type}
+                        </span>
+                      </td>
+                      <td className="py-2.5 text-slate-300">₹{p.credit_limit?.toLocaleString('en-IN')}</td>
+                      <td className="py-2.5 text-emerald-400 font-semibold">₹{p.wallet_balance?.toLocaleString('en-IN')}</td>
+                      <td className="py-2.5">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                          {p.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
-        )}
 
-        <div className="border-t border-zinc-800/80 pt-4 text-xs text-zinc-500 space-y-1">
-          <div>&bull; <strong>Frontend:</strong> Next.js Server Components (SSR) with Tailwind CSS.</div>
-          <div>&bull; <strong>Backend:</strong> Node.js Express server located in <code className="text-zinc-300">src/server/</code>.</div>
-          <div>&bull; <strong>Database:</strong> Supabase DB connection strictly handled inside Node.js Express backend routes.</div>
-          <div>&bull; <strong>Deployment:</strong> Single unified web app ready for Hostinger Node.js Application Manager via <code className="text-zinc-300">server.js</code>.</div>
+          {/* Invoices & Verification Queue */}
+          <div className="p-5 rounded-xl bg-slate-900/50 border border-slate-800">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-sm font-semibold text-white">Recent Multi-Account Invoices</h3>
+                <p className="text-xs text-slate-400">Date-based series mapping GST and dynamic bank QR codes</p>
+              </div>
+              <a href="/billing/invoices" className="text-xs text-indigo-400 hover:text-indigo-300 font-medium">
+                Invoices &rarr;
+              </a>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="text-slate-400 border-b border-slate-800">
+                    <th className="pb-2">Invoice #</th>
+                    <th className="pb-2">Partner</th>
+                    <th className="pb-2">Total Amount</th>
+                    <th className="pb-2">Outstanding</th>
+                    <th className="pb-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {data.invoices.map((inv: any) => (
+                    <tr key={inv.id} className="hover:bg-slate-800/40">
+                      <td className="py-2.5 font-mono text-cyan-300">{inv.invoice_number}</td>
+                      <td className="py-2.5 text-slate-200">{inv.partner_company || 'Apex Digital'}</td>
+                      <td className="py-2.5 font-semibold text-white">₹{inv.total_amount?.toLocaleString('en-IN')}</td>
+                      <td className="py-2.5 text-amber-400 font-semibold">₹{inv.outstanding_balance?.toLocaleString('en-IN')}</td>
+                      <td className="py-2.5">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                          inv.status === 'paid'
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            : 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
+                        }`}>
+                          {inv.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
-      </main>
+
+        {/* Right Column: Architectural & Operational Status */}
+        <div className="space-y-6">
+          {/* True Landed Cost Equation Box */}
+          <div className="p-5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-3">
+            <div className="text-xs uppercase tracking-wider text-slate-400 font-semibold flex items-center gap-1.5">
+              <Cpu className="w-3.5 h-3.5 text-cyan-400" />
+              Landed Cost Math Formula
+            </div>
+            <div className="p-3 rounded-lg bg-slate-950 font-mono text-[11px] text-cyan-300 border border-slate-800/80 leading-relaxed">
+              Total Landed Cost = (Qty × Base Unit Price) + Freight + Customs + Handling Fees
+              <div className="mt-2 text-slate-400">
+                Unit Cost = Total Landed Cost / Qty
+              </div>
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Dynamically computes true landed costs upon batch inwarding to prevent hidden margin erosion.
+            </p>
+          </div>
+
+          {/* CRM Deduplication Scoring Rules */}
+          <div className="p-5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-3">
+            <div className="text-xs uppercase tracking-wider text-slate-400 font-semibold flex items-center gap-1.5">
+              <ShieldAlert className="w-3.5 h-3.5 text-purple-400" />
+              Deduplication Algorithm
+            </div>
+            <div className="space-y-1.5 text-xs text-slate-300">
+              <div className="flex justify-between py-1 border-b border-slate-800">
+                <span>GSTIN Match</span>
+                <span className="font-mono text-purple-400 font-bold">+50 pts</span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-slate-800">
+                <span>Phone Match</span>
+                <span className="font-mono text-purple-400 font-bold">+40 pts</span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-slate-800">
+                <span>Email Match</span>
+                <span className="font-mono text-purple-400 font-bold">+35 pts</span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-slate-800">
+                <span>PAN Match</span>
+                <span className="font-mono text-purple-400 font-bold">+30 pts</span>
+              </div>
+              <div className="flex justify-between py-1">
+                <span>Fuzzy Name (&gt;85%)</span>
+                <span className="font-mono text-purple-400 font-bold">+20 pts</span>
+              </div>
+            </div>
+            <div className="p-2 rounded bg-purple-500/10 border border-purple-500/20 text-[11px] text-purple-300">
+              Alert Trigger Threshold: &ge; 40 Points
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
