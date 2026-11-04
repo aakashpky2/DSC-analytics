@@ -3,13 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "nodemon --watch src/server -e ts --exec ts-node src/server/index.ts",
+    "build:server": "tsc -p tsconfig.server.json",
+    "build:next": "next build",
+    "build": "npm run build:server && npm run build:next",
+    "start": "node server.js",
     "lint": "eslint"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.9",
+    "express": "^5.3.0",
     "next": "16.4.5",
     "react": "19.3.0",
     "react-dom": "19.3.0",
@@ -17,12 +22,17 @@
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^10.0.6",
     "eslint": "^9",
     "eslint-config-next": "16.4.5",
+    "nodemon": "^3.1.14",
     "tailwindcss": "^4",
+    "ts-node": "^10.9.2",
     "typescript": "^5"
   }
 }

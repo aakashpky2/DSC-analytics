@@ -1,4 +1,7 @@
-import 'server-only'
+import dotenv from 'dotenv'
+dotenv.config({ path: '.env.local' })
+dotenv.config()
+
 import { createClient } from '@supabase/supabase-js'
 
 const supabaseUrl = process.env.SUPABASE_URL
@@ -9,8 +12,7 @@ if (!supabaseUrl || !supabaseServiceRoleKey) {
 }
 
 /**
- * Backend-only Supabase client.
- * Uses service role / server-side credentials and is strictly disallowed in browser code.
+ * Backend Database Client (Used ONLY inside Express routes / Node.js backend).
  */
 export const db = createClient(supabaseUrl, supabaseServiceRoleKey, {
   auth: {
