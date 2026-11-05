@@ -337,3 +337,4 @@ export function PartnerDetailClient({ initialData, partnerId }: { initialData: a
     </div>
   )
 }
+

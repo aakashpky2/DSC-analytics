@@ -1,5 +1,6 @@
 // Business Overview Dashboard & KPI Cards
 import React from 'react'
+import { cookies } from 'next/headers'
 import {
   Users2,
   FileCheck2,
@@ -15,13 +16,20 @@ import { PartnerRecord, TokenPurchaseBatchRecord, CrmLeadRecord, InvoiceRecord }
 async function getDashboardData() {
   const port = process.env.PORT || '3000'
   try {
+    const cookieStore = await cookies()
+    const cookieHeader = cookieStore.toString()
+    const headers: Record<string, string> = {}
+    if (cookieHeader) {
+      headers['Cookie'] = cookieHeader
+    }
+
     const [healthRes, partnersRes, dscRes, batchesRes, leadsRes, invoicesRes] = await Promise.all([
       fetch(`http://127.0.0.1:${port}/api/health`, { cache: 'no-store' }),
-      fetch(`http://127.0.0.1:${port}/api/partners`, { cache: 'no-store' }),
-      fetch(`http://127.0.0.1:${port}/api/dsc/catalog`, { cache: 'no-store' }),
-      fetch(`http://127.0.0.1:${port}/api/inventory/batches`, { cache: 'no-store' }),
-      fetch(`http://127.0.0.1:${port}/api/crm/leads`, { cache: 'no-store' }),
-      fetch(`http://127.0.0.1:${port}/api/billing/invoices`, { cache: 'no-store' }),
+      fetch(`http://127.0.0.1:${port}/api/partners`, { headers, cache: 'no-store' }),
+      fetch(`http://127.0.0.1:${port}/api/dsc/catalog`, { headers, cache: 'no-store' }),
+      fetch(`http://127.0.0.1:${port}/api/inventory/batches`, { headers, cache: 'no-store' }),
+      fetch(`http://127.0.0.1:${port}/api/crm/leads`, { headers, cache: 'no-store' }),
+      fetch(`http://127.0.0.1:${port}/api/billing/invoices`, { headers, cache: 'no-store' }),
     ])
 
     return {

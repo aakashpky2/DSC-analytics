@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Clock, CheckCircle2, AlertCircle, Plus, X, ChevronRight, FileCheck, LayoutGrid, List } from 'lucide-react'
+import { ArrowLeft, Clock, CheckCircle2, AlertCircle, Plus, X, ChevronRight, FileCheck, LayoutGrid, List, Upload, Check } from 'lucide-react'
 import { Pagination } from '@/components/Pagination'
 
 const STAGES = [
@@ -46,8 +46,43 @@ export default function DscApplicationsPage() {
     applicant_email: '',
     applicant_phone: '',
     applicant_pan: '',
+    documents_submitted: '',
   })
   const [submitting, setSubmitting] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [uploadSuccess, setUploadSuccess] = useState(false)
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setUploading(true)
+    try {
+      const reader = new FileReader()
+      reader.onload = async () => {
+        const base64Data = (reader.result as string).split(',')[1]
+        const res = await fetch('/api/storage/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            category: 'dsc',
+            fileName: file.name,
+            fileBase64: base64Data,
+            contentType: file.type || 'application/pdf',
+          }),
+        })
+
+        const data = await res.json()
+        if (res.ok) {
+          setFormData((prev) => ({ ...prev, documents_submitted: data.fullUrl || data.signedUrl }))
+          setUploadSuccess(true)
+        }
+      }
+      reader.readAsDataURL(file)
+    } finally {
+      setUploading(false)
+    }
+  }
 
   const loadData = useCallback(() => {
     setLoading(true)
@@ -482,6 +517,28 @@ export default function DscApplicationsPage() {
                   onChange={(e) => setFormData({ ...formData, applicant_pan: e.target.value })}
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white uppercase font-mono"
                 />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Applicant e-KYC Proof Document</label>
+                <div className="flex items-center gap-3">
+                  <label className="cursor-pointer px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs flex items-center gap-1.5 border border-slate-700 transition">
+                    <Upload className="w-3.5 h-3.5 text-cyan-400" />
+                    {uploading ? 'Uploading...' : uploadSuccess ? 'Replace Document' : 'Upload'}
+                    <input
+                      type="file"
+                      accept="application/pdf,image/jpeg,image/png"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                      disabled={uploading}
+                    />
+                  </label>
+                  {uploadSuccess && (
+                    <span className="text-emerald-400 flex items-center gap-1 text-[11px]">
+                      <Check className="w-3.5 h-3.5" /> File securely uploaded
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="pt-3 border-t border-slate-800 flex justify-end gap-2.5">

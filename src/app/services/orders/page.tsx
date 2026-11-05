@@ -2,7 +2,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback } from 'react'
-import { Sparkles, Plus, X, ChevronRight, FileCheck, Layers } from 'lucide-react'
+import { Sparkles, Plus, X, ChevronRight, FileCheck, Layers, Upload, Check } from 'lucide-react'
 import { Pagination } from '@/components/Pagination'
 
 export default function ServicesPage() {
@@ -17,6 +17,7 @@ export default function ServicesPage() {
   const [totalCount, setTotalCount] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
 
+  const [servicesList, setServicesList] = useState<any[]>([])
   const [formData, setFormData] = useState({
     service_type: 'trademark',
     partner_id: '',
@@ -24,9 +25,44 @@ export default function ServicesPage() {
     client_contact: '',
     government_fees: '4500',
     professional_fees: '2500',
+    uploaded_documents: '',
     notes: '',
   })
   const [submitting, setSubmitting] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [uploadSuccess, setUploadSuccess] = useState(false)
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setUploading(true)
+    try {
+      const reader = new FileReader()
+      reader.onload = async () => {
+        const base64Data = (reader.result as string).split(',')[1]
+        const res = await fetch('/api/storage/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            category: 'service',
+            fileName: file.name,
+            fileBase64: base64Data,
+            contentType: file.type || 'application/pdf',
+          }),
+        })
+
+        const data = await res.json()
+        if (res.ok) {
+          setFormData((prev) => ({ ...prev, uploaded_documents: data.fullUrl || data.signedUrl }))
+          setUploadSuccess(true)
+        }
+      }
+      reader.readAsDataURL(file)
+    } finally {
+      setUploading(false)
+    }
+  }
 
   const loadData = useCallback(() => {
     setLoading(true)
@@ -287,6 +323,28 @@ export default function ServicesPage() {
                   onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
                 />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Supporting Case Documents (ZIP, PDF, Image)</label>
+                <div className="flex items-center gap-3">
+                  <label className="cursor-pointer px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs flex items-center gap-1.5 border border-slate-700 transition">
+                    <Upload className="w-3.5 h-3.5 text-cyan-400" />
+                    {uploading ? 'Uploading...' : uploadSuccess ? 'Replace Uploaded File' : 'Upload'}
+                    <input
+                      type="file"
+                      accept="application/pdf,image/jpeg,image/png,application/zip"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                      disabled={uploading}
+                    />
+                  </label>
+                  {uploadSuccess && (
+                    <span className="text-emerald-400 flex items-center gap-1 text-[11px]">
+                      <Check className="w-3.5 h-3.5" /> Documents securely stored
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="pt-3 border-t border-slate-800 flex justify-end gap-2.5">

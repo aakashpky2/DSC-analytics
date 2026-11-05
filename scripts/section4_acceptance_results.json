@@ -1,0 +1,491 @@
+[
+  {
+    "section": "Setup",
+    "testId": "Tier-0 Login",
+    "description": "Super Admin logs in successfully",
+    "expected": 200,
+    "actual": 200,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Hierarchy",
+    "testId": "H-01",
+    "description": "Tier 0 delegates to Tier 3",
+    "expected": 201,
+    "actual": 201,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Hierarchy",
+    "testId": "H-02",
+    "description": "Tier 1 delegates to Tier 3 (Downward)",
+    "expected": 201,
+    "actual": 201,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Hierarchy",
+    "testId": "H-03",
+    "description": "Tier 1 attempts to delegate to Tier 0 (Upward blocked)",
+    "expected": 403,
+    "actual": 403,
+    "verdict": "PASS",
+    "details": {
+      "msg": "Strict Downward Rule: Level 1 cannot delegate permissions to Level 0."
+    }
+  },
+  {
+    "section": "Hierarchy",
+    "testId": "H-04",
+    "description": "Tier 1 attempts to delegate to Tier 1 (Peer blocked)",
+    "expected": 403,
+    "actual": 403,
+    "verdict": "PASS",
+    "details": {
+      "msg": "Strict Downward Rule: Level 1 cannot delegate permissions to Level 1."
+    }
+  },
+  {
+    "section": "Hierarchy",
+    "testId": "H-05",
+    "description": "Tier 2 attempts to delegate to Tier 1 (Upward blocked)",
+    "expected": 403,
+    "actual": 403,
+    "verdict": "PASS",
+    "details": {
+      "msg": "Strict Downward Rule: Level 2 cannot delegate permissions to Level 1."
+    }
+  },
+  {
+    "section": "Hierarchy",
+    "testId": "H-06",
+    "description": "Tier 3 attempts to delegate rights (Blocked: unauthorized tier)",
+    "expected": 403,
+    "actual": 403,
+    "verdict": "PASS",
+    "details": {
+      "msg": "You do not have delegation authority."
+    }
+  },
+  {
+    "section": "Hierarchy",
+    "testId": "H-07",
+    "description": "Tier 4 attempts to delegate rights (Blocked: unauthorized tier)",
+    "expected": 403,
+    "actual": 403,
+    "verdict": "PASS",
+    "details": {
+      "msg": "You do not have delegation authority."
+    }
+  },
+  {
+    "section": "Hierarchy",
+    "testId": "H-08",
+    "description": "Tier 1 attempts to modify Role Permissions Matrix",
+    "expected": 403,
+    "actual": 403,
+    "verdict": "PASS",
+    "details": {
+      "msg": "Only the Super Admin (Level 0) can modify role permission matrices."
+    }
+  },
+  {
+    "section": "Hierarchy",
+    "testId": "H-09",
+    "description": "Tier 0 modifies Role Permissions Matrix",
+    "expected": 200,
+    "actual": 200,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Sub-Cap",
+    "testId": "SC-01",
+    "description": "Grantor delegates permitted sub-permissions (View, Create)",
+    "expected": true,
+    "actual": true,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Sub-Cap",
+    "testId": "SC-02",
+    "description": "Grantor attempts to delegate unpossessed Delete permission",
+    "expected": false,
+    "actual": false,
+    "verdict": "PASS",
+    "details": {
+      "denied": [
+        "can_delete"
+      ]
+    }
+  },
+  {
+    "section": "Sub-Cap",
+    "testId": "SC-03",
+    "description": "Grantor attempts to delegate unpossessed Export permission",
+    "expected": false,
+    "actual": false,
+    "verdict": "PASS",
+    "details": {
+      "denied": [
+        "can_export"
+      ]
+    }
+  },
+  {
+    "section": "Sub-Cap",
+    "testId": "SC-04",
+    "description": "Super Admin bypasses sub-permission cap",
+    "expected": true,
+    "actual": true,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Sub-Cap",
+    "testId": "SC-05",
+    "description": "API Check: Grantor delegates unheld sub-permission (Billing Delete)",
+    "expected": 403,
+    "actual": 403,
+    "verdict": "PASS",
+    "details": {
+      "status": 403,
+      "response": {
+        "error": "Sub-Permission Cap Violation: You cannot delegate 'can_delete' on 'billing' because you do not possess this privilege."
+      }
+    }
+  },
+  {
+    "section": "Override",
+    "testId": "UO-01",
+    "description": "Explicit TRUE override enables can_create when role is FALSE",
+    "expected": true,
+    "actual": true,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Override",
+    "testId": "UO-02",
+    "description": "Explicit FALSE override denies can_create when role is TRUE",
+    "expected": false,
+    "actual": false,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Override",
+    "testId": "UO-03",
+    "description": "Missing override falls back to role permission (TRUE)",
+    "expected": true,
+    "actual": true,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Override",
+    "testId": "UO-04",
+    "description": "Missing override & role defaults to FALSE",
+    "expected": false,
+    "actual": false,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Override",
+    "testId": "UO-05",
+    "description": "API Check: Explicit FALSE user override blocks POST /api/crm/leads",
+    "expected": 403,
+    "actual": 403,
+    "verdict": "PASS",
+    "details": {
+      "error": "Permission denied: crm.can_create is restricted for your account."
+    }
+  },
+  {
+    "section": "Override",
+    "testId": "UO-06",
+    "description": "API Check: Explicit TRUE user override permits POST /api/crm/leads",
+    "expected": 201,
+    "actual": 201,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Freeze",
+    "testId": "PF-01",
+    "description": "Super Admin freezes user account via API",
+    "expected": 200,
+    "actual": 200,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Freeze",
+    "testId": "PF-02",
+    "description": "Supabase database confirms permissions_frozen = 1",
+    "expected": 1,
+    "actual": 1,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Freeze",
+    "testId": "PF-03",
+    "description": "Login attempt while permissions_frozen = 1",
+    "expected": "Accept login or evaluate freeze status",
+    "actual": "200: Success",
+    "verdict": "PASS (Allows Login)",
+    "details": {}
+  },
+  {
+    "section": "Freeze",
+    "testId": "PF-04",
+    "description": "Tier 1 manager attempts to unfreeze/modify frozen user",
+    "expected": 403,
+    "actual": 403,
+    "verdict": "PASS",
+    "details": {
+      "error": "Only the Super Admin (Level 0) can freeze or unfreeze accounts."
+    }
+  },
+  {
+    "section": "Freeze",
+    "testId": "PF-05",
+    "description": "Master Super Admin account freeze protection",
+    "expected": 400,
+    "actual": 400,
+    "verdict": "PASS",
+    "details": {
+      "msg": "The Master Super Admin account cannot be frozen."
+    }
+  },
+  {
+    "section": "Freeze",
+    "testId": "PF-06",
+    "description": "User restored and operational after unfreeze",
+    "expected": 200,
+    "actual": 200,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Delegation",
+    "testId": "DL-01",
+    "description": "Creation of valid active temporary delegation",
+    "expected": 201,
+    "actual": 201,
+    "verdict": "PASS",
+    "details": {
+      "id": "del-1793868993640"
+    }
+  },
+  {
+    "section": "Delegation",
+    "testId": "DL-02",
+    "description": "Creation of dependent onward child delegation",
+    "expected": 201,
+    "actual": 201,
+    "verdict": "PASS",
+    "details": {
+      "id": "del-1793868994871"
+    }
+  },
+  {
+    "section": "Delegation",
+    "testId": "DL-03",
+    "description": "Revocation of parent delegation",
+    "expected": 200,
+    "actual": 200,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Delegation",
+    "testId": "DL-04",
+    "description": "Child delegation automatically revoked (Cascading Invalidation)",
+    "expected": "revoked",
+    "actual": "revoked",
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Delegation",
+    "testId": "DL-05",
+    "description": "Expired delegation rejected by validity evaluator",
+    "expected": false,
+    "actual": false,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "PII",
+    "testId": "PII-01",
+    "description": "Email Masking Format (rajesh.kumar@shreeshyam.com)",
+    "expected": "Redacted with asterisks",
+    "actual": "r****r@s****m.com",
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "PII",
+    "testId": "PII-02",
+    "description": "Phone Masking Format (+91 98200 12345)",
+    "expected": "+91 ******2345",
+    "actual": "+91 ******2345",
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "PII",
+    "testId": "PII-03",
+    "description": "PAN Masking Format (ABCDE1234F)",
+    "expected": "*****1234F",
+    "actual": "*****1234F",
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "PII",
+    "testId": "PII-04",
+    "description": "Bank Account Masking Format (50200012345678)",
+    "expected": "**********5678",
+    "actual": "**********5678",
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "PII",
+    "testId": "PII-05",
+    "description": "GET /api/partners?mask=true redacts email & phone",
+    "expected": true,
+    "actual": true,
+    "verdict": "PASS",
+    "details": {
+      "email": "a****2@e****e.com",
+      "phone": "******1223"
+    }
+  },
+  {
+    "section": "PII",
+    "testId": "PII-06",
+    "description": "GET /api/dsc/applications?mask=true redacts applicant PII",
+    "expected": true,
+    "actual": true,
+    "verdict": "PASS",
+    "details": {
+      "email": "a****i@e****e.com",
+      "phone": "******8776",
+      "pan": "*****1234F"
+    }
+  },
+  {
+    "section": "PII",
+    "testId": "PII-07",
+    "description": "GET /api/crm/leads?mask=true redacts lead email & phone",
+    "expected": true,
+    "actual": true,
+    "verdict": "PASS",
+    "details": {
+      "email": "s****h@o****h.in",
+      "phone": "******2345"
+    }
+  },
+  {
+    "section": "PII",
+    "testId": "PII-08",
+    "description": "GET /api/admin/users?mask=true redacts staff email & phone",
+    "expected": true,
+    "actual": true,
+    "verdict": "PASS",
+    "details": {
+      "email": "a***n@s****c.io",
+      "phone": "+91 ******8888"
+    }
+  },
+  {
+    "section": "PII",
+    "testId": "PII-09",
+    "description": "Field Staff (Tier 4) automatic PII redaction without ?mask=true",
+    "expected": "Auto-masked by RBAC policy",
+    "actual": "Auto-masked",
+    "verdict": "PASS",
+    "details": {
+      "email": "s****h@o****h.in",
+      "phone": "******2345"
+    }
+  },
+  {
+    "section": "Role UAT",
+    "testId": "RU-01",
+    "description": "Tier 1 (Regional Admin) views billing invoices",
+    "expected": 200,
+    "actual": 200,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Role UAT",
+    "testId": "RU-02",
+    "description": "Tier 2 (Branch Manager) views branch stock",
+    "expected": 200,
+    "actual": 200,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Role UAT",
+    "testId": "RU-03",
+    "description": "Tier 3 (Senior Staff) views DSC applications",
+    "expected": 200,
+    "actual": 200,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Role UAT",
+    "testId": "RU-04",
+    "description": "Tier 4 (Field Staff) views CRM leads",
+    "expected": 200,
+    "actual": 200,
+    "verdict": "PASS",
+    "details": {}
+  },
+  {
+    "section": "Role UAT",
+    "testId": "RU-05",
+    "description": "Tier 4 (Field Staff) blocked from /api/admin/users",
+    "expected": 403,
+    "actual": 403,
+    "verdict": "PASS",
+    "details": {
+      "msg": "You do not have permission to open this page."
+    }
+  },
+  {
+    "section": "Role UAT",
+    "testId": "RU-06",
+    "description": "Tier 4 (Field Staff) blocked from /api/billing/accounts",
+    "expected": 403,
+    "actual": 403,
+    "verdict": "PASS",
+    "details": {
+      "msg": "Permission denied: You do not have 'can_view' authority on 'billing'."
+    }
+  },
+  {
+    "section": "Role UAT",
+    "testId": "RU-07",
+    "description": "Tier 4 (Field Staff) blocked from /api/admin/roles",
+    "expected": 403,
+    "actual": 403,
+    "verdict": "PASS",
+    "details": {
+      "msg": "You do not have permission to open this page."
+    }
+  }
+]

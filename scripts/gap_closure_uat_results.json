@@ -1,0 +1,93 @@
+[
+  {
+    "category": "Auth",
+    "testName": "Forgot Password Page Load",
+    "expected": "Renders password reset request page",
+    "actual": "Loaded with content: Reset Password",
+    "status": "PASS"
+  },
+  {
+    "category": "Auth",
+    "testName": "Forgot Password Submission",
+    "expected": "Accepts email and confirms reset dispatch",
+    "actual": "Form submitted successfully",
+    "status": "PASS"
+  },
+  {
+    "category": "Auth",
+    "testName": "Reset Password Page Load",
+    "expected": "Renders password reset form with password fields",
+    "actual": "Found 2 password inputs",
+    "status": "PASS"
+  },
+  {
+    "category": "Auth",
+    "testName": "Super Admin Login",
+    "expected": "Navigates to /partners",
+    "actual": "Current URL: http://localhost:3000/",
+    "status": "FAIL"
+  },
+  {
+    "category": "Master Settings",
+    "testName": "Partner Categories Tab Click",
+    "expected": "Switches to Partner Categories master panel",
+    "actual": "Tab clicked and active",
+    "status": "PASS"
+  },
+  {
+    "category": "Master Settings",
+    "testName": "Partner Types Loaded from Supabase",
+    "expected": "Displays dynamic partner types",
+    "actual": "Default master partner types visible",
+    "status": "PASS"
+  },
+  {
+    "category": "Partners",
+    "testName": "Open Add Partner Modal",
+    "expected": "Opens partner creation modal with dynamic types",
+    "actual": "Modal opened",
+    "status": "PASS"
+  },
+  {
+    "category": "Partners",
+    "testName": "Dynamic Master Partner Types in Modal",
+    "expected": "Dropdown contains Supabase-backed partner categories",
+    "actual": "Found 14 categories: All Partner Types, DSC Partner, Token Partner...",
+    "status": "PASS"
+  },
+  {
+    "category": "Storage",
+    "testName": "Private KYC Upload in Onboarding",
+    "expected": "Uploads binary file to kyc-documents bucket and returns signed URL preview",
+    "actual": "Upload handler engaged",
+    "status": "PASS"
+  },
+  {
+    "category": "Controls",
+    "testName": "/crm/leads Search Box",
+    "expected": "Filters table rows based on input",
+    "actual": "Search typed and filtered",
+    "status": "PASS"
+  },
+  {
+    "category": "Controls",
+    "testName": "/crm/leads Filter Dropdown",
+    "expected": "Allows category/status filtering",
+    "actual": "Dropdown present and responsive",
+    "status": "PASS"
+  },
+  {
+    "category": "Controls",
+    "testName": "/billing/invoices Search Box",
+    "expected": "Filters table rows based on input",
+    "actual": "Search typed and filtered",
+    "status": "PASS"
+  },
+  {
+    "category": "Controls",
+    "testName": "/admin/audit Filter Dropdown",
+    "expected": "Allows category/status filtering",
+    "actual": "Dropdown present and responsive",
+    "status": "PASS"
+  }
+]

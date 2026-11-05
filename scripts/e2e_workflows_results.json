@@ -1,0 +1,74 @@
+[
+  {
+    "wf": "A",
+    "name": "New Partner Onboarding",
+    "steps": "Legal details, KYC, Partner 360 view, Credit Limit adjustment",
+    "dbVerified": "Yes (partners table updated)",
+    "result": "PASS",
+    "defects": "None"
+  },
+  {
+    "wf": "B",
+    "name": "DSC Application from Intake to Issuance",
+    "steps": "Intake, doc verify, video verify, approval, issuance",
+    "dbVerified": "Yes (dsc_applications table)",
+    "result": "PASS",
+    "defects": "None"
+  },
+  {
+    "wf": "C",
+    "name": "Token Procurement & Branch Transfer",
+    "steps": "Dispatch, challan creation, transit, branch receipt",
+    "dbVerified": "Yes (delivery_challans & stock updated)",
+    "result": "PASS",
+    "defects": "None"
+  },
+  {
+    "wf": "D",
+    "name": "CRM Lead Management",
+    "steps": "Lead intake, deduplication check, pipeline progression to Won",
+    "dbVerified": "Yes (crm_leads table)",
+    "result": "PASS",
+    "defects": "None"
+  },
+  {
+    "wf": "E",
+    "name": "Business Service Order",
+    "steps": "Service intake, fee specification, order creation",
+    "dbVerified": "Yes (service_orders table)",
+    "result": "PASS",
+    "defects": "None"
+  },
+  {
+    "wf": "F",
+    "name": "Invoice Creation & GST",
+    "steps": "Pricing, tax calculation, sequential counter allocation, ledger debit",
+    "dbVerified": "Yes (invoices & financial_ledger)",
+    "result": "PASS",
+    "defects": "None"
+  },
+  {
+    "wf": "G",
+    "name": "Customer Payment to Ledger",
+    "steps": "Payment intake, approval, invoice reconciliation, ledger credit",
+    "dbVerified": "Yes (payments_received & financial_ledger)",
+    "result": "PASS",
+    "defects": "None"
+  },
+  {
+    "wf": "H",
+    "name": "Courier Dispatch to Delivery",
+    "steps": "AWB assignment, carrier selection, dispatch tracking",
+    "dbVerified": "Yes (courier_dispatches table)",
+    "result": "PASS",
+    "defects": "None"
+  },
+  {
+    "wf": "I",
+    "name": "Administration & Cross-Module Control",
+    "steps": "Temporary delegation grant, permission inheritance, revocation",
+    "dbVerified": "Yes (temporary_delegations table)",
+    "result": "PASS",
+    "defects": "None"
+  }
+]

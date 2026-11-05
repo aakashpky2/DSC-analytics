@@ -262,3 +262,4 @@ export function UserPermissionDrawer({ isOpen, user, onClose, onSuccess }: UserP
     </div>
   )
 }
+

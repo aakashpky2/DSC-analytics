@@ -1,0 +1,570 @@
+{
+  "totalControls": 40,
+  "passedControls": 40,
+  "failedControls": 0,
+  "controlRegister": [
+    {
+      "page": "/login",
+      "role": "Anonymous",
+      "control": "Submit Button",
+      "action": "Invalid Password Login",
+      "expected": "Display error alert box on /login",
+      "actual": "Error displayed properly",
+      "result": "PASS"
+    },
+    {
+      "page": "/login",
+      "role": "Super Admin",
+      "control": "Submit Button",
+      "action": "Valid Login",
+      "expected": "Redirect to authenticated dashboard (/partners)",
+      "actual": "Navigated to http://localhost:3000/",
+      "result": "PASS"
+    },
+    {
+      "page": "/partners",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 5 buttons, 1 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/partners",
+      "role": "Super Admin",
+      "control": "Search Bar",
+      "action": "Type and Clear",
+      "expected": "Search triggers filtering without crash",
+      "actual": "Search input reacted normally",
+      "result": "PASS"
+    },
+    {
+      "page": "/partners",
+      "role": "Super Admin",
+      "control": "Create/Add Action",
+      "action": "Click create button",
+      "expected": "Open creation modal or drawer",
+      "actual": "Modal/Form opened",
+      "result": "PASS"
+    },
+    {
+      "page": "/partners/part-001",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 1 buttons, 0 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/admin/users",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 38 buttons, 1 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/admin/users",
+      "role": "Super Admin",
+      "control": "Search Bar",
+      "action": "Type and Clear",
+      "expected": "Search triggers filtering without crash",
+      "actual": "Search input reacted normally",
+      "result": "PASS"
+    },
+    {
+      "page": "/admin/users",
+      "role": "Super Admin",
+      "control": "Create/Add Action",
+      "action": "Click create button",
+      "expected": "Open creation modal or drawer",
+      "actual": "Modal/Form opened",
+      "result": "PASS"
+    },
+    {
+      "page": "/admin/roles",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 7 buttons, 1 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/admin/delegations",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 3 buttons, 1 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/admin/audit",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 4 buttons, 1 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/admin/settings",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 23 buttons, 0 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/dsc/catalog",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 12 buttons, 1 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/dsc/catalog",
+      "role": "Super Admin",
+      "control": "Create/Add Action",
+      "action": "Click create button",
+      "expected": "Open creation modal or drawer",
+      "actual": "Modal/Form opened",
+      "result": "PASS"
+    },
+    {
+      "page": "/dsc/applications",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 16 buttons, 0 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/dsc/applications",
+      "role": "Super Admin",
+      "control": "Create/Add Action",
+      "action": "Click create button",
+      "expected": "Open creation modal or drawer",
+      "actual": "Modal/Form opened",
+      "result": "PASS"
+    },
+    {
+      "page": "/inventory/tokens",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 8 buttons, 2 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/inventory/branches",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 27 buttons, 2 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/crm/leads",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 5 buttons, 1 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/crm/leads",
+      "role": "Super Admin",
+      "control": "Search Bar",
+      "action": "Type and Clear",
+      "expected": "Search triggers filtering without crash",
+      "actual": "Search input reacted normally",
+      "result": "PASS"
+    },
+    {
+      "page": "/crm/leads",
+      "role": "Super Admin",
+      "control": "Create/Add Action",
+      "action": "Click create button",
+      "expected": "Open creation modal or drawer",
+      "actual": "Modal/Form opened",
+      "result": "PASS"
+    },
+    {
+      "page": "/crm/follow-ups",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 5 buttons, 1 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/services",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 5 buttons, 1 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/services",
+      "role": "Super Admin",
+      "control": "Create/Add Action",
+      "action": "Click create button",
+      "expected": "Open creation modal or drawer",
+      "actual": "Modal/Form opened",
+      "result": "PASS"
+    },
+    {
+      "page": "/services/orders",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 5 buttons, 1 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/services/orders",
+      "role": "Super Admin",
+      "control": "Create/Add Action",
+      "action": "Click create button",
+      "expected": "Open creation modal or drawer",
+      "actual": "Modal/Form opened",
+      "result": "PASS"
+    },
+    {
+      "page": "/billing/accounts",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 9 buttons, 0 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/billing/accounts",
+      "role": "Super Admin",
+      "control": "Create/Add Action",
+      "action": "Click create button",
+      "expected": "Open creation modal or drawer",
+      "actual": "Modal/Form opened",
+      "result": "PASS"
+    },
+    {
+      "page": "/billing/invoices",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 4 buttons, 1 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/billing/invoices",
+      "role": "Super Admin",
+      "control": "Search Bar",
+      "action": "Type and Clear",
+      "expected": "Search triggers filtering without crash",
+      "actual": "Search input reacted normally",
+      "result": "PASS"
+    },
+    {
+      "page": "/billing/invoices/new",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 3 buttons, 0 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/billing/invoices/new",
+      "role": "Super Admin",
+      "control": "Create/Add Action",
+      "action": "Click create button",
+      "expected": "Open creation modal or drawer",
+      "actual": "Modal/Form opened",
+      "result": "PASS"
+    },
+    {
+      "page": "/billing/payments",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 14 buttons, 0 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/billing/ledger",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 13 buttons, 1 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/courier",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 5 buttons, 1 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/courier",
+      "role": "Super Admin",
+      "control": "Search Bar",
+      "action": "Type and Clear",
+      "expected": "Search triggers filtering without crash",
+      "actual": "Search input reacted normally",
+      "result": "PASS"
+    },
+    {
+      "page": "/courier/dispatches",
+      "role": "Super Admin",
+      "control": "Page Load",
+      "action": "Direct Navigation",
+      "expected": "HTTP 200 without fatal rendering error",
+      "actual": "HTTP 200, Found 5 buttons, 1 tables",
+      "result": "PASS"
+    },
+    {
+      "page": "/courier/dispatches",
+      "role": "Super Admin",
+      "control": "Search Bar",
+      "action": "Type and Clear",
+      "expected": "Search triggers filtering without crash",
+      "actual": "Search input reacted normally",
+      "result": "PASS"
+    },
+    {
+      "page": "/partners",
+      "role": "Staff User",
+      "control": "Mobile Viewport (375px)",
+      "action": "Resize & Render",
+      "expected": "Render responsive layout without horizontal crash",
+      "actual": "Responsive layout intact",
+      "result": "PASS"
+    }
+  ],
+  "pageResults": [
+    {
+      "route": "/partners",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 5,
+      "inputsCount": 1,
+      "tablesCount": 1,
+      "pass": true
+    },
+    {
+      "route": "/partners/part-001",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 1,
+      "inputsCount": 0,
+      "tablesCount": 0,
+      "pass": true
+    },
+    {
+      "route": "/admin/users",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 38,
+      "inputsCount": 1,
+      "tablesCount": 1,
+      "pass": true
+    },
+    {
+      "route": "/admin/roles",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 7,
+      "inputsCount": 0,
+      "tablesCount": 1,
+      "pass": true
+    },
+    {
+      "route": "/admin/delegations",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 3,
+      "inputsCount": 0,
+      "tablesCount": 1,
+      "pass": true
+    },
+    {
+      "route": "/admin/audit",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 4,
+      "inputsCount": 0,
+      "tablesCount": 1,
+      "pass": true
+    },
+    {
+      "route": "/admin/settings",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 23,
+      "inputsCount": 8,
+      "tablesCount": 0,
+      "pass": true
+    },
+    {
+      "route": "/dsc/catalog",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 12,
+      "inputsCount": 0,
+      "tablesCount": 1,
+      "pass": true
+    },
+    {
+      "route": "/dsc/applications",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 16,
+      "inputsCount": 0,
+      "tablesCount": 0,
+      "pass": true
+    },
+    {
+      "route": "/inventory/tokens",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 8,
+      "inputsCount": 0,
+      "tablesCount": 2,
+      "pass": true
+    },
+    {
+      "route": "/inventory/branches",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 27,
+      "inputsCount": 0,
+      "tablesCount": 2,
+      "pass": true
+    },
+    {
+      "route": "/crm/leads",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 5,
+      "inputsCount": 1,
+      "tablesCount": 1,
+      "pass": true
+    },
+    {
+      "route": "/crm/follow-ups",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 5,
+      "inputsCount": 0,
+      "tablesCount": 1,
+      "pass": true
+    },
+    {
+      "route": "/services",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 5,
+      "inputsCount": 0,
+      "tablesCount": 1,
+      "pass": true
+    },
+    {
+      "route": "/services/orders",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 5,
+      "inputsCount": 0,
+      "tablesCount": 1,
+      "pass": true
+    },
+    {
+      "route": "/billing/accounts",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 9,
+      "inputsCount": 0,
+      "tablesCount": 0,
+      "pass": true
+    },
+    {
+      "route": "/billing/invoices",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 4,
+      "inputsCount": 1,
+      "tablesCount": 1,
+      "pass": true
+    },
+    {
+      "route": "/billing/invoices/new",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 3,
+      "inputsCount": 7,
+      "tablesCount": 0,
+      "pass": true
+    },
+    {
+      "route": "/billing/payments",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 14,
+      "inputsCount": 0,
+      "tablesCount": 0,
+      "pass": true
+    },
+    {
+      "route": "/billing/ledger",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 13,
+      "inputsCount": 0,
+      "tablesCount": 1,
+      "pass": true
+    },
+    {
+      "route": "/courier",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 5,
+      "inputsCount": 1,
+      "tablesCount": 1,
+      "pass": true
+    },
+    {
+      "route": "/courier/dispatches",
+      "status": 200,
+      "title": "SignSync B2B Enterprise Platform | v2.4",
+      "buttonsCount": 5,
+      "inputsCount": 1,
+      "tablesCount": 1,
+      "pass": true
+    }
+  ],
+  "errors": [
+    "[Console Error] Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ]
+}

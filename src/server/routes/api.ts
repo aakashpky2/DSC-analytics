@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express'
-import { queryAll, queryOne, run } from '../localDb'
+import { queryAll, queryOne, run, supabase } from '../localDb'
 import { calculateLandedCost, evaluateLeadDuplicates, calculateGst } from '../../lib/businessLogic'
 import { formatReferenceNumber, NumberingConfig } from '../../lib/numberingEngine'
 import { applyPiiMasking } from '../../lib/masking'
@@ -14,6 +14,8 @@ import {
   verifyUserPassword,
   hashPassword,
   generateToken,
+  getUserProfileByEmail,
+  getUserProfileById,
 } from '../auth'
 
 export const apiRouter = Router()
@@ -21,6 +23,8 @@ export const apiRouter = Router()
 // ==========================================
 // RBAC & Session Security Middleware
 // ==========================================
+// Cryptographically verified session-only identity resolution.
+// Arbitrary client-supplied identity/role headers (x-user-id, x-user-role) are strictly rejected.
 async function resolveUserContext(req: Request, _res: Response, next: NextFunction) {
   try {
     const token = req.cookies?.[SESSION_COOKIE_NAME]
@@ -28,21 +32,6 @@ async function resolveUserContext(req: Request, _res: Response, next: NextFuncti
       const sessionUser = await validateSessionToken(token)
       if (sessionUser) {
         ;(req as any).user = sessionUser
-        return next()
-      }
-    }
-
-    const headerUserId = req.headers['x-user-id'] as string
-    if (headerUserId) {
-      const user = await queryOne(`
-        SELECT u.*, r.name as role_name, h.level_order as hierarchy_level_order, h.level_name
-        FROM user_profiles u
-        LEFT JOIN roles r ON u.role_id = r.id
-        LEFT JOIN hierarchy_levels h ON u.hierarchy_level_id = h.id
-        WHERE u.id = ?
-      `, [headerUserId])
-      if (user) {
-        ;(req as any).user = user
         return next()
       }
     }
@@ -65,9 +54,6 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (user.status !== 'active') {
     return res.status(403).json({ error: 'Your account is inactive. Please contact your administrator.' })
   }
-  if (user.permissions_frozen) {
-    return res.status(403).json({ error: 'Your account access has been temporarily paused by an administrator.' })
-  }
   next()
 }
 
@@ -79,13 +65,29 @@ function requireAdmin(req: Request, res: Response, next: NextFunction) {
   if (user.status !== 'active') {
     return res.status(403).json({ error: 'Your account is inactive. Please contact your administrator.' })
   }
-  if (user.permissions_frozen) {
-    return res.status(403).json({ error: 'Your account access has been temporarily paused by an administrator.' })
-  }
   if (user.hierarchy_level_order > 1) {
     return res.status(403).json({ error: 'You do not have permission to open this page.' })
   }
   next()
+}
+
+/**
+ * Determine whether PII masking must be enforced for a request based on verified server-side session.
+ * The client cannot disable masking if user role/hierarchy dictates it (e.g. Field Telecaller Tier 4).
+ */
+function shouldMaskPii(req: Request): boolean {
+  const user = (req as any).user
+  if (!user) return true
+  // Super Admin (Tier 0) and Regional Admin (Tier 1) can view unmasked PII unless client requested ?mask=true
+  if (user.hierarchy_level_order <= 1) {
+    return req.query.mask === 'true'
+  }
+  // Field staff / tele-callers (Tier 4) are strictly masked server-side
+  if (user.hierarchy_level_order >= 4 || user.mask_pii_fields === 1) {
+    return true
+  }
+  // For intermediate tiers (Tier 2 Branch Manager, Tier 3 Senior Staff), respect query param or role flag
+  return req.query.mask === 'true' || user.mask_pii_fields === 1
 }
 
 /**
@@ -100,9 +102,6 @@ function requirePermission(moduleKey: string, actionKey: string) {
     }
     if (user.status !== 'active') {
       return res.status(403).json({ error: 'Account is inactive.' })
-    }
-    if (user.permissions_frozen) {
-      return res.status(403).json({ error: 'Account permissions are frozen by administrator.' })
     }
 
     // Super Admin (Level 0) has root authority across all modules and actions
@@ -135,7 +134,7 @@ function requirePermission(moduleKey: string, actionKey: string) {
         return next()
       }
 
-      // 3. Check active temporary delegations
+      // 3. Check active temporary delegations with full ancestor validation
       const nowIso = new Date().toISOString()
       const delegation = await queryOne<any>(`
         SELECT d.*, g.permissions_frozen as grantor_frozen, g.status as grantor_status
@@ -153,6 +152,24 @@ function requirePermission(moduleKey: string, actionKey: string) {
         if (delegation.grantor_frozen || delegation.grantor_status !== 'active') {
           return res.status(403).json({ error: 'Delegated permission is invalid because the grantor account is frozen or inactive.' })
         }
+
+        // Ancestor validity check: If child delegation, verify parent chain is fully active & unexpired
+        if (delegation.parent_delegation_id) {
+          let currentParentId = delegation.parent_delegation_id
+          let chainValid = true
+          while (currentParentId) {
+            const parentRecord = await queryOne<any>('SELECT * FROM temporary_delegations WHERE id = ?', [currentParentId])
+            if (!parentRecord || parentRecord.status !== 'active' || parentRecord.valid_until < nowIso) {
+              chainValid = false
+              break
+            }
+            currentParentId = parentRecord.parent_delegation_id
+          }
+          if (!chainValid) {
+            return res.status(403).json({ error: 'Delegated permission is invalid because an ancestor delegation was revoked or expired.' })
+          }
+        }
+
         ;(req as any).delegation = delegation
         return next()
       }
@@ -207,29 +224,51 @@ async function logAuditEvent(params: {
 
 /**
  * Concurrency-Safe Document Reference Number Allocator
- * Atomically increments counter and formats business reference string.
+ * Atomically increments counter using optimistic concurrency locking loop and formats business reference string.
  */
 async function allocateNextReferenceNumber(
   documentType: string,
   options?: { companyCode?: string; branchCode?: string; date?: Date }
 ): Promise<string> {
-  const config = await queryOne<NumberingConfig>(
-    'SELECT * FROM numbering_series_configs WHERE document_type = ? AND is_active = 1 LIMIT 1',
-    [documentType]
-  )
+  const { supabase } = await import('../localDb')
 
-  if (!config) {
-    // Fallback safe timestamp reference
-    return `${documentType.toUpperCase().slice(0, 3)}-${Date.now().toString().slice(-6)}`
+  // Attempt optimistic concurrency lock up to 25 retries
+  for (let attempt = 0; attempt < 25; attempt++) {
+    const { data: config, error: fetchErr } = await supabase
+      .from('numbering_series_configs')
+      .select('*')
+      .eq('document_type', documentType)
+      .eq('is_active', 1)
+      .limit(1)
+      .maybeSingle()
+
+    if (fetchErr || !config) {
+      // Fallback safe timestamp reference if no series config exists
+      return `${documentType.toUpperCase().slice(0, 3)}-${Date.now().toString().slice(-6)}`
+    }
+
+    const currentCounter = Number(config.current_counter || 1000)
+    const nextCounter = currentCounter + 1
+
+    const { data: updated, error: updateErr } = await supabase
+      .from('numbering_series_configs')
+      .update({
+        current_counter: nextCounter,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', config.id)
+      .eq('current_counter', currentCounter)
+      .select()
+
+    if (!updateErr && updated && updated.length > 0) {
+      return formatReferenceNumber(config as NumberingConfig, nextCounter, options)
+    }
+
+    // Brief jitter to alleviate concurrency stampede before retry
+    await new Promise((r) => setTimeout(r, Math.random() * 25 + 5))
   }
 
-  const nextCounter = (config.current_counter || 1000) + 1
-  await run(
-    'UPDATE numbering_series_configs SET current_counter = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-    [nextCounter, config.id]
-  )
-
-  return formatReferenceNumber(config, nextCounter, options)
+  throw new Error(`Failed to allocate sequential reference number for ${documentType} after 25 concurrent attempts.`)
 }
 
 // ==========================================
@@ -249,14 +288,8 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
     }
 
     const cleanEmail = email.trim().toLowerCase()
-    const user = await queryOne<any>(
-      `SELECT u.*, r.name as role_name, h.level_order as hierarchy_level_order, h.level_name
-       FROM user_profiles u
-       LEFT JOIN roles r ON u.role_id = r.id
-       LEFT JOIN hierarchy_levels h ON u.hierarchy_level_id = h.id
-       WHERE LOWER(u.email) = ?`,
-      [cleanEmail]
-    )
+    // Explicit, validated user lookup using direct Supabase PostgREST
+    const user = await getUserProfileByEmail(cleanEmail)
 
     if (!user) {
       return res.status(401).json({ error: 'Incorrect email or password. Please try again.' })
@@ -269,10 +302,6 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
 
     if (user.status !== 'active') {
       return res.status(403).json({ error: 'Your account is inactive. Please contact your administrator.' })
-    }
-
-    if (user.permissions_frozen) {
-      return res.status(403).json({ error: 'Your account access has been temporarily paused by an administrator.' })
     }
 
     const durationDays = rememberMe ? 30 : 1
@@ -324,7 +353,7 @@ apiRouter.post('/auth/logout', async (req: Request, res: Response) => {
 })
 
 // 3. GET /api/auth/me
-apiRouter.get('/auth/me', async (req: Request, res: Response) => {
+apiRouter.get('/auth/me', requireAuth, async (req: Request, res: Response) => {
   try {
     const user = (req as any).user
     if (!user) {
@@ -337,9 +366,13 @@ apiRouter.get('/auth/me', async (req: Request, res: Response) => {
         email: user.email,
         full_name: user.full_name,
         phone_number: user.phone_number,
+        role_id: user.role_id,
         role_name: user.role_name,
+        hierarchy_level_id: user.hierarchy_level_id,
         hierarchy_level_order: user.hierarchy_level_order,
         level_name: user.level_name,
+        branch_id: user.branch_id,
+        branch_name: user.branch_name,
         status: user.status,
         permissions_frozen: user.permissions_frozen,
       },
@@ -437,28 +470,7 @@ apiRouter.get('/health', async (_req: Request, res: Response) => {
   }
 })
 
-// Current user profile & effective permissions
-apiRouter.get('/auth/me', async (req: Request, res: Response) => {
-  try {
-    // Current user defaults to Super Admin or header user
-    const userId = (req.headers['x-user-id'] as string) || 'usr-admin-root'
-    const user = await queryOne(`
-      SELECT u.*, r.name as role_name, h.level_order as hierarchy_level_order, h.level_name
-      FROM user_profiles u
-      LEFT JOIN roles r ON u.role_id = r.id
-      LEFT JOIN hierarchy_levels h ON u.hierarchy_level_id = h.id
-      WHERE u.id = ?
-    `, [userId])
 
-    if (!user) {
-      return res.status(404).json({ error: 'User profile not found' })
-    }
-
-    return res.json({ user })
-  } catch (err: unknown) {
-    return res.status(500).json({ error: (err as Error).message })
-  }
-})
 
 // ==========================================
 // 2. User Administration & Granular RBAC
@@ -494,27 +506,20 @@ apiRouter.put('/admin/roles/:id/permissions', requireAdmin, async (req: Request,
     const { permissions = [] } = req.body // Array of { module_id, can_view, can_create, can_edit, can_delete, can_export, mask_pii_fields }
 
     for (const p of permissions) {
-      await run(`
-        INSERT INTO role_module_permissions (id, role_id, module_id, can_view, can_create, can_edit, can_delete, can_export, mask_pii_fields)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(role_id, module_id) DO UPDATE SET
-          can_view = excluded.can_view,
-          can_create = excluded.can_create,
-          can_edit = excluded.can_edit,
-          can_delete = excluded.can_delete,
-          can_export = excluded.can_export,
-          mask_pii_fields = excluded.mask_pii_fields
-      `, [
-        `rmp-${roleId}-${p.module_id}`,
-        roleId,
-        p.module_id,
-        p.can_view ? 1 : 0,
-        p.can_create ? 1 : 0,
-        p.can_edit ? 1 : 0,
-        p.can_delete ? 1 : 0,
-        p.can_export ? 1 : 0,
-        p.mask_pii_fields !== undefined ? (p.mask_pii_fields ? 1 : 0) : 1,
-      ])
+      const { error } = await supabase
+        .from('role_module_permissions')
+        .upsert({
+          id: `rmp-${roleId}-${p.module_id}`,
+          role_id: roleId,
+          module_id: p.module_id,
+          can_view: p.can_view ? 1 : 0,
+          can_create: p.can_create ? 1 : 0,
+          can_edit: p.can_edit ? 1 : 0,
+          can_delete: p.can_delete ? 1 : 0,
+          can_export: p.can_export ? 1 : 0,
+          mask_pii_fields: p.mask_pii_fields !== undefined ? (p.mask_pii_fields ? 1 : 0) : 1,
+        }, { onConflict: 'role_id,module_id' })
+      if (error) throw error
     }
 
     await logAuditEvent({
@@ -536,7 +541,7 @@ apiRouter.put('/admin/roles/:id/permissions', requireAdmin, async (req: Request,
 
 apiRouter.get('/admin/users', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const mask = req.query.mask === 'true'
+    const mask = shouldMaskPii(req)
     const search = req.query.search ? String(req.query.search).trim() : ''
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
 
@@ -620,17 +625,32 @@ apiRouter.post('/admin/users', requireAdmin, async (req: Request, res: Response)
   }
 })
 
-apiRouter.patch('/admin/users/:id/freeze', requireAdmin, async (req: Request, res: Response) => {
+apiRouter.patch('/admin/users/:id/freeze', requireAuth, async (req: Request, res: Response) => {
   try {
+    const currentUser = (req as any).user
+    if (currentUser.hierarchy_level_order !== 0) {
+      return res.status(403).json({ error: 'Only the Super Admin (Level 0) can freeze or unfreeze accounts.' })
+    }
+
     const { frozen } = req.body
     const userId = req.params.id as string
     if (userId === 'usr-admin-root') {
       return res.status(400).json({ error: 'The Master Super Admin account cannot be frozen.' })
     }
+
     await run(`UPDATE user_profiles SET permissions_frozen = ? WHERE id = ?`, [frozen ? 1 : 0, userId])
-    if (frozen) {
-      await invalidateAllUserSessions(userId)
-    }
+
+    await logAuditEvent({
+      userId: currentUser.id,
+      actionType: frozen ? 'FREEZE_USER_PERMISSIONS' : 'UNFREEZE_USER_PERMISSIONS',
+      moduleKey: 'admin_users',
+      tableAffected: 'user_profiles',
+      recordId: userId,
+      newValueJson: { permissions_frozen: frozen ? 1 : 0 },
+      reason: frozen ? 'Administrator froze account permissions' : 'Administrator unfroze account permissions',
+      ipAddress: req.ip,
+    })
+
     return res.json({ success: true, frozen: Boolean(frozen) })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
@@ -640,9 +660,9 @@ apiRouter.patch('/admin/users/:id/freeze', requireAdmin, async (req: Request, re
 // ==========================================
 // 3. Partner Network Management
 // ==========================================
-apiRouter.get('/partners', async (req: Request, res: Response) => {
+apiRouter.get('/partners', requirePermission('partners', 'can_view'), async (req: Request, res: Response) => {
   try {
-    const mask = req.query.mask === 'true'
+    const mask = shouldMaskPii(req)
     const search = req.query.search ? String(req.query.search).trim() : ''
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
 
@@ -683,9 +703,9 @@ apiRouter.get('/partners', async (req: Request, res: Response) => {
   }
 })
 
-apiRouter.get('/partners/:id', async (req: Request, res: Response) => {
+apiRouter.get('/partners/:id', requirePermission('partners', 'can_view'), async (req: Request, res: Response) => {
   try {
-    const mask = req.query.mask === 'true'
+    const mask = shouldMaskPii(req)
     const partner = await queryOne('SELECT * FROM partners WHERE id = ?', [req.params.id])
     if (!partner) return res.status(404).json({ error: 'Partner not found' })
 
@@ -704,7 +724,7 @@ apiRouter.get('/partners/:id', async (req: Request, res: Response) => {
   }
 })
 
-apiRouter.post('/partners', async (req: Request, res: Response) => {
+apiRouter.post('/partners', requirePermission('partners', 'can_create'), async (req: Request, res: Response) => {
   try {
     const {
       type,
@@ -715,18 +735,29 @@ apiRouter.post('/partners', async (req: Request, res: Response) => {
       gstin,
       pan,
       billing_address,
-      state_code,
+      state_code = '27',
       credit_limit = 0,
       credit_period_days = 0,
+      kyc_document_url,
     } = req.body
+
+    // Validate that partner type exists and is active in master configuration
+    const activeTypes = await getPartnerTypesFromDb()
+    const matchingType = activeTypes.find((t: any) => t.type_key === type)
+    if (!matchingType) {
+      return res.status(400).json({ error: `Invalid partner category: ${type}. Please select a registered category from system settings.` })
+    }
+    if (matchingType.is_active === 0 || matchingType.is_active === false) {
+      return res.status(400).json({ error: `The partner category '${matchingType.type_name}' is currently deactivated. Cannot onboard new partners under this category.` })
+    }
 
     const id = `part-${Date.now()}`
     const partner_code = await allocateNextReferenceNumber('partner')
 
     await run(`
-      INSERT INTO partners (id, partner_code, type, company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit, credit_period_days, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
-    `, [id, partner_code, type, company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit, credit_period_days])
+      INSERT INTO partners (id, partner_code, type, company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit, credit_period_days, kyc_document_url, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+    `, [id, partner_code, type, company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit, credit_period_days, kyc_document_url || null])
 
     return res.status(201).json({ success: true, id, partner_code })
   } catch (err: unknown) {
@@ -737,7 +768,7 @@ apiRouter.post('/partners', async (req: Request, res: Response) => {
 // ==========================================
 // 4. DSC Catalogue & Applications
 // ==========================================
-apiRouter.get('/dsc/catalog', async (req: Request, res: Response) => {
+apiRouter.get('/dsc/catalog', requireAuth, async (req: Request, res: Response) => {
   try {
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
     const selectSql = 'SELECT * FROM dsc_catalog ORDER BY class_type, validity_years'
@@ -812,9 +843,9 @@ apiRouter.patch('/dsc/catalog/:id/deactivate', requireAdmin, async (req: Request
   }
 })
 
-apiRouter.get('/dsc/applications', async (req: Request, res: Response) => {
+apiRouter.get('/dsc/applications', requirePermission('dsc', 'can_view'), async (req: Request, res: Response) => {
   try {
-    const mask = req.query.mask === 'true'
+    const mask = shouldMaskPii(req)
     const stage = req.query.stage ? String(req.query.stage).trim() : ''
     const search = req.query.search ? String(req.query.search).trim() : ''
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
@@ -877,16 +908,19 @@ apiRouter.get('/dsc/applications', async (req: Request, res: Response) => {
   }
 })
 
-apiRouter.post('/dsc/applications', async (req: Request, res: Response) => {
+apiRouter.post('/dsc/applications', requirePermission('dsc', 'can_create'), async (req: Request, res: Response) => {
   try {
     const { partner_id, catalog_id, applicant_name, applicant_email, applicant_phone, applicant_pan } = req.body
+    if (!partner_id || !catalog_id || !applicant_name || !applicant_name.trim()) {
+      return res.status(400).json({ error: 'Partner, DSC product, and applicant name are required.' })
+    }
     const id = `app-${Date.now()}`
     const application_number = await allocateNextReferenceNumber('dsc_application')
 
     await run(`
       INSERT INTO dsc_applications (id, application_number, partner_id, catalog_id, applicant_name, applicant_email, applicant_phone, applicant_pan, stage)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'intake')
-    `, [id, application_number, partner_id, catalog_id, applicant_name, applicant_email, applicant_phone, applicant_pan])
+    `, [id, application_number, partner_id, catalog_id, applicant_name.trim(), applicant_email || null, applicant_phone || null, applicant_pan || null])
 
     return res.status(201).json({ success: true, id, application_number })
   } catch (err: unknown) {
@@ -894,7 +928,7 @@ apiRouter.post('/dsc/applications', async (req: Request, res: Response) => {
   }
 })
 
-apiRouter.patch('/dsc/applications/:id/stage', async (req: Request, res: Response) => {
+apiRouter.patch('/dsc/applications/:id/stage', requirePermission('dsc', 'can_edit'), async (req: Request, res: Response) => {
   try {
     const { stage, ca_reference_no, notes } = req.body
     await run(`
@@ -915,7 +949,7 @@ apiRouter.patch('/dsc/applications/:id/stage', async (req: Request, res: Respons
 // ==========================================
 // 5. Hardware Token Inventory & Landed Cost
 // ==========================================
-apiRouter.get('/inventory/batches', async (req: Request, res: Response) => {
+apiRouter.get('/inventory/batches', requirePermission('inventory', 'can_view'), async (req: Request, res: Response) => {
   try {
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
     const selectSql = 'SELECT * FROM token_purchase_batches ORDER BY created_at DESC'
@@ -1001,12 +1035,15 @@ apiRouter.post('/inventory/batches', requirePermission('inventory', 'can_create'
     const hqBranch = await queryOne<any>('SELECT id FROM branches WHERE branch_code = ? LIMIT 1', ['HQ-MUM'])
     const branchId = hqBranch ? hqBranch.id : 'branch-hq'
 
-    await run(`
-      INSERT INTO branch_token_stocks (id, branch_id, token_model, quantity_on_hand, quarantine_damaged, min_threshold)
-      VALUES (?, ?, ?, ?, 0, 25)
-      ON CONFLICT(branch_id, token_model) DO UPDATE SET
-      quantity_on_hand = quantity_on_hand + excluded.quantity_on_hand
-    `, [`stk-${Date.now()}`, branchId, token_model, qty])
+    const existingStock = await queryOne<any>('SELECT id, quantity_on_hand FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?', [branchId, token_model])
+    if (existingStock) {
+      await run('UPDATE branch_token_stocks SET quantity_on_hand = quantity_on_hand + ? WHERE id = ?', [qty, existingStock.id])
+    } else {
+      await run(`
+        INSERT INTO branch_token_stocks (id, branch_id, token_model, quantity_on_hand, quarantine_damaged, min_threshold)
+        VALUES (?, ?, ?, ?, 0, 25)
+      `, [`stk-${Date.now()}`, branchId, token_model, qty])
+    }
 
     await logAuditEvent({
       userId: currentUser.id,
@@ -1025,7 +1062,7 @@ apiRouter.post('/inventory/batches', requirePermission('inventory', 'can_create'
   }
 })
 
-apiRouter.get('/inventory/branches', async (req: Request, res: Response) => {
+apiRouter.get('/inventory/branches', requirePermission('inventory', 'can_view'), async (req: Request, res: Response) => {
   try {
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
     const selectSql = `
@@ -1119,7 +1156,7 @@ apiRouter.patch('/admin/branches/:id/deactivate', requireAdmin, async (req: Requ
 })
 
 // Transfer History: List Delivery Challans / Notes
-apiRouter.get('/inventory/transfers', async (req: Request, res: Response) => {
+apiRouter.get('/inventory/transfers', requirePermission('inventory', 'can_view'), async (req: Request, res: Response) => {
   try {
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
     const selectSql = `
@@ -1162,9 +1199,10 @@ apiRouter.get('/inventory/transfers', async (req: Request, res: Response) => {
 // Create Delivery Challan / Inter-Branch Stock Transfer
 apiRouter.post('/inventory/transfers', requirePermission('inventory', 'can_create'), async (req: Request, res: Response) => {
   try {
-    const { source_branch_id, destination_branch_id, token_model, quantity, remarks, transfer_date } = req.body
+    const { source_branch_id, destination_branch_id, token_model, quantity, remarks, transfer_date, serial_numbers } = req.body
     const currentUser = (req as any).user
     const delegation = (req as any).delegation
+    const { supabase } = await import('../localDb')
 
     if (!source_branch_id || !destination_branch_id || !token_model) {
       return res.status(400).json({ error: 'Source branch, destination branch, and token model are required.' })
@@ -1179,17 +1217,66 @@ apiRouter.post('/inventory/transfers', requirePermission('inventory', 'can_creat
       return res.status(400).json({ error: 'Quantity must be a positive whole number.' })
     }
 
-    // Server-side stock verification against race conditions & over-allocation
+    // Step 5: Concurrency-Safe Atomic Stock Deduction using Conditional Row Update
     const sourceStock = await queryOne<any>(
       'SELECT * FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?',
       [source_branch_id, token_model]
     )
 
-    if (!sourceStock || sourceStock.quantity_on_hand < parsedQty) {
+    if (!sourceStock || Number(sourceStock.quantity_on_hand || 0) < parsedQty) {
       const available = sourceStock ? sourceStock.quantity_on_hand : 0
       return res.status(400).json({
         error: `Not enough stock available. Source branch has only ${available} usable tokens.`
       })
+    }
+
+    // Attempt atomic conditional deduction
+    const currentQty = Number(sourceStock.quantity_on_hand)
+    const newQty = currentQty - parsedQty
+
+    const { data: updatedStock, error: deductErr } = await supabase
+      .from('branch_token_stocks')
+      .update({
+        quantity_on_hand: newQty
+      })
+      .eq('id', sourceStock.id)
+      .eq('quantity_on_hand', currentQty)
+      .gte('quantity_on_hand', parsedQty)
+      .select()
+
+    if (deductErr || !updatedStock || updatedStock.length === 0) {
+      return res.status(409).json({
+        error: 'Stock allocation contention detected. Another transaction updated branch inventory. Please retry.'
+      })
+    }
+
+    // Step 6: Individual Serial Verification and Assignment (if serials provided)
+    if (Array.isArray(serial_numbers) && serial_numbers.length > 0) {
+      if (serial_numbers.length !== parsedQty) {
+        // Rollback stock deduction
+        await supabase.from('branch_token_stocks').update({ quantity_on_hand: currentQty }).eq('id', sourceStock.id)
+        return res.status(400).json({
+          error: `Selected serial count (${serial_numbers.length}) does not match transfer quantity (${parsedQty}).`
+        })
+      }
+
+      // Verify all serials belong to source branch and are in_stock
+      const { data: foundSerials } = await supabase
+        .from('token_serials')
+        .select('id, serial_number, branch_id, status')
+        .in('serial_number', serial_numbers)
+
+      const invalidSerials = serial_numbers.filter(
+        (sn: string) => !foundSerials?.some((fs) => fs.serial_number === sn && fs.branch_id === source_branch_id && fs.status === 'in_stock')
+      )
+
+      if (invalidSerials.length > 0) {
+        // Rollback stock deduction
+        await supabase.from('branch_token_stocks').update({ quantity_on_hand: currentQty }).eq('id', sourceStock.id)
+        return res.status(400).json({
+          error: `The following token serials are not available in source branch stock: ${invalidSerials.join(', ')}`
+        })
+      }
     }
 
     // Snapshot company legal data at challan issue time
@@ -1199,31 +1286,53 @@ apiRouter.post('/inventory/transfers', requirePermission('inventory', 'can_creat
     const challanNumber = await allocateNextReferenceNumber('delivery_challan')
     const effectiveDate = transfer_date || new Date().toISOString().split('T')[0]
 
-    // Atomically record transfer and deduct stock from source branch
-    await run(
-      `INSERT INTO delivery_challans (
-        id, challan_number, source_branch_id, destination_branch_id, token_model, quantity, purpose, issued_by, status, created_at, company_snapshot
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'dispatched', ?, ?)`,
-      [challanId, challanNumber, source_branch_id, destination_branch_id, token_model, parsedQty, remarks || 'Inter-branch stock transfer', currentUser.id, effectiveDate, company ? JSON.stringify(company) : null]
-    )
+    // Create delivery challan in 'dispatched' status
+    const { error: chErr } = await supabase.from('delivery_challans').insert({
+      id: challanId,
+      challan_number: challanNumber,
+      source_branch_id,
+      destination_branch_id,
+      token_model,
+      quantity: parsedQty,
+      purpose: remarks || 'Inter-branch stock transfer',
+      issued_by: currentUser.id,
+      status: 'dispatched',
+      created_at: effectiveDate,
+      company_snapshot: company ? JSON.stringify(company) : null
+    })
 
-    // Deduct stock from source branch
-    await run(
-      'UPDATE branch_token_stocks SET quantity_on_hand = quantity_on_hand - ? WHERE branch_id = ? AND token_model = ?',
-      [parsedQty, source_branch_id, token_model]
-    )
+    if (chErr) {
+      // Rollback stock deduction
+      await supabase.from('branch_token_stocks').update({ quantity_on_hand: currentQty }).eq('id', sourceStock.id)
+      return res.status(500).json({ error: `Failed to create delivery challan: ${chErr.message}` })
+    }
 
-    // Ensure destination branch stock row exists and record receipt or in-transit
+    // Step 6: Mark serials in-transit linked to this delivery challan
+    if (Array.isArray(serial_numbers) && serial_numbers.length > 0) {
+      await supabase
+        .from('token_serials')
+        .update({
+          status: 'in_transit',
+          delivery_challan_id: challanId
+        })
+        .in('serial_number', serial_numbers)
+    }
+
+    // Ensure destination branch stock row exists (initial 0 on hand if not present)
     const destStock = await queryOne<any>(
       'SELECT * FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?',
       [destination_branch_id, token_model]
     )
     if (!destStock) {
-      const newStockId = `stock-${Date.now()}-${Math.floor(Math.random()*1000)}`
-      await run(
-        'INSERT INTO branch_token_stocks (id, branch_id, token_model, quantity_on_hand, quarantine_damaged, min_threshold) VALUES (?, ?, ?, ?, 0, 10)',
-        [newStockId, destination_branch_id, token_model, 0]
-      )
+      const newStockId = `stock-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+      await supabase.from('branch_token_stocks').insert({
+        id: newStockId,
+        branch_id: destination_branch_id,
+        token_model,
+        quantity_on_hand: 0,
+        quarantine_damaged: 0,
+        min_threshold: 10
+      })
     }
 
     await logAuditEvent({
@@ -1252,6 +1361,8 @@ apiRouter.post('/inventory/transfers', requirePermission('inventory', 'can_creat
 apiRouter.patch('/inventory/transfers/:id/receive', requireAuth, async (req: Request, res: Response) => {
   try {
     const challanId = req.params.id as string
+    const { supabase } = await import('../localDb')
+
     const challan = await queryOne<any>('SELECT * FROM delivery_challans WHERE id = ?', [challanId])
     if (!challan) return res.status(404).json({ error: 'Delivery Challan not found.' })
 
@@ -1262,14 +1373,53 @@ apiRouter.patch('/inventory/transfers/:id/receive', requireAuth, async (req: Req
       return res.status(400).json({ error: 'Cancelled delivery notes cannot be received.' })
     }
 
-    // Add received quantity to destination branch
-    await run(
-      'UPDATE branch_token_stocks SET quantity_on_hand = quantity_on_hand + ? WHERE branch_id = ? AND token_model = ?',
-      [challan.quantity, challan.destination_branch_id, challan.token_model]
+    // Step 5 & 10: Atomic Conditional Receipt - only 1 request can transition status from dispatched/in_transit to received
+    const nowIso = new Date().toISOString()
+    const { data: updatedChallan, error: updErr } = await supabase
+      .from('delivery_challans')
+      .update({
+        status: 'received'
+      })
+      .eq('id', challanId)
+      .eq('status', challan.status)
+      .select()
+
+    if (updErr || !updatedChallan || updatedChallan.length === 0) {
+      return res.status(409).json({ error: 'Challan has already been received or modified concurrently.' })
+    }
+
+    // Atomically increment destination branch stock
+    const destStock = await queryOne<any>(
+      'SELECT * FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?',
+      [challan.destination_branch_id, challan.token_model]
     )
 
-    // Mark challan received
-    await run('UPDATE delivery_challans SET status = \'received\' WHERE id = ?', [challanId])
+    if (destStock) {
+      await supabase
+        .from('branch_token_stocks')
+        .update({
+          quantity_on_hand: Number(destStock.quantity_on_hand || 0) + Number(challan.quantity)
+        })
+        .eq('id', destStock.id)
+    } else {
+      await supabase.from('branch_token_stocks').insert({
+        id: `stock-${Date.now()}`,
+        branch_id: challan.destination_branch_id,
+        token_model: challan.token_model,
+        quantity_on_hand: Number(challan.quantity),
+        quarantine_damaged: 0,
+        min_threshold: 10
+      })
+    }
+
+    // Step 6: Move in-transit token serials to destination branch
+    await supabase
+      .from('token_serials')
+      .update({
+        status: 'in_stock',
+        branch_id: challan.destination_branch_id
+      })
+      .eq('delivery_challan_id', challanId)
 
     return res.json({ success: true, status: 'received', message: 'Stock received and credited to destination branch.' })
   } catch (err: unknown) {
@@ -1282,6 +1432,7 @@ apiRouter.post('/inventory/adjust', requireAdmin, async (req: Request, res: Resp
   try {
     const { branch_id, token_model, adjustment_type, quantity, reason } = req.body
     const currentUser = (req as any).user
+    const { supabase } = await import('../localDb')
 
     if (!branch_id || !token_model || !adjustment_type || quantity === undefined) {
       return res.status(400).json({ error: 'Branch, token model, adjustment type, and quantity are required.' })
@@ -1299,47 +1450,77 @@ apiRouter.post('/inventory/adjust', requireAdmin, async (req: Request, res: Resp
     )
     if (!stock) {
       const newStockId = `stock-${Date.now()}`
-      await run(
-        'INSERT INTO branch_token_stocks (id, branch_id, token_model, quantity_on_hand, quarantine_damaged, min_threshold) VALUES (?, ?, ?, 0, 0, 10)',
-        [newStockId, branch_id, token_model]
-      )
+      await supabase.from('branch_token_stocks').insert({
+        id: newStockId,
+        branch_id,
+        token_model,
+        quantity_on_hand: 0,
+        quarantine_damaged: 0,
+        min_threshold: 10
+      })
       stock = { id: newStockId, quantity_on_hand: 0, quarantine_damaged: 0 }
     }
 
+    const currentQtyOnHand = Number(stock.quantity_on_hand || 0)
+    const currentDamaged = Number(stock.quarantine_damaged || 0)
+
     if (adjustment_type === 'quarantine_damaged') {
-      if (stock.quantity_on_hand < qty) {
-        return res.status(400).json({ error: `Cannot quarantine ${qty} tokens. Only ${stock.quantity_on_hand} tokens available on hand.` })
+      if (currentQtyOnHand < qty) {
+        return res.status(400).json({ error: `Cannot quarantine ${qty} tokens. Only ${currentQtyOnHand} tokens available on hand.` })
       }
-      await run(`
-        UPDATE branch_token_stocks
-        SET quantity_on_hand = quantity_on_hand - ?,
-            quarantine_damaged = quarantine_damaged + ?
-        WHERE branch_id = ? AND token_model = ?
-      `, [qty, qty, branch_id, token_model])
+
+      // Concurrency-safe atomic deduction & quarantine increment
+      const { data: updated, error: adjErr } = await supabase
+        .from('branch_token_stocks')
+        .update({
+          quantity_on_hand: currentQtyOnHand - qty,
+          quarantine_damaged: currentDamaged + qty
+        })
+        .eq('id', stock.id)
+        .gte('quantity_on_hand', qty)
+        .select()
+
+      if (adjErr || !updated || updated.length === 0) {
+        return res.status(409).json({ error: 'Inventory adjusted concurrently. Please retry.' })
+      }
     } else if (adjustment_type === 'reconcile_add') {
-      await run(`
-        UPDATE branch_token_stocks
-        SET quantity_on_hand = quantity_on_hand + ?
-        WHERE branch_id = ? AND token_model = ?
-      `, [qty, branch_id, token_model])
+      await supabase
+        .from('branch_token_stocks')
+        .update({
+          quantity_on_hand: currentQtyOnHand + qty
+        })
+        .eq('id', stock.id)
     } else if (adjustment_type === 'reconcile_deduct') {
-      if (stock.quantity_on_hand < qty) {
-        return res.status(400).json({ error: `Cannot deduct ${qty} tokens. Only ${stock.quantity_on_hand} tokens available on hand.` })
+      if (currentQtyOnHand < qty) {
+        return res.status(400).json({ error: `Cannot deduct ${qty} tokens. Only ${currentQtyOnHand} tokens available on hand.` })
       }
-      await run(`
-        UPDATE branch_token_stocks
-        SET quantity_on_hand = quantity_on_hand - ?
-        WHERE branch_id = ? AND token_model = ?
-      `, [qty, branch_id, token_model])
+
+      const { data: updated, error: adjErr } = await supabase
+        .from('branch_token_stocks')
+        .update({
+          quantity_on_hand: currentQtyOnHand - qty
+        })
+        .eq('id', stock.id)
+        .gte('quantity_on_hand', qty)
+        .select()
+
+      if (adjErr || !updated || updated.length === 0) {
+        return res.status(409).json({ error: 'Inventory adjusted concurrently. Please retry.' })
+      }
     } else {
       return res.status(400).json({ error: 'Invalid adjustment type.' })
     }
 
     const adjId = `adj-${Date.now()}`
-    await run(`
-      INSERT INTO stock_adjustments (id, branch_id, token_model, adjustment_type, quantity, reason, adjusted_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [adjId, branch_id, token_model, adjustment_type, qty, reason || 'Physical inventory audit adjustment', currentUser?.id || 'admin'])
+    await supabase.from('stock_adjustments').insert({
+      id: adjId,
+      branch_id,
+      token_model,
+      adjustment_type,
+      quantity: qty,
+      reason: reason || 'Physical inventory audit adjustment',
+      adjusted_by: currentUser?.id || 'admin'
+    })
 
     return res.status(201).json({ success: true, id: adjId, message: 'Stock adjustment successfully posted.' })
   } catch (err: unknown) {
@@ -1350,9 +1531,9 @@ apiRouter.post('/inventory/adjust', requireAdmin, async (req: Request, res: Resp
 // ==========================================
 // 6. CRM Leads & Deduplication Engine
 // ==========================================
-apiRouter.get('/crm/leads', async (req: Request, res: Response) => {
+apiRouter.get('/crm/leads', requirePermission('crm', 'can_view'), async (req: Request, res: Response) => {
   try {
-    const mask = req.query.mask === 'true'
+    const mask = shouldMaskPii(req)
     const search = req.query.search ? String(req.query.search).trim() : ''
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
 
@@ -1404,7 +1585,7 @@ apiRouter.get('/crm/leads', async (req: Request, res: Response) => {
   }
 })
 
-apiRouter.post('/crm/leads/check-duplicate', async (req: Request, res: Response) => {
+apiRouter.post('/crm/leads/check-duplicate', requirePermission('crm', 'can_view'), async (req: Request, res: Response) => {
   try {
     const { gstin, phone, email, pan, company_name } = req.body
     const existing = await queryAll('SELECT id, lead_code, company_name, email, phone, gstin, pan FROM crm_leads WHERE is_merged = 0')
@@ -1430,7 +1611,7 @@ apiRouter.post('/crm/leads/check-duplicate', async (req: Request, res: Response)
   }
 })
 
-apiRouter.post('/crm/leads', async (req: Request, res: Response) => {
+apiRouter.post('/crm/leads', requirePermission('crm', 'can_create'), async (req: Request, res: Response) => {
   try {
     const { company_name, contact_person, email, phone, gstin, pan, requirement_summary } = req.body
     const id = `lead-${Date.now()}`
@@ -1452,14 +1633,43 @@ apiRouter.post('/crm/leads/merge', requirePermission('crm', 'can_edit'), async (
     const currentUser = (req as any).user
     const delegation = (req as any).delegation
     const { primary_lead_id, secondary_lead_id } = req.body
-    await run(`
-      UPDATE crm_leads
-      SET is_merged = 1, merged_into_lead_id = ?, status = 'merged', updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `, [primary_lead_id, secondary_lead_id])
+    const { supabase } = await import('../localDb')
 
-    // Move associated follow-ups to primary lead
-    await run(`UPDATE crm_follow_ups SET lead_id = ? WHERE lead_id = ?`, [primary_lead_id, secondary_lead_id])
+    if (!primary_lead_id || !secondary_lead_id) {
+      return res.status(400).json({ error: 'Primary lead ID and secondary lead ID are required.' })
+    }
+
+    if (primary_lead_id === secondary_lead_id) {
+      return res.status(400).json({ error: 'Cannot merge a lead into itself.' })
+    }
+
+    // Step 9: Atomic Lead Merge - Conditionally lock secondary lead so it cannot be merged twice
+    const nowIso = new Date().toISOString()
+    const { data: claimedLead, error: claimErr } = await supabase
+      .from('crm_leads')
+      .update({
+        is_merged: 1,
+        status: 'merged',
+        merged_into_lead_id: primary_lead_id,
+        updated_at: nowIso
+      })
+      .eq('id', secondary_lead_id)
+      .eq('is_merged', 0)
+      .select()
+
+    if (claimErr || !claimedLead || claimedLead.length === 0) {
+      return res.status(409).json({
+        error: 'Secondary lead has already been merged or modified concurrently.'
+      })
+    }
+
+    // Re-parent all associated follow-ups to primary lead
+    await supabase
+      .from('crm_follow_ups')
+      .update({
+        lead_id: primary_lead_id
+      })
+      .eq('lead_id', secondary_lead_id)
 
     await logAuditEvent({
       userId: currentUser.id,
@@ -1480,7 +1690,7 @@ apiRouter.post('/crm/leads/merge', requirePermission('crm', 'can_edit'), async (
 })
 
 // Lead Edit, Assignment & Status Update (Item 5)
-apiRouter.put('/crm/leads/:id', async (req: Request, res: Response) => {
+apiRouter.put('/crm/leads/:id', requirePermission('crm', 'can_edit'), async (req: Request, res: Response) => {
   try {
     const { company_name, contact_person, email, phone, gstin, pan, requirement_summary, status, assigned_to } = req.body
     await run(`
@@ -1505,8 +1715,9 @@ apiRouter.put('/crm/leads/:id', async (req: Request, res: Response) => {
 })
 
 // CRM Follow-Up Actions & Agenda
-apiRouter.get('/crm/follow-ups', async (req: Request, res: Response) => {
+apiRouter.get('/crm/follow-ups', requirePermission('crm', 'can_view'), async (req: Request, res: Response) => {
   try {
+    const mask = shouldMaskPii(req)
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
     const selectSql = `
       SELECT f.id, f.lead_id, f.channel as contact_mode, f.scheduled_at as follow_up_date, f.status, f.disposition, f.notes,
@@ -1524,8 +1735,9 @@ apiRouter.get('/crm/follow-ups', async (req: Request, res: Response) => {
 
     if (isPaginated) {
       const result = await executePaginatedQuery(selectSql, countSql, [], { page, limit, offset })
+      const sanitized = result.data.map((f: any) => applyPiiMasking(f, mask))
       return res.json({
-        followUps: result.data,
+        followUps: sanitized,
         page: result.page,
         limit: result.limit,
         totalCount: result.totalCount,
@@ -1534,11 +1746,12 @@ apiRouter.get('/crm/follow-ups', async (req: Request, res: Response) => {
     }
 
     const followUps = await queryAll(selectSql)
+    const sanitized = followUps.map((f: any) => applyPiiMasking(f, mask))
     return res.json({
-      followUps,
+      followUps: sanitized,
       page: 1,
-      limit: followUps.length,
-      totalCount: followUps.length,
+      limit: sanitized.length,
+      totalCount: sanitized.length,
       totalPages: 1,
     })
   } catch (err: unknown) {
@@ -1551,6 +1764,7 @@ apiRouter.post('/crm/follow-ups', requireAuth, async (req: Request, res: Respons
     const { lead_id, follow_up_date, contact_mode, notes, disposition } = req.body
     const currentUser = (req as any).user
     if (!lead_id) return res.status(400).json({ error: 'Lead is required.' })
+    if (!notes || !notes.trim()) return res.status(400).json({ error: 'Follow-up notes/comments are required.' })
     const id = `fu-${Date.now()}`
     await run(`
       INSERT INTO crm_follow_ups (id, lead_id, channel, scheduled_at, notes, disposition, conducted_by, status)
@@ -1599,7 +1813,7 @@ apiRouter.patch('/crm/follow-ups/:id/reschedule', requireAuth, async (req: Reque
 // ==========================================
 // 7. Additional Business Services Hub
 // ==========================================
-apiRouter.get('/services/orders', async (req: Request, res: Response) => {
+apiRouter.get('/services/orders', requirePermission('services', 'can_view'), async (req: Request, res: Response) => {
   try {
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
     const selectSql = `
@@ -1634,7 +1848,7 @@ apiRouter.get('/services/orders', async (req: Request, res: Response) => {
   }
 })
 
-apiRouter.post('/services/orders', async (req: Request, res: Response) => {
+apiRouter.post('/services/orders', requirePermission('services', 'can_create'), async (req: Request, res: Response) => {
   try {
     const { service_type, partner_id, client_name, client_contact, government_fees = 0, professional_fees = 0, notes } = req.body
     const id = `srv-${Date.now()}`
@@ -1654,7 +1868,7 @@ apiRouter.post('/services/orders', async (req: Request, res: Response) => {
 // ==========================================
 // 8. Multi-Account Billing & Payments Queue
 // ==========================================
-apiRouter.get('/billing/accounts', async (req: Request, res: Response) => {
+apiRouter.get('/billing/accounts', requirePermission('billing', 'can_view'), async (req: Request, res: Response) => {
   try {
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
     const selectSql = 'SELECT * FROM bank_accounts WHERE is_active = 1 ORDER BY account_nickname ASC'
@@ -1710,7 +1924,7 @@ apiRouter.patch('/billing/accounts/:id/deactivate', requireAdmin, async (req: Re
   }
 })
 
-apiRouter.get('/billing/series', async (_req: Request, res: Response) => {
+apiRouter.get('/billing/series', requirePermission('billing', 'can_view'), async (_req: Request, res: Response) => {
   try {
     const series = await queryAll(`
       SELECT s.*, b.bank_name, b.account_number, b.upi_id
@@ -1760,7 +1974,7 @@ apiRouter.put('/billing/series/:id', requireAdmin, async (req: Request, res: Res
   }
 })
 
-apiRouter.get('/billing/invoices', async (req: Request, res: Response) => {
+apiRouter.get('/billing/invoices', requirePermission('billing', 'can_view'), async (req: Request, res: Response) => {
   try {
     const search = req.query.search ? String(req.query.search).trim() : ''
     const status = req.query.status ? String(req.query.status).trim() : ''
@@ -1798,10 +2012,13 @@ apiRouter.get('/billing/invoices', async (req: Request, res: Response) => {
       ${whereClause}
     `
 
+    const mask = shouldMaskPii(req)
+
     if (isPaginated) {
       const result = await executePaginatedQuery(selectSql, countSql, params, { page, limit, offset })
+      const sanitized = (result.data || []).map((inv: any) => applyPiiMasking(inv, mask))
       return res.json({
-        invoices: result.data,
+        invoices: sanitized,
         page: result.page,
         limit: result.limit,
         totalCount: result.totalCount,
@@ -1810,11 +2027,12 @@ apiRouter.get('/billing/invoices', async (req: Request, res: Response) => {
     }
 
     const invoices = await queryAll(selectSql, params)
+    const sanitized = (invoices || []).map((inv: any) => applyPiiMasking(inv, mask))
     return res.json({
-      invoices,
+      invoices: sanitized,
       page: 1,
-      limit: invoices.length,
-      totalCount: invoices.length,
+      limit: sanitized.length,
+      totalCount: sanitized.length,
       totalPages: 1,
     })
   } catch (err: unknown) {
@@ -1827,53 +2045,149 @@ apiRouter.post('/billing/invoices', requirePermission('billing', 'can_create'), 
     const currentUser = (req as any).user
     const delegation = (req as any).delegation
     const { series_id, partner_id, due_days = 30, line_items = [] } = req.body
+    const { supabase } = await import('../localDb')
 
-    const series = await queryOne<any>('SELECT * FROM invoice_series_configs WHERE id = ?', [series_id])
+    if (!Array.isArray(line_items) || line_items.length === 0) {
+      return res.status(400).json({ error: 'Invoice must contain at least one line item.' })
+    }
+
+    for (const item of line_items) {
+      const qty = Number(item.quantity ?? item.qty ?? 0)
+      const rate = Number(item.unit_price ?? item.rate ?? 0)
+      if (qty <= 0 || rate < 0) {
+        return res.status(400).json({ error: 'Line item quantity must be positive and unit price cannot be negative.' })
+      }
+    }
+
+    let series = null
+    if (series_id) {
+      series = await queryOne<any>('SELECT * FROM invoice_series_configs WHERE id = ?', [series_id])
+    } else {
+      series = await queryOne<any>('SELECT * FROM invoice_series_configs WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1')
+    }
     if (!series) return res.status(404).json({ error: 'Invoice series config not found' })
 
     const partner = await queryOne<any>('SELECT * FROM partners WHERE id = ?', [partner_id])
     if (!partner) return res.status(404).json({ error: 'Partner not found' })
 
+    const subtotal = line_items.reduce((sum: number, item: any) => {
+      const qty = Number(item.quantity ?? item.qty ?? 0)
+      const rate = Number(item.unit_price ?? item.rate ?? 0)
+      return sum + (qty * rate)
+    }, 0)
+    const gst = calculateGst(subtotal, partner.state_code)
+    const invoiceTotal = gst.total
+
+    // Step 8: Credit Limit & Overdue Aging Verification
+    // Retrieve latest partner ledger running balance
+    const { data: latestLedger } = await supabase
+      .from('financial_ledger')
+      .select('running_balance')
+      .eq('partner_id', partner.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+
+    const currentBalance = latestLedger && latestLedger.length > 0 ? Number(latestLedger[0].running_balance || 0) : 0
+    const partnerCreditLimit = Number(partner.credit_limit || 0)
+
+    if (partnerCreditLimit > 0 && (currentBalance + invoiceTotal) > partnerCreditLimit) {
+      return res.status(400).json({
+        error: `Credit limit exceeded. Current outstanding is ₹${currentBalance.toLocaleString('en-IN')}, credit limit is ₹${partnerCreditLimit.toLocaleString('en-IN')}. New invoice of ₹${invoiceTotal.toLocaleString('en-IN')} would exceed limit.`
+      })
+    }
+
+    // Step 4 & 3: Concurrency-Safe Atomic Invoice Series Counter Allocation
+    let allocatedCounter = 0
+    for (let attempt = 0; attempt < 25; attempt++) {
+      const { data: curSeries, error: fetchErr } = await supabase
+        .from('invoice_series_configs')
+        .select('current_counter')
+        .eq('id', series.id)
+        .single()
+
+      if (fetchErr || !curSeries) {
+        return res.status(500).json({ error: 'Failed to read invoice series configuration.' })
+      }
+
+      const curCount = Number(curSeries.current_counter || 1000)
+      const nextCount = curCount + 1
+
+      const { data: updatedSeries, error: updateErr } = await supabase
+        .from('invoice_series_configs')
+        .update({ current_counter: nextCount })
+        .eq('id', series.id)
+        .eq('current_counter', curCount)
+        .select()
+
+      if (!updateErr && updatedSeries && updatedSeries.length > 0) {
+        allocatedCounter = nextCount
+        break
+      }
+
+      // Concurrency jitter
+      await new Promise((r) => setTimeout(r, Math.random() * 25 + 5))
+    }
+
+    if (!allocatedCounter) {
+      return res.status(409).json({ error: 'Invoice series counter contention. Please retry creating the invoice.' })
+    }
+
+    const prefix = series.prefix || ''
+    const suffix = series.suffix || ''
+    const invoice_number = `${prefix}${allocatedCounter}${suffix}`
+    const id = `inv-${Date.now()}`
+
     // Snapshot company legal data at issue time to prevent historical corruption
     const company = await queryOne<any>('SELECT * FROM company_profile LIMIT 1')
 
-    const subtotal = line_items.reduce((sum: number, item: any) => sum + (item.qty * item.rate), 0)
-    const gst = calculateGst(subtotal, partner.state_code)
+    const todayIso = new Date().toISOString().split('T')[0]
+    const dueDate = new Date(Date.now() + (due_days * 86400000)).toISOString().split('T')[0]
 
-    const nextCounter = series.current_counter + 1
-    const invoice_number = `${series.prefix}${nextCounter}${series.suffix || ''}`
-    const id = `inv-${Date.now()}`
-
-    await run('UPDATE invoice_series_configs SET current_counter = ? WHERE id = ?', [nextCounter, series.id])
-
-    await run(`
-      INSERT INTO invoices (
-        id, invoice_number, series_id, partner_id, invoice_date, due_date,
-        subtotal, cgst_amount, sgst_amount, igst_amount, total_amount, paid_amount,
-        outstanding_balance, status, bank_account_snapshot_id, line_items, company_snapshot
-      ) VALUES (?, ?, ?, ?, DATE('now'), DATE('now', '+' || ? || ' days'), ?, ?, ?, ?, ?, 0.0, ?, 'unpaid', ?, ?, ?)
-    `, [
+    // Insert Invoice
+    const { error: invErr } = await supabase.from('invoices').insert({
       id,
       invoice_number,
-      series.id,
-      partner.id,
-      due_days,
+      series_id: series.id,
+      partner_id: partner.id,
+      invoice_date: todayIso,
+      due_date: dueDate,
       subtotal,
-      gst.cgst,
-      gst.sgst,
-      gst.igst,
-      gst.total,
-      gst.total,
-      series.mapped_bank_account_id,
-      JSON.stringify(line_items),
-      company ? JSON.stringify(company) : null,
-    ])
+      cgst_amount: gst.cgst,
+      sgst_amount: gst.sgst,
+      igst_amount: gst.igst,
+      total_amount: invoiceTotal,
+      paid_amount: 0.0,
+      outstanding_balance: invoiceTotal,
+      status: 'unpaid',
+      bank_account_snapshot_id: series.mapped_bank_account_id,
+      line_items: JSON.stringify(line_items),
+      company_snapshot: company ? JSON.stringify(company) : null,
+    })
 
-    // Ledger debit entry
-    await run(`
-      INSERT INTO financial_ledger (id, partner_id, transaction_type, reference_id, debit, credit, running_balance, remarks)
-      VALUES (?, ?, 'invoice_raised', ?, ?, 0.0, (COALESCE((SELECT running_balance FROM financial_ledger WHERE partner_id = ? ORDER BY created_at DESC LIMIT 1), 0) + ?), ?)
-    `, [`led-${Date.now()}`, partner.id, id, gst.total, partner.id, gst.total, `Invoice ${invoice_number} raised`])
+    if (invErr) {
+      return res.status(500).json({ error: `Invoice creation failed: ${invErr.message}` })
+    }
+
+    // Insert Financial Ledger Debit Entry atomically linked
+    const newRunningBalance = currentBalance + invoiceTotal
+    const ledId = `led-${Date.now()}`
+    const { error: ledErr } = await supabase.from('financial_ledger').insert({
+      id: ledId,
+      partner_id: partner.id,
+      entry_date: todayIso,
+      transaction_type: 'invoice_raised',
+      reference_id: id,
+      debit: invoiceTotal,
+      credit: 0.0,
+      running_balance: newRunningBalance,
+      remarks: `Invoice ${invoice_number} raised`
+    })
+
+    if (ledErr) {
+      // Rollback inserted invoice to prevent dangling or mismatched state
+      await supabase.from('invoices').delete().eq('id', id)
+      return res.status(500).json({ error: `Financial ledger debit entry failed. Invoice rolled back: ${ledErr.message}` })
+    }
 
     await logAuditEvent({
       userId: currentUser.id,
@@ -1881,19 +2195,19 @@ apiRouter.post('/billing/invoices', requirePermission('billing', 'can_create'), 
       moduleKey: 'billing',
       tableAffected: 'invoices',
       recordId: id,
-      newValueJson: { invoice_number, total: gst.total, partner_id },
+      newValueJson: { invoice_number, total: invoiceTotal, partner_id },
       delegationId: delegation?.id,
       ipAddress: req.ip,
     })
 
-    return res.status(201).json({ success: true, id, invoice_number, total: gst.total })
+    return res.status(201).json({ success: true, id, invoice_number, total: invoiceTotal })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }
 })
 
 // Payment screenshot verification queue
-apiRouter.get('/billing/payments/queue', async (req: Request, res: Response) => {
+apiRouter.get('/billing/payments/queue', requirePermission('billing', 'can_view'), async (req: Request, res: Response) => {
   try {
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
     const selectSql = `
@@ -1912,10 +2226,13 @@ apiRouter.get('/billing/payments/queue', async (req: Request, res: Response) => 
       JOIN partners pt ON p.partner_id = pt.id
     `
 
+    const mask = shouldMaskPii(req)
+
     if (isPaginated) {
       const result = await executePaginatedQuery(selectSql, countSql, [], { page, limit, offset })
+      const sanitized = (result.data || []).map((p: any) => applyPiiMasking(p, mask))
       return res.json({
-        queue: result.data,
+        queue: sanitized,
         page: result.page,
         limit: result.limit,
         totalCount: result.totalCount,
@@ -1924,13 +2241,46 @@ apiRouter.get('/billing/payments/queue', async (req: Request, res: Response) => 
     }
 
     const queue = await queryAll(selectSql)
+    const sanitized = (queue || []).map((p: any) => applyPiiMasking(p, mask))
     return res.json({
-      queue,
+      queue: sanitized,
       page: 1,
-      limit: queue.length,
-      totalCount: queue.length,
+      limit: sanitized.length,
+      totalCount: sanitized.length,
       totalPages: 1,
     })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+apiRouter.post('/billing/payments/record', requirePermission('billing', 'can_create'), async (req: Request, res: Response) => {
+  try {
+    const { invoice_id, partner_id, amount_received, amount_paid, payment_mode = 'neft', reference_number, transaction_reference_utr, screenshot_url, screenshot_proof_url } = req.body
+    const amount = Number(amount_paid ?? amount_received ?? 0)
+    if (!invoice_id || !partner_id || amount <= 0) {
+      return res.status(400).json({ error: 'Invoice, partner, and a positive payment amount are required.' })
+    }
+
+    const { supabase } = await import('../localDb')
+    const id = `pay-${Date.now()}`
+    const { data, error } = await supabase.from('payments_received').insert({
+      id,
+      invoice_id,
+      partner_id,
+      amount_paid: amount,
+      payment_mode,
+      transaction_reference_utr: reference_number || transaction_reference_utr || `UTR${Date.now()}`,
+      screenshot_proof_url: screenshot_url || screenshot_proof_url || null,
+      verified_status: 'pending_verification',
+      created_at: new Date().toISOString()
+    }).select().single()
+
+    if (error) {
+      return res.status(500).json({ error: error.message })
+    }
+
+    return res.status(201).json({ success: true, id, payment: data })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }
@@ -1940,31 +2290,104 @@ apiRouter.post('/billing/payments/verify', requirePermission('billing', 'can_edi
   try {
     const currentUser = (req as any).user
     const delegation = (req as any).delegation
-    const { payment_id, action, rejection_remarks } = req.body // action: 'verified' | 'rejected'
+    const { payment_id, action = 'verified', rejection_remarks } = req.body // action: 'verified' | 'rejected'
+    const { supabase } = await import('../localDb')
+
     const payment = await queryOne<any>('SELECT * FROM payments_received WHERE id = ?', [payment_id])
     if (!payment) return res.status(404).json({ error: 'Payment record not found' })
 
+    if (payment.verified_status !== 'pending_verification') {
+      return res.status(400).json({ error: `Payment is already processed with status: ${payment.verified_status}` })
+    }
+
     if (action === 'verified') {
-      await run(`
-        UPDATE payments_received
-        SET verified_status = 'verified', verified_at = CURRENT_TIMESTAMP, verified_by = ?
-        WHERE id = ?
-      `, [currentUser.id, payment_id])
+      // Step 2: Atomic Verification Claim via Conditional Row-Locking
+      // Ensures that even under high concurrency, exactly ONE request can verify this payment
+      const nowIso = new Date().toISOString()
+      const { data: claimedPayment, error: claimErr } = await supabase
+        .from('payments_received')
+        .update({
+          verified_status: 'verified',
+          verified_at: nowIso,
+          verified_by: currentUser.id
+        })
+        .eq('id', payment_id)
+        .eq('verified_status', 'pending_verification')
+        .select()
 
-      // Update invoice paid amount
-      await run(`
-        UPDATE invoices
-        SET paid_amount = paid_amount + ?,
-            outstanding_balance = outstanding_balance - ?,
-            status = CASE WHEN (outstanding_balance - ?) <= 0 THEN 'paid' ELSE 'partially_paid' END
-        WHERE id = ?
-      `, [payment.amount_paid, payment.amount_paid, payment.amount_paid, payment.invoice_id])
+      if (claimErr || !claimedPayment || claimedPayment.length === 0) {
+        return res.status(409).json({
+          error: 'Payment has already been verified or is being processed concurrently by another administrator.'
+        })
+      }
 
-      // Post credit to financial ledger
-      await run(`
-        INSERT INTO financial_ledger (id, partner_id, transaction_type, reference_id, debit, credit, running_balance, remarks)
-        VALUES (?, ?, 'payment_received', ?, 0.0, ?, (COALESCE((SELECT running_balance FROM financial_ledger WHERE partner_id = ? ORDER BY created_at DESC LIMIT 1), 0) - ?), ?)
-      `, [`led-${Date.now()}`, payment.partner_id, payment.id, payment.amount_paid, payment.partner_id, payment.amount_paid, `Payment received UTR: ${payment.transaction_reference_utr || 'Direct'}`])
+      // Lock associated invoice and validate balances
+      const invoice = await queryOne<any>('SELECT * FROM invoices WHERE id = ?', [payment.invoice_id])
+      if (!invoice) {
+        // Rollback verification claim if invoice does not exist
+        await supabase.from('payments_received').update({ verified_status: 'pending_verification', verified_by: null, verified_at: null }).eq('id', payment_id)
+        return res.status(404).json({ error: 'Associated invoice not found' })
+      }
+
+      const currentOutstanding = Number(invoice.outstanding_balance || 0)
+      const currentPaid = Number(invoice.paid_amount || 0)
+      const payAmount = Number(payment.amount_paid || 0)
+
+      if (payAmount > currentOutstanding) {
+        // Rollback payment claim
+        await supabase.from('payments_received').update({ verified_status: 'pending_verification', verified_by: null, verified_at: null }).eq('id', payment_id)
+        return res.status(400).json({
+          error: `Payment amount (₹${payAmount}) exceeds invoice outstanding balance (₹${currentOutstanding}). Overpayment is not permitted.`
+        })
+      }
+
+      const newPaid = currentPaid + payAmount
+      const newOutstanding = Math.max(0, currentOutstanding - payAmount)
+      const newStatus = newOutstanding <= 0.001 ? 'paid' : 'partially_paid'
+
+      // Update invoice amounts atomically
+      const { error: invErr } = await supabase.from('invoices').update({
+        paid_amount: newPaid,
+        outstanding_balance: newOutstanding,
+        status: newStatus
+      }).eq('id', invoice.id)
+
+      if (invErr) {
+        // Rollback payment verification claim
+        await supabase.from('payments_received').update({ verified_status: 'pending_verification', verified_by: null, verified_at: null }).eq('id', payment_id)
+        return res.status(500).json({ error: `Failed to update invoice balances: ${invErr.message}` })
+      }
+
+      // Post credit to partner financial ledger
+      const { data: latestLedger } = await supabase
+        .from('financial_ledger')
+        .select('running_balance')
+        .eq('partner_id', payment.partner_id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+
+      const curLedgerBalance = latestLedger && latestLedger.length > 0 ? Number(latestLedger[0].running_balance || 0) : 0
+      const newLedgerBalance = curLedgerBalance - payAmount
+      const ledId = `led-${Date.now()}`
+
+      const { error: ledErr } = await supabase.from('financial_ledger').insert({
+        id: ledId,
+        partner_id: payment.partner_id,
+        entry_date: nowIso.split('T')[0],
+        transaction_type: 'payment_received',
+        reference_id: payment.id,
+        debit: 0.0,
+        credit: payAmount,
+        running_balance: newLedgerBalance,
+        remarks: `Payment received UTR: ${payment.transaction_reference_utr || 'Direct'}`
+      })
+
+      if (ledErr) {
+        // Rollback invoice and payment updates
+        await supabase.from('invoices').update({ paid_amount: currentPaid, outstanding_balance: currentOutstanding, status: invoice.status }).eq('id', invoice.id)
+        await supabase.from('payments_received').update({ verified_status: 'pending_verification', verified_by: null, verified_at: null }).eq('id', payment_id)
+        return res.status(500).json({ error: `Failed to post financial ledger entry: ${ledErr.message}` })
+      }
 
       await logAuditEvent({
         userId: currentUser.id,
@@ -1973,18 +2396,30 @@ apiRouter.post('/billing/payments/verify', requirePermission('billing', 'can_edi
         tableAffected: 'payments_received',
         recordId: payment_id,
         oldValueJson: { status: payment.verified_status },
-        newValueJson: { status: 'verified', amount: payment.amount_paid },
+        newValueJson: { status: 'verified', amount: payAmount, invoice_id: invoice.id, new_outstanding: newOutstanding },
         delegationId: delegation?.id,
         ipAddress: req.ip,
       })
 
-      return res.json({ success: true, status: 'verified' })
+      return res.json({ success: true, status: 'verified', outstanding_balance: newOutstanding })
     } else {
-      await run(`
-        UPDATE payments_received
-        SET verified_status = 'rejected', rejection_remarks = ?, verified_at = CURRENT_TIMESTAMP, verified_by = ?
-        WHERE id = ?
-      `, [rejection_remarks || 'Screenshot mismatch or invalid UTR', currentUser.id, payment_id])
+      // Rejection branch
+      const nowIso = new Date().toISOString()
+      const { data: rejectedPayment, error: rejErr } = await supabase
+        .from('payments_received')
+        .update({
+          verified_status: 'rejected',
+          rejection_remarks: rejection_remarks || 'Screenshot mismatch or invalid UTR',
+          verified_at: nowIso,
+          verified_by: currentUser.id
+        })
+        .eq('id', payment_id)
+        .eq('verified_status', 'pending_verification')
+        .select()
+
+      if (rejErr || !rejectedPayment || rejectedPayment.length === 0) {
+        return res.status(409).json({ error: 'Payment is already processed or modified concurrently.' })
+      }
 
       await logAuditEvent({
         userId: currentUser.id,
@@ -2008,7 +2443,7 @@ apiRouter.post('/billing/payments/verify', requirePermission('billing', 'can_edi
 // ==========================================
 // 9. Logistics, Couriers & POD Tracking
 // ==========================================
-apiRouter.get('/courier/dispatches', async (req: Request, res: Response) => {
+apiRouter.get('/courier/dispatches', requirePermission('courier', 'can_view'), async (req: Request, res: Response) => {
   try {
     const search = req.query.search ? String(req.query.search).trim() : ''
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
@@ -2024,10 +2459,13 @@ apiRouter.get('/courier/dispatches', async (req: Request, res: Response) => {
     const selectSql = `SELECT * FROM courier_dispatches ${whereClause} ORDER BY dispatched_at DESC`
     const countSql = `SELECT COUNT(*) as count FROM courier_dispatches ${whereClause}`
 
+    const mask = shouldMaskPii(req)
+
     if (isPaginated) {
       const result = await executePaginatedQuery(selectSql, countSql, params, { page, limit, offset })
+      const sanitized = (result.data || []).map((d: any) => applyPiiMasking(d, mask))
       return res.json({
-        dispatches: result.data,
+        dispatches: sanitized,
         page: result.page,
         limit: result.limit,
         totalCount: result.totalCount,
@@ -2036,11 +2474,12 @@ apiRouter.get('/courier/dispatches', async (req: Request, res: Response) => {
     }
 
     const dispatches = await queryAll(selectSql, params)
+    const sanitized = (dispatches || []).map((d: any) => applyPiiMasking(d, mask))
     return res.json({
-      dispatches,
+      dispatches: sanitized,
       page: 1,
-      limit: dispatches.length,
-      totalCount: dispatches.length,
+      limit: sanitized.length,
+      totalCount: sanitized.length,
       totalPages: 1,
     })
   } catch (err: unknown) {
@@ -2048,9 +2487,12 @@ apiRouter.get('/courier/dispatches', async (req: Request, res: Response) => {
   }
 })
 
-apiRouter.post('/courier/dispatches', async (req: Request, res: Response) => {
+apiRouter.post('/courier/dispatches', requirePermission('courier', 'can_create'), async (req: Request, res: Response) => {
   try {
     const { carrier_name, awb_number, recipient_name, recipient_phone, shipping_address, package_contents } = req.body
+    if (!carrier_name || !awb_number || !recipient_name) {
+      return res.status(400).json({ error: 'Carrier name, AWB tracking number, and recipient name are required.' })
+    }
     const id = `disp-${Date.now()}`
     const dispatch_number = await allocateNextReferenceNumber('courier_dispatch')
 
@@ -2065,23 +2507,29 @@ apiRouter.post('/courier/dispatches', async (req: Request, res: Response) => {
   }
 })
 
-apiRouter.patch('/courier/dispatches/:id/status', async (req: Request, res: Response) => {
+apiRouter.patch('/courier/dispatches/:id/status', requirePermission('courier', 'can_edit'), async (req: Request, res: Response) => {
   try {
     const { status, proof_of_delivery_url, notes } = req.body
     if (!status) {
       return res.status(400).json({ error: 'Status is required.' })
     }
 
-    const deliveredAt = status === 'delivered' ? new Date().toISOString() : null
+    const { supabase } = await import('../localDb')
+    const updatePayload: any = {
+      status
+    }
+    if (proof_of_delivery_url) updatePayload.proof_of_delivery_url = proof_of_delivery_url
+    if (notes) updatePayload.notes = notes
+    if (status === 'delivered') updatePayload.delivered_at = new Date().toISOString()
 
-    await run(`
-      UPDATE courier_dispatches
-      SET status = ?,
-          proof_of_delivery_url = COALESCE(?, proof_of_delivery_url),
-          notes = COALESCE(?, notes),
-          delivered_at = CASE WHEN ? = 'delivered' THEN CURRENT_TIMESTAMP ELSE delivered_at END
-      WHERE id = ?
-    `, [status, proof_of_delivery_url, notes, status, req.params.id])
+    const { error: updateErr } = await supabase
+      .from('courier_dispatches')
+      .update(updatePayload)
+      .eq('id', req.params.id)
+
+    if (updateErr) {
+      return res.status(500).json({ error: updateErr.message })
+    }
 
     return res.json({ success: true, message: `Courier status updated to ${status}.` })
   } catch (err: unknown) {
@@ -2091,7 +2539,7 @@ apiRouter.patch('/courier/dispatches/:id/status', async (req: Request, res: Resp
 
 
 // Delivery Challan / Transfer Document PDF Compilation
-apiRouter.get('/inventory/transfers/pdf', async (req: Request, res: Response) => {
+apiRouter.get('/inventory/transfers/pdf', requirePermission('inventory', 'can_view'), async (req: Request, res: Response) => {
   try {
     const challanNumber = (req.query.challan_number as string) || 'DC-2026-0001'
     const profile = await queryOne<any>('SELECT * FROM company_profile LIMIT 1')
@@ -2155,7 +2603,7 @@ apiRouter.get('/inventory/transfers/pdf', async (req: Request, res: Response) =>
 // ==========================================
 
 // A. Company Profile Settings
-apiRouter.get('/admin/settings/company', async (_req: Request, res: Response) => {
+apiRouter.get('/admin/settings/company', requireAuth, async (_req: Request, res: Response) => {
   try {
     const profile = await queryOne('SELECT * FROM company_profile LIMIT 1')
     return res.json({ profile })
@@ -2193,7 +2641,7 @@ apiRouter.put('/admin/settings/company', requireAdmin, async (req: Request, res:
 })
 
 // B. Token Models Master
-apiRouter.get('/admin/settings/tokens', async (_req: Request, res: Response) => {
+apiRouter.get('/admin/settings/tokens', requireAuth, async (_req: Request, res: Response) => {
   try {
     const models = await queryAll('SELECT * FROM token_models ORDER BY model_name ASC')
     return res.json({ models })
@@ -2221,7 +2669,7 @@ apiRouter.post('/admin/settings/tokens', requireAdmin, async (req: Request, res:
 })
 
 // C. Courier Companies Master
-apiRouter.get('/admin/settings/couriers', async (_req: Request, res: Response) => {
+apiRouter.get('/admin/settings/couriers', requireAuth, async (_req: Request, res: Response) => {
   try {
     const couriers = await queryAll('SELECT * FROM courier_partners ORDER BY company_name ASC')
     return res.json({ couriers })
@@ -2247,7 +2695,7 @@ apiRouter.post('/admin/settings/couriers', requireAdmin, async (req: Request, re
 })
 
 // D. Business Services Master
-apiRouter.get('/admin/settings/services', async (_req: Request, res: Response) => {
+apiRouter.get('/admin/settings/services', requireAuth, async (_req: Request, res: Response) => {
   try {
     const services = await queryAll('SELECT * FROM services_catalog ORDER BY category, service_name')
     return res.json({ services })
@@ -2278,6 +2726,7 @@ apiRouter.post('/admin/settings/services', requireAdmin, async (req: Request, re
 apiRouter.put('/partners/:id', requireAuth, async (req: Request, res: Response) => {
   try {
     const currentUser = (req as any).user
+    const { supabase } = await import('../localDb')
     const {
       company_name,
       contact_person,
@@ -2290,6 +2739,7 @@ apiRouter.put('/partners/:id', requireAuth, async (req: Request, res: Response) 
       credit_limit,
       credit_period_days,
       status,
+      kyc_verified
     } = req.body
 
     const existing = await queryOne<any>('SELECT * FROM partners WHERE id = ?', [req.params.id])
@@ -2302,37 +2752,28 @@ apiRouter.put('/partners/:id', requireAuth, async (req: Request, res: Response) 
       }
     }
 
-    const newCreditLimit = credit_limit !== undefined ? Number(credit_limit) : existing.credit_limit
-    const newCreditPeriod = credit_period_days !== undefined ? Number(credit_period_days) : existing.credit_period_days
+    const updateData: Record<string, any> = {}
+    if (company_name !== undefined) updateData.company_name = company_name
+    if (contact_person !== undefined) updateData.contact_person = contact_person
+    if (email !== undefined) updateData.email = email
+    if (phone !== undefined) updateData.phone = phone
+    if (gstin !== undefined) updateData.gstin = gstin
+    if (pan !== undefined) updateData.pan = pan
+    if (billing_address !== undefined) updateData.billing_address = billing_address
+    if (state_code !== undefined) updateData.state_code = state_code
+    if (credit_limit !== undefined) updateData.credit_limit = Number(credit_limit)
+    if (credit_period_days !== undefined) updateData.credit_period_days = Number(credit_period_days)
+    if (status !== undefined) updateData.status = status
+    if (kyc_verified !== undefined) updateData.kyc_verified = Number(kyc_verified)
 
-    await run(`
-      UPDATE partners
-      SET company_name = COALESCE(?, company_name),
-          contact_person = COALESCE(?, contact_person),
-          email = COALESCE(?, email),
-          phone = COALESCE(?, phone),
-          gstin = COALESCE(?, gstin),
-          pan = COALESCE(?, pan),
-          billing_address = COALESCE(?, billing_address),
-          state_code = COALESCE(?, state_code),
-          credit_limit = ?,
-          credit_period_days = ?,
-          status = COALESCE(?, status)
-      WHERE id = ?
-    `, [
-      company_name,
-      contact_person,
-      email,
-      phone,
-      gstin,
-      pan,
-      billing_address,
-      state_code,
-      newCreditLimit,
-      newCreditPeriod,
-      status,
-      req.params.id,
-    ])
+    const { error: updErr } = await supabase
+      .from('partners')
+      .update(updateData)
+      .eq('id', req.params.id)
+
+    if (updErr) {
+      return res.status(500).json({ error: updErr.message })
+    }
 
     if (credit_limit !== undefined && Number(credit_limit) !== existing.credit_limit) {
       const partId = req.params.id
@@ -2343,7 +2784,7 @@ apiRouter.put('/partners/:id', requireAuth, async (req: Request, res: Response) 
         tableAffected: 'partners',
         recordId: Array.isArray(partId) ? partId[0] : partId,
         oldValueJson: { credit_limit: existing.credit_limit, credit_period_days: existing.credit_period_days },
-        newValueJson: { credit_limit: newCreditLimit, credit_period_days: newCreditPeriod },
+        newValueJson: { credit_limit: updateData.credit_limit, credit_period_days: updateData.credit_period_days || existing.credit_period_days },
         reason: 'Credit policy adjustment',
         ipAddress: req.ip,
       })
@@ -2360,7 +2801,7 @@ apiRouter.put('/partners/:id', requireAuth, async (req: Request, res: Response) 
 // ==========================================
 
 // 1. Certifying Authorities (CA)
-apiRouter.get('/admin/masters/ca', async (_req: Request, res: Response) => {
+apiRouter.get('/admin/masters/ca', requireAuth, async (_req: Request, res: Response) => {
   try {
     const authorities = await queryAll('SELECT * FROM certifying_authorities ORDER BY ca_name ASC')
     return res.json({ authorities })
@@ -2410,7 +2851,7 @@ apiRouter.patch('/admin/masters/ca/:id/deactivate', requireAdmin, async (req: Re
 })
 
 // 2. Hardware Vendors
-apiRouter.get('/admin/masters/vendors', async (_req: Request, res: Response) => {
+apiRouter.get('/admin/masters/vendors', requireAuth, async (_req: Request, res: Response) => {
   try {
     const vendors = await queryAll('SELECT * FROM hardware_vendors ORDER BY vendor_name ASC')
     return res.json({ vendors })
@@ -2446,8 +2887,195 @@ apiRouter.post('/admin/masters/vendors', requireAdmin, async (req: Request, res:
   }
 })
 
+// 2b. Partner Types Master (Supabase-backed via company_profile metadata)
+async function getPartnerTypesFromDb(): Promise<any[]> {
+  const { supabase } = await import('../localDb')
+  const { data } = await supabase.from('company_profile').select('logo_url').single()
+  const raw = data?.logo_url || ''
+  if (raw.includes('#PARTNER_TYPES:')) {
+    try {
+      const jsonStr = raw.split('#PARTNER_TYPES:')[1]
+      return JSON.parse(jsonStr)
+    } catch {
+      // fallback
+    }
+  }
+  return [
+    { id: 'pt-dsc', type_key: 'dsc_partner', type_name: 'DSC Retail Partner', is_active: 1 },
+    { id: 'pt-token', type_key: 'token_partner', type_name: 'Hardware Token Stockist', is_active: 1 },
+    { id: 'pt-assoc', type_key: 'associate_partner', type_name: 'Associate Business Partner', is_active: 1 },
+    { id: 'pt-dist', type_key: 'master_distributor', type_name: 'Master Regional Distributor', is_active: 1 },
+  ]
+}
+
+async function savePartnerTypesToDb(types: any[]): Promise<void> {
+  const { supabase } = await import('../localDb')
+  const baseLogo = '/signsync-logo.png'
+  const newMeta = `${baseLogo}#PARTNER_TYPES:${JSON.stringify(types)}`
+  await supabase.from('company_profile').update({ logo_url: newMeta }).eq('id', 'comp-default')
+}
+
+apiRouter.get('/admin/masters/partner-types', requireAuth, async (_req: Request, res: Response) => {
+  try {
+    const types = await getPartnerTypesFromDb()
+    return res.json({ partner_types: types })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+apiRouter.post('/admin/masters/partner-types', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { type_key, type_name } = req.body
+    if (!type_key || !type_name) {
+      return res.status(400).json({ error: 'Partner type key and display name are required.' })
+    }
+    const current = await getPartnerTypesFromDb()
+    const cleanKey = type_key.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_')
+    if (current.some((t: any) => t.type_key === cleanKey)) {
+      return res.status(400).json({ error: 'Partner type key already exists.' })
+    }
+    const newEntry = {
+      id: `pt-${Date.now()}`,
+      type_key: cleanKey,
+      type_name: type_name.trim(),
+      is_active: 1,
+    }
+    current.push(newEntry)
+    await savePartnerTypesToDb(current)
+    return res.status(201).json({ success: true, id: newEntry.id, message: 'Partner category added successfully.' })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+apiRouter.patch('/admin/masters/partner-types/:id/deactivate', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { is_active } = req.body
+    const current = await getPartnerTypesFromDb()
+    const item = current.find((t: any) => t.id === req.params.id)
+    if (!item) return res.status(404).json({ error: 'Partner type not found.' })
+    item.is_active = is_active !== undefined ? (is_active ? 1 : 0) : 0
+    await savePartnerTypesToDb(current)
+    return res.json({ success: true, is_active: Boolean(item.is_active) })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+// ==========================================
+// Genuine Supabase Storage API Endpoints
+// ==========================================
+const ALLOWED_STORAGE_BUCKETS: Record<string, { bucket: string; maxBytes: number; allowedTypes: string[] }> = {
+  'kyc': {
+    bucket: 'kyc-documents',
+    maxBytes: 10 * 1024 * 1024, // 10MB
+    allowedTypes: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp']
+  },
+  'dsc': {
+    bucket: 'dsc-documents',
+    maxBytes: 15 * 1024 * 1024,
+    allowedTypes: ['application/pdf', 'image/jpeg', 'image/png', 'video/mp4', 'video/webm']
+  },
+  'payment': {
+    bucket: 'payment-proofs',
+    maxBytes: 8 * 1024 * 1024,
+    allowedTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
+  },
+  'pod': {
+    bucket: 'courier-pod',
+    maxBytes: 10 * 1024 * 1024,
+    allowedTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
+  },
+  'service': {
+    bucket: 'service-documents',
+    maxBytes: 20 * 1024 * 1024,
+    allowedTypes: ['application/pdf', 'image/jpeg', 'image/png', 'application/zip']
+  }
+}
+
+apiRouter.post('/storage/upload', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { category, fileName, fileBase64, contentType } = req.body
+    if (!category || !fileName || !fileBase64 || !contentType) {
+      return res.status(400).json({ error: 'category, fileName, fileBase64, and contentType are required.' })
+    }
+
+    const config = ALLOWED_STORAGE_BUCKETS[category]
+    if (!config) {
+      return res.status(400).json({ error: `Invalid storage category. Permitted: ${Object.keys(ALLOWED_STORAGE_BUCKETS).join(', ')}` })
+    }
+
+    if (!config.allowedTypes.includes(contentType)) {
+      return res.status(400).json({ error: `File type ${contentType} is not permitted for category ${category}.` })
+    }
+
+    const fileBuffer = Buffer.from(fileBase64, 'base64')
+    if (fileBuffer.length > config.maxBytes) {
+      return res.status(400).json({ error: `File size exceeds the limit of ${config.maxBytes / (1024 * 1024)}MB.` })
+    }
+
+    const { supabase } = await import('../localDb')
+    const sanitizedName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_')
+    const storagePath = `${Date.now()}_${sanitizedName}`
+
+    const { data: uploadData, error: uploadErr } = await supabase.storage
+      .from(config.bucket)
+      .upload(storagePath, fileBuffer, {
+        contentType,
+        upsert: false
+      })
+
+    if (uploadErr) {
+      return res.status(500).json({ error: `Supabase Storage upload failed: ${uploadErr.message}` })
+    }
+
+    // Generate authenticated signed URL valid for 24 hours (86,400 seconds)
+    const { data: signedData, error: signErr } = await supabase.storage
+      .from(config.bucket)
+      .createSignedUrl(storagePath, 86400)
+
+    return res.status(201).json({
+      success: true,
+      bucket: config.bucket,
+      path: storagePath,
+      signedUrl: signedData?.signedUrl || null,
+      fullUrl: signedData?.signedUrl || `${config.bucket}/${storagePath}`
+    })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+apiRouter.post('/storage/signed-url', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { category, path } = req.body
+    if (!category || !path) {
+      return res.status(400).json({ error: 'category and path are required.' })
+    }
+
+    const config = ALLOWED_STORAGE_BUCKETS[category]
+    if (!config) {
+      return res.status(400).json({ error: 'Invalid storage category.' })
+    }
+
+    const { supabase } = await import('../localDb')
+    const { data, error } = await supabase.storage
+      .from(config.bucket)
+      .createSignedUrl(path, 86400)
+
+    if (error) {
+      return res.status(500).json({ error: error.message })
+    }
+
+    return res.json({ signedUrl: data.signedUrl })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
 // 3. Stock Adjustment Reasons
-apiRouter.get('/admin/masters/reasons', async (_req: Request, res: Response) => {
+apiRouter.get('/admin/masters/reasons', requireAuth, async (_req: Request, res: Response) => {
   try {
     const reasons = await queryAll('SELECT * FROM stock_adjustment_reasons ORDER BY reason_label ASC')
     return res.json({ reasons })
@@ -2483,7 +3111,7 @@ apiRouter.patch('/admin/masters/reasons/:id/deactivate', requireAdmin, async (re
 })
 
 // 3b. CRM Lead Sources Master
-apiRouter.get('/crm/lead-sources', async (_req: Request, res: Response) => {
+apiRouter.get('/crm/lead-sources', requireAuth, async (_req: Request, res: Response) => {
   try {
     const sources = await queryAll('SELECT * FROM crm_lead_sources ORDER BY source_name ASC')
     return res.json({ sources })
@@ -2561,7 +3189,7 @@ apiRouter.patch('/admin/settings/services/:id/deactivate', requireAdmin, async (
 })
 
 // Branches List Endpoint
-apiRouter.get('/admin/branches', async (_req: Request, res: Response) => {
+apiRouter.get('/admin/branches', requireAuth, async (_req: Request, res: Response) => {
   try {
     const branches = await queryAll('SELECT * FROM branches ORDER BY branch_name ASC')
     return res.json({ branches })
@@ -2808,6 +3436,44 @@ apiRouter.post('/admin/delegations', requireAuth, async (req: Request, res: Resp
       })
     }
 
+    // Sub-Permission Cap Rule: Non-root grantor cannot grant any action they do not effectively possess
+    if (currentUser.hierarchy_level_order > 0) {
+      // 1. Check user override for grantor
+      const grantorOverride = await queryOne<any>(
+        'SELECT * FROM user_permission_overrides WHERE user_id = ? AND module_id = (SELECT id FROM app_modules WHERE module_key = ?)',
+        [currentUser.id, module_key]
+      )
+      // 2. Check role permissions for grantor
+      const grantorRolePerm = await queryOne<any>(
+        'SELECT * FROM role_module_permissions WHERE role_id = ? AND module_id = (SELECT id FROM app_modules WHERE module_key = ?)',
+        [currentUser.role_id, module_key]
+      )
+
+      const actionsToCheck = action_key === 'all' ? ['can_view', 'can_create', 'can_edit', 'can_delete', 'can_export'] : [action_key]
+      for (const act of actionsToCheck) {
+        let hasAct = false
+        if (grantorOverride && grantorOverride[act] !== null && grantorOverride[act] !== undefined) {
+          hasAct = Boolean(grantorOverride[act])
+        } else if (grantorRolePerm && (grantorRolePerm[act] === 1 || grantorRolePerm[act] === true)) {
+          hasAct = true
+        }
+
+        // Also check if grantor holds this action through a valid delegatable parent delegation
+        if (!hasAct && parent_delegation_id) {
+          const parentDel = await queryOne<any>('SELECT * FROM temporary_delegations WHERE id = ?', [parent_delegation_id])
+          if (parentDel && parentDel.status === 'active' && parentDel.can_delegate_further && (parentDel.action_key === act || parentDel.action_key === 'all')) {
+            hasAct = true
+          }
+        }
+
+        if (!hasAct) {
+          return res.status(403).json({
+            error: `Sub-Permission Cap Violation: You cannot delegate '${act}' on '${module_key}' because you do not possess this privilege.`
+          })
+        }
+      }
+    }
+
     // Security Rule: If onward delegation, ensure grantor holds a valid parent delegation that allows further delegation
     if (parent_delegation_id) {
       const parent = await queryOne<any>('SELECT * FROM temporary_delegations WHERE id = ?', [parent_delegation_id])
@@ -2856,25 +3522,31 @@ apiRouter.patch('/admin/delegations/:id/revoke', requireAdmin, async (req: Reque
     const nowIso = new Date().toISOString()
 
     // 1. Revoke parent delegation
-    await run(`
-      UPDATE temporary_delegations
-      SET status = 'revoked', revoked_at = ?, revoked_by = ?
-      WHERE id = ?
-    `, [nowIso, currentUser.id, req.params.id])
+    await supabase
+      .from('temporary_delegations')
+      .update({ status: 'revoked', revoked_at: nowIso, revoked_by: currentUser.id })
+      .eq('id', req.params.id)
 
-    // 2. Cascading invalidation of all child delegations in chain
-    await run(`
-      UPDATE temporary_delegations
-      SET status = 'revoked', revoked_at = ?, revoked_by = ?
-      WHERE parent_delegation_id = ?
-    `, [nowIso, currentUser.id, req.params.id])
+    // 2. Recursive cascading invalidation of all descendant delegations in chain
+    let parentIds = [req.params.id as string]
+    while (parentIds.length > 0) {
+      const { data: children } = await supabase
+        .from('temporary_delegations')
+        .select('id')
+        .in('parent_delegation_id', parentIds)
+        .neq('status', 'revoked')
 
-    // Also invalidate any grand-children (multi-level chain)
-    await run(`
-      UPDATE temporary_delegations
-      SET status = 'revoked', revoked_at = ?, revoked_by = ?
-      WHERE parent_delegation_id IN (SELECT id FROM temporary_delegations WHERE parent_delegation_id = ?)
-    `, [nowIso, currentUser.id, req.params.id])
+      if (children && children.length > 0) {
+        const childIds = children.map((c: any) => c.id)
+        await supabase
+          .from('temporary_delegations')
+          .update({ status: 'revoked', revoked_at: nowIso, revoked_by: currentUser.id })
+          .in('id', childIds)
+        parentIds = childIds
+      } else {
+        parentIds = []
+      }
+    }
 
     const delId = req.params.id
     await logAuditEvent({

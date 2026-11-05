@@ -1,7 +1,7 @@
 'use client'
 
-import React, { useState } from 'react'
-import { Plus, X, CheckCircle2 } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { Plus, X, CheckCircle2, Upload, FileText, Check } from 'lucide-react'
 import { UI_TERMS } from '@/lib/terms'
 
 interface ModalProps {
@@ -11,6 +11,7 @@ interface ModalProps {
 }
 
 export function AddPartnerModal({ isOpen, onClose, onSuccess }: ModalProps) {
+  const [partnerTypes, setPartnerTypes] = useState<any[]>([])
   const [formData, setFormData] = useState({
     company_name: '',
     contact_person: '',
@@ -23,9 +24,64 @@ export function AddPartnerModal({ isOpen, onClose, onSuccess }: ModalProps) {
     type: 'dsc_partner',
     credit_limit: 100000,
     credit_period_days: 30,
+    kyc_document_url: '',
   })
   const [loading, setLoading] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [uploadSuccess, setUploadSuccess] = useState(false)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (isOpen) {
+      fetch('/api/admin/masters/partner-types')
+        .then((r) => r.json())
+        .then((d) => {
+          const list = (d.partner_types || []).filter((t: any) => t.is_active === 1 || t.is_active === true)
+          setPartnerTypes(list)
+          if (list.length > 0 && !list.some((t: any) => t.type_key === formData.type)) {
+            setFormData((prev) => ({ ...prev, type: list[0].type_key }))
+          }
+        })
+        .catch(() => {})
+    }
+  }, [isOpen])
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setUploading(true)
+    setError('')
+    try {
+      const reader = new FileReader()
+      reader.onload = async () => {
+        const base64Data = (reader.result as string).split(',')[1]
+        const res = await fetch('/api/storage/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            category: 'kyc',
+            fileName: file.name,
+            fileBase64: base64Data,
+            contentType: file.type || 'application/pdf',
+          }),
+        })
+
+        const data = await res.json()
+        if (!res.ok) {
+          throw new Error(data.error || 'Failed to upload document')
+        }
+
+        setFormData((prev) => ({ ...prev, kyc_document_url: data.fullUrl || data.signedUrl }))
+        setUploadSuccess(true)
+      }
+      reader.readAsDataURL(file)
+    } catch (err: any) {
+      setError(err.message || 'File upload failed')
+    } finally {
+      setUploading(false)
+    }
+  }
 
   if (!isOpen) return null
 
@@ -131,16 +187,49 @@ export function AddPartnerModal({ isOpen, onClose, onSuccess }: ModalProps) {
               />
             </div>
             <div>
-              <label className="block text-slate-300 font-medium mb-1">Partner Category</label>
+              <label className="block text-slate-300 font-medium mb-1">Partner Category *</label>
               <select
                 value={formData.type}
                 onChange={(e) => setFormData({ ...formData, type: e.target.value })}
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
               >
-                <option value="dsc_partner">DSC Partner</option>
-                <option value="token_partner">Token Stockist</option>
-                <option value="associate_partner">Associate Partner</option>
+                {partnerTypes.length > 0 ? (
+                  partnerTypes.map((pt) => (
+                    <option key={pt.id || pt.type_key} value={pt.type_key}>
+                      {pt.type_name}
+                    </option>
+                  ))
+                ) : (
+                  <>
+                    <option value="dsc_partner">DSC Retail Partner</option>
+                    <option value="token_partner">Hardware Token Stockist</option>
+                    <option value="associate_partner">Associate Business Partner</option>
+                    <option value="master_distributor">Master Regional Distributor</option>
+                  </>
+                )}
               </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-slate-300 font-medium mb-1">KYC Supporting Document (PDF / Image)</label>
+            <div className="flex items-center gap-3">
+              <label className="cursor-pointer px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs flex items-center gap-1.5 border border-slate-700 transition">
+                <Upload className="w-3.5 h-3.5 text-cyan-400" />
+                {uploading ? 'Uploading...' : uploadSuccess ? 'Replace KYC File' : 'Upload'}
+                <input
+                  type="file"
+                  accept="application/pdf,image/jpeg,image/png,image/webp"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                  disabled={uploading}
+                />
+              </label>
+              {uploadSuccess && (
+                <span className="text-emerald-400 flex items-center gap-1 text-[11px]">
+                  <Check className="w-3.5 h-3.5" /> File securely stored in bucket
+                </span>
+              )}
             </div>
           </div>
 

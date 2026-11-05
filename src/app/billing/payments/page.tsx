@@ -131,11 +131,23 @@ export default function PaymentsVerificationPage() {
                   </div>
 
                   <div className="aspect-[4/3] rounded-xl bg-slate-950 border border-slate-800 flex flex-col items-center justify-center p-6 text-center text-slate-500 relative overflow-hidden group">
-                    <div className="w-12 h-12 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center mb-2 text-cyan-400">
-                      <Landmark className="w-6 h-6" />
-                    </div>
-                    <div className="text-xs font-medium text-slate-300">Bank Transfer / UPI Screenshot</div>
-                    <div className="text-[11px] text-slate-400 font-mono mt-1">UTR: {p.transaction_reference_utr || 'Direct Portal Transfer'}</div>
+                    {p.screenshot_proof_url ? (
+                      <div className="w-full h-full flex flex-col items-center justify-center">
+                        <img
+                          src={p.screenshot_proof_url}
+                          alt="Payment Screenshot"
+                          className="max-h-full max-w-full object-contain rounded-lg"
+                        />
+                      </div>
+                    ) : (
+                      <>
+                        <div className="w-12 h-12 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center mb-2 text-cyan-400">
+                          <Landmark className="w-6 h-6" />
+                        </div>
+                        <div className="text-xs font-medium text-slate-300">Bank Transfer / UPI Screenshot</div>
+                        <div className="text-[11px] text-slate-400 font-mono mt-1">UTR: {p.transaction_reference_utr || 'Direct Portal Transfer'}</div>
+                      </>
+                    )}
                   </div>
                 </div>
 

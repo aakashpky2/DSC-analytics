@@ -31,6 +31,7 @@ import {
 // Master Category & Key definitions for DBIZ two-column navigation
 type MasterKey =
   | 'company'
+  | 'partner_types'
   | 'branches'
   | 'ca'
   | 'catalog'
@@ -80,6 +81,18 @@ const MASTER_DEFINITIONS: Record<MasterKey, MasterDefinition> = {
       { name: 'registered_address', label: 'Registered Office Address', type: 'textarea', required: true, editable: true, order: 7 },
       { name: 'state_code', label: 'State Code (GST 2-digit)', type: 'text', required: true, editable: true, order: 8 },
       { name: 'state_name', label: 'State Name', type: 'text', required: true, editable: true, order: 9 },
+    ],
+  },
+  partner_types: {
+    key: 'partner_types',
+    title: 'B2B Partner Categories & Channels',
+    subtitle: 'Configurable business partner tiers, distributors, stockists, and commission levels',
+    endpoint: '/api/admin/masters/partner-types',
+    listKey: 'partner_types',
+    canAdd: true,
+    fields: [
+      { name: 'type_key', label: 'Category Unique Key (e.g. dsc_partner)', type: 'text', required: true, editable: true, order: 1 },
+      { name: 'type_name', label: 'Category Display Title (e.g. DSC Retail Partner)', type: 'text', required: true, editable: true, order: 2 },
     ],
   },
   branches: {
@@ -263,7 +276,7 @@ const NAV_GROUPS: NavGroup[] = [
     id: 'organization',
     title: 'Business & Organization',
     icon: Building2,
-    masters: ['company', 'branches'],
+    masters: ['company', 'partner_types', 'branches'],
   },
   {
     id: 'certificates',
@@ -337,6 +350,7 @@ export default function AdminSettingsPage() {
       state_code: '27',
       state_name: 'Maharashtra',
     },
+    partner_types: [],
     branches: [],
     ca: [],
     catalog: [],
@@ -512,7 +526,8 @@ export default function AdminSettingsPage() {
     const targetStatus = !isCurrentlyActive
 
     let patchUrl = ''
-    if (masterKey === 'ca') patchUrl = `/api/admin/masters/ca/${item.id}/deactivate`
+    if (masterKey === 'partner_types') patchUrl = `/api/admin/masters/partner-types/${item.id}/deactivate`
+    else if (masterKey === 'ca') patchUrl = `/api/admin/masters/ca/${item.id}/deactivate`
     else if (masterKey === 'branches') patchUrl = `/api/admin/branches/${item.id}/deactivate`
     else if (masterKey === 'catalog') patchUrl = `/api/dsc/catalog/${item.id}/deactivate`
     else if (masterKey === 'token_models') patchUrl = `/api/admin/settings/tokens/${item.id}/deactivate`

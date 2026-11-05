@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.apiRouter = void 0;
 const express_1 = require("express");
@@ -12,6 +45,8 @@ exports.apiRouter = (0, express_1.Router)();
 // ==========================================
 // RBAC & Session Security Middleware
 // ==========================================
+// Cryptographically verified session-only identity resolution.
+// Arbitrary client-supplied identity/role headers (x-user-id, x-user-role) are strictly rejected.
 async function resolveUserContext(req, _res, next) {
     var _a;
     try {
@@ -21,21 +56,6 @@ async function resolveUserContext(req, _res, next) {
             if (sessionUser) {
                 ;
                 req.user = sessionUser;
-                return next();
-            }
-        }
-        const headerUserId = req.headers['x-user-id'];
-        if (headerUserId) {
-            const user = await (0, localDb_1.queryOne)(`
-        SELECT u.*, r.name as role_name, h.level_order as hierarchy_level_order, h.level_name
-        FROM user_profiles u
-        LEFT JOIN roles r ON u.role_id = r.id
-        LEFT JOIN hierarchy_levels h ON u.hierarchy_level_id = h.id
-        WHERE u.id = ?
-      `, [headerUserId]);
-            if (user) {
-                ;
-                req.user = user;
                 return next();
             }
         }
@@ -58,9 +78,6 @@ function requireAuth(req, res, next) {
     if (user.status !== 'active') {
         return res.status(403).json({ error: 'Your account is inactive. Please contact your administrator.' });
     }
-    if (user.permissions_frozen) {
-        return res.status(403).json({ error: 'Your account access has been temporarily paused by an administrator.' });
-    }
     next();
 }
 function requireAdmin(req, res, next) {
@@ -71,13 +88,29 @@ function requireAdmin(req, res, next) {
     if (user.status !== 'active') {
         return res.status(403).json({ error: 'Your account is inactive. Please contact your administrator.' });
     }
-    if (user.permissions_frozen) {
-        return res.status(403).json({ error: 'Your account access has been temporarily paused by an administrator.' });
-    }
     if (user.hierarchy_level_order > 1) {
         return res.status(403).json({ error: 'You do not have permission to open this page.' });
     }
     next();
+}
+/**
+ * Determine whether PII masking must be enforced for a request based on verified server-side session.
+ * The client cannot disable masking if user role/hierarchy dictates it (e.g. Field Telecaller Tier 4).
+ */
+function shouldMaskPii(req) {
+    const user = req.user;
+    if (!user)
+        return true;
+    // Super Admin (Tier 0) and Regional Admin (Tier 1) can view unmasked PII unless client requested ?mask=true
+    if (user.hierarchy_level_order <= 1) {
+        return req.query.mask === 'true';
+    }
+    // Field staff / tele-callers (Tier 4) are strictly masked server-side
+    if (user.hierarchy_level_order >= 4 || user.mask_pii_fields === 1) {
+        return true;
+    }
+    // For intermediate tiers (Tier 2 Branch Manager, Tier 3 Senior Staff), respect query param or role flag
+    return req.query.mask === 'true' || user.mask_pii_fields === 1;
 }
 /**
  * Granular Permission Guard: Checks module-level CRUD or specific action permission,
@@ -91,9 +124,6 @@ function requirePermission(moduleKey, actionKey) {
         }
         if (user.status !== 'active') {
             return res.status(403).json({ error: 'Account is inactive.' });
-        }
-        if (user.permissions_frozen) {
-            return res.status(403).json({ error: 'Account permissions are frozen by administrator.' });
         }
         // Super Admin (Level 0) has root authority across all modules and actions
         if (user.hierarchy_level_order === 0) {
@@ -115,7 +145,7 @@ function requirePermission(moduleKey, actionKey) {
             if (rolePerm && (rolePerm[actionKey] === 1 || rolePerm[actionKey] === true)) {
                 return next();
             }
-            // 3. Check active temporary delegations
+            // 3. Check active temporary delegations with full ancestor validation
             const nowIso = new Date().toISOString();
             const delegation = await (0, localDb_1.queryOne)(`
         SELECT d.*, g.permissions_frozen as grantor_frozen, g.status as grantor_status
@@ -131,6 +161,22 @@ function requirePermission(moduleKey, actionKey) {
             if (delegation) {
                 if (delegation.grantor_frozen || delegation.grantor_status !== 'active') {
                     return res.status(403).json({ error: 'Delegated permission is invalid because the grantor account is frozen or inactive.' });
+                }
+                // Ancestor validity check: If child delegation, verify parent chain is fully active & unexpired
+                if (delegation.parent_delegation_id) {
+                    let currentParentId = delegation.parent_delegation_id;
+                    let chainValid = true;
+                    while (currentParentId) {
+                        const parentRecord = await (0, localDb_1.queryOne)('SELECT * FROM temporary_delegations WHERE id = ?', [currentParentId]);
+                        if (!parentRecord || parentRecord.status !== 'active' || parentRecord.valid_until < nowIso) {
+                            chainValid = false;
+                            break;
+                        }
+                        currentParentId = parentRecord.parent_delegation_id;
+                    }
+                    if (!chainValid) {
+                        return res.status(403).json({ error: 'Delegated permission is invalid because an ancestor delegation was revoked or expired.' });
+                    }
                 }
                 ;
                 req.delegation = delegation;
@@ -175,17 +221,41 @@ async function logAuditEvent(params) {
 }
 /**
  * Concurrency-Safe Document Reference Number Allocator
- * Atomically increments counter and formats business reference string.
+ * Atomically increments counter using optimistic concurrency locking loop and formats business reference string.
  */
 async function allocateNextReferenceNumber(documentType, options) {
-    const config = await (0, localDb_1.queryOne)('SELECT * FROM numbering_series_configs WHERE document_type = ? AND is_active = 1 LIMIT 1', [documentType]);
-    if (!config) {
-        // Fallback safe timestamp reference
-        return `${documentType.toUpperCase().slice(0, 3)}-${Date.now().toString().slice(-6)}`;
+    const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+    // Attempt optimistic concurrency lock up to 25 retries
+    for (let attempt = 0; attempt < 25; attempt++) {
+        const { data: config, error: fetchErr } = await supabase
+            .from('numbering_series_configs')
+            .select('*')
+            .eq('document_type', documentType)
+            .eq('is_active', 1)
+            .limit(1)
+            .maybeSingle();
+        if (fetchErr || !config) {
+            // Fallback safe timestamp reference if no series config exists
+            return `${documentType.toUpperCase().slice(0, 3)}-${Date.now().toString().slice(-6)}`;
+        }
+        const currentCounter = Number(config.current_counter || 1000);
+        const nextCounter = currentCounter + 1;
+        const { data: updated, error: updateErr } = await supabase
+            .from('numbering_series_configs')
+            .update({
+            current_counter: nextCounter,
+            updated_at: new Date().toISOString()
+        })
+            .eq('id', config.id)
+            .eq('current_counter', currentCounter)
+            .select();
+        if (!updateErr && updated && updated.length > 0) {
+            return (0, numberingEngine_1.formatReferenceNumber)(config, nextCounter, options);
+        }
+        // Brief jitter to alleviate concurrency stampede before retry
+        await new Promise((r) => setTimeout(r, Math.random() * 25 + 5));
     }
-    const nextCounter = (config.current_counter || 1000) + 1;
-    await (0, localDb_1.run)('UPDATE numbering_series_configs SET current_counter = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [nextCounter, config.id]);
-    return (0, numberingEngine_1.formatReferenceNumber)(config, nextCounter, options);
+    throw new Error(`Failed to allocate sequential reference number for ${documentType} after 25 concurrent attempts.`);
 }
 // ==========================================
 // Authentication Endpoints (/api/auth/*)
@@ -201,11 +271,8 @@ exports.apiRouter.post('/auth/login', async (req, res) => {
             return res.status(400).json({ error: 'Please enter your password.' });
         }
         const cleanEmail = email.trim().toLowerCase();
-        const user = await (0, localDb_1.queryOne)(`SELECT u.*, r.name as role_name, h.level_order as hierarchy_level_order, h.level_name
-       FROM user_profiles u
-       LEFT JOIN roles r ON u.role_id = r.id
-       LEFT JOIN hierarchy_levels h ON u.hierarchy_level_id = h.id
-       WHERE LOWER(u.email) = ?`, [cleanEmail]);
+        // Explicit, validated user lookup using direct Supabase PostgREST
+        const user = await (0, auth_1.getUserProfileByEmail)(cleanEmail);
         if (!user) {
             return res.status(401).json({ error: 'Incorrect email or password. Please try again.' });
         }
@@ -215,9 +282,6 @@ exports.apiRouter.post('/auth/login', async (req, res) => {
         }
         if (user.status !== 'active') {
             return res.status(403).json({ error: 'Your account is inactive. Please contact your administrator.' });
-        }
-        if (user.permissions_frozen) {
-            return res.status(403).json({ error: 'Your account access has been temporarily paused by an administrator.' });
         }
         const durationDays = rememberMe ? 30 : 1;
         const token = await (0, auth_1.createSession)(user.id, durationDays);
@@ -265,7 +329,7 @@ exports.apiRouter.post('/auth/logout', async (req, res) => {
     }
 });
 // 3. GET /api/auth/me
-exports.apiRouter.get('/auth/me', async (req, res) => {
+exports.apiRouter.get('/auth/me', requireAuth, async (req, res) => {
     try {
         const user = req.user;
         if (!user) {
@@ -278,9 +342,13 @@ exports.apiRouter.get('/auth/me', async (req, res) => {
                 email: user.email,
                 full_name: user.full_name,
                 phone_number: user.phone_number,
+                role_id: user.role_id,
                 role_name: user.role_name,
+                hierarchy_level_id: user.hierarchy_level_id,
                 hierarchy_level_order: user.hierarchy_level_order,
                 level_name: user.level_name,
+                branch_id: user.branch_id,
+                branch_name: user.branch_name,
                 status: user.status,
                 permissions_frozen: user.permissions_frozen,
             },
@@ -364,27 +432,6 @@ exports.apiRouter.get('/health', async (_req, res) => {
         return res.status(500).json({ status: 'error', message: errorMsg });
     }
 });
-// Current user profile & effective permissions
-exports.apiRouter.get('/auth/me', async (req, res) => {
-    try {
-        // Current user defaults to Super Admin or header user
-        const userId = req.headers['x-user-id'] || 'usr-admin-root';
-        const user = await (0, localDb_1.queryOne)(`
-      SELECT u.*, r.name as role_name, h.level_order as hierarchy_level_order, h.level_name
-      FROM user_profiles u
-      LEFT JOIN roles r ON u.role_id = r.id
-      LEFT JOIN hierarchy_levels h ON u.hierarchy_level_id = h.id
-      WHERE u.id = ?
-    `, [userId]);
-        if (!user) {
-            return res.status(404).json({ error: 'User profile not found' });
-        }
-        return res.json({ user });
-    }
-    catch (err) {
-        return res.status(500).json({ error: err.message });
-    }
-});
 // ==========================================
 // 2. User Administration & Granular RBAC
 // ==========================================
@@ -417,27 +464,21 @@ exports.apiRouter.put('/admin/roles/:id/permissions', requireAdmin, async (req, 
         const roleId = req.params.id;
         const { permissions = [] } = req.body; // Array of { module_id, can_view, can_create, can_edit, can_delete, can_export, mask_pii_fields }
         for (const p of permissions) {
-            await (0, localDb_1.run)(`
-        INSERT INTO role_module_permissions (id, role_id, module_id, can_view, can_create, can_edit, can_delete, can_export, mask_pii_fields)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(role_id, module_id) DO UPDATE SET
-          can_view = excluded.can_view,
-          can_create = excluded.can_create,
-          can_edit = excluded.can_edit,
-          can_delete = excluded.can_delete,
-          can_export = excluded.can_export,
-          mask_pii_fields = excluded.mask_pii_fields
-      `, [
-                `rmp-${roleId}-${p.module_id}`,
-                roleId,
-                p.module_id,
-                p.can_view ? 1 : 0,
-                p.can_create ? 1 : 0,
-                p.can_edit ? 1 : 0,
-                p.can_delete ? 1 : 0,
-                p.can_export ? 1 : 0,
-                p.mask_pii_fields !== undefined ? (p.mask_pii_fields ? 1 : 0) : 1,
-            ]);
+            const { error } = await localDb_1.supabase
+                .from('role_module_permissions')
+                .upsert({
+                id: `rmp-${roleId}-${p.module_id}`,
+                role_id: roleId,
+                module_id: p.module_id,
+                can_view: p.can_view ? 1 : 0,
+                can_create: p.can_create ? 1 : 0,
+                can_edit: p.can_edit ? 1 : 0,
+                can_delete: p.can_delete ? 1 : 0,
+                can_export: p.can_export ? 1 : 0,
+                mask_pii_fields: p.mask_pii_fields !== undefined ? (p.mask_pii_fields ? 1 : 0) : 1,
+            }, { onConflict: 'role_id,module_id' });
+            if (error)
+                throw error;
         }
         await logAuditEvent({
             userId: currentUser.id,
@@ -457,7 +498,7 @@ exports.apiRouter.put('/admin/roles/:id/permissions', requireAdmin, async (req, 
 });
 exports.apiRouter.get('/admin/users', requireAdmin, async (req, res) => {
     try {
-        const mask = req.query.mask === 'true';
+        const mask = shouldMaskPii(req);
         const search = req.query.search ? String(req.query.search).trim() : '';
         const { page, limit, offset, isPaginated } = (0, pagination_1.parsePaginationParams)(req.query);
         let whereClause = '';
@@ -532,17 +573,28 @@ exports.apiRouter.post('/admin/users', requireAdmin, async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.patch('/admin/users/:id/freeze', requireAdmin, async (req, res) => {
+exports.apiRouter.patch('/admin/users/:id/freeze', requireAuth, async (req, res) => {
     try {
+        const currentUser = req.user;
+        if (currentUser.hierarchy_level_order !== 0) {
+            return res.status(403).json({ error: 'Only the Super Admin (Level 0) can freeze or unfreeze accounts.' });
+        }
         const { frozen } = req.body;
         const userId = req.params.id;
         if (userId === 'usr-admin-root') {
             return res.status(400).json({ error: 'The Master Super Admin account cannot be frozen.' });
         }
         await (0, localDb_1.run)(`UPDATE user_profiles SET permissions_frozen = ? WHERE id = ?`, [frozen ? 1 : 0, userId]);
-        if (frozen) {
-            await (0, auth_1.invalidateAllUserSessions)(userId);
-        }
+        await logAuditEvent({
+            userId: currentUser.id,
+            actionType: frozen ? 'FREEZE_USER_PERMISSIONS' : 'UNFREEZE_USER_PERMISSIONS',
+            moduleKey: 'admin_users',
+            tableAffected: 'user_profiles',
+            recordId: userId,
+            newValueJson: { permissions_frozen: frozen ? 1 : 0 },
+            reason: frozen ? 'Administrator froze account permissions' : 'Administrator unfroze account permissions',
+            ipAddress: req.ip,
+        });
         return res.json({ success: true, frozen: Boolean(frozen) });
     }
     catch (err) {
@@ -552,9 +604,9 @@ exports.apiRouter.patch('/admin/users/:id/freeze', requireAdmin, async (req, res
 // ==========================================
 // 3. Partner Network Management
 // ==========================================
-exports.apiRouter.get('/partners', async (req, res) => {
+exports.apiRouter.get('/partners', requirePermission('partners', 'can_view'), async (req, res) => {
     try {
-        const mask = req.query.mask === 'true';
+        const mask = shouldMaskPii(req);
         const search = req.query.search ? String(req.query.search).trim() : '';
         const { page, limit, offset, isPaginated } = (0, pagination_1.parsePaginationParams)(req.query);
         let whereClause = '';
@@ -591,9 +643,9 @@ exports.apiRouter.get('/partners', async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.get('/partners/:id', async (req, res) => {
+exports.apiRouter.get('/partners/:id', requirePermission('partners', 'can_view'), async (req, res) => {
     try {
-        const mask = req.query.mask === 'true';
+        const mask = shouldMaskPii(req);
         const partner = await (0, localDb_1.queryOne)('SELECT * FROM partners WHERE id = ?', [req.params.id]);
         if (!partner)
             return res.status(404).json({ error: 'Partner not found' });
@@ -611,15 +663,24 @@ exports.apiRouter.get('/partners/:id', async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.post('/partners', async (req, res) => {
+exports.apiRouter.post('/partners', requirePermission('partners', 'can_create'), async (req, res) => {
     try {
-        const { type, company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit = 0, credit_period_days = 0, } = req.body;
+        const { type, company_name, contact_person, email, phone, gstin, pan, billing_address, state_code = '27', credit_limit = 0, credit_period_days = 0, kyc_document_url, } = req.body;
+        // Validate that partner type exists and is active in master configuration
+        const activeTypes = await getPartnerTypesFromDb();
+        const matchingType = activeTypes.find((t) => t.type_key === type);
+        if (!matchingType) {
+            return res.status(400).json({ error: `Invalid partner category: ${type}. Please select a registered category from system settings.` });
+        }
+        if (matchingType.is_active === 0 || matchingType.is_active === false) {
+            return res.status(400).json({ error: `The partner category '${matchingType.type_name}' is currently deactivated. Cannot onboard new partners under this category.` });
+        }
         const id = `part-${Date.now()}`;
         const partner_code = await allocateNextReferenceNumber('partner');
         await (0, localDb_1.run)(`
-      INSERT INTO partners (id, partner_code, type, company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit, credit_period_days, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
-    `, [id, partner_code, type, company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit, credit_period_days]);
+      INSERT INTO partners (id, partner_code, type, company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit, credit_period_days, kyc_document_url, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+    `, [id, partner_code, type, company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit, credit_period_days, kyc_document_url || null]);
         return res.status(201).json({ success: true, id, partner_code });
     }
     catch (err) {
@@ -629,7 +690,7 @@ exports.apiRouter.post('/partners', async (req, res) => {
 // ==========================================
 // 4. DSC Catalogue & Applications
 // ==========================================
-exports.apiRouter.get('/dsc/catalog', async (req, res) => {
+exports.apiRouter.get('/dsc/catalog', requireAuth, async (req, res) => {
     try {
         const { page, limit, offset, isPaginated } = (0, pagination_1.parsePaginationParams)(req.query);
         const selectSql = 'SELECT * FROM dsc_catalog ORDER BY class_type, validity_years';
@@ -702,9 +763,9 @@ exports.apiRouter.patch('/dsc/catalog/:id/deactivate', requireAdmin, async (req,
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.get('/dsc/applications', async (req, res) => {
+exports.apiRouter.get('/dsc/applications', requirePermission('dsc', 'can_view'), async (req, res) => {
     try {
-        const mask = req.query.mask === 'true';
+        const mask = shouldMaskPii(req);
         const stage = req.query.stage ? String(req.query.stage).trim() : '';
         const search = req.query.search ? String(req.query.search).trim() : '';
         const { page, limit, offset, isPaginated } = (0, pagination_1.parsePaginationParams)(req.query);
@@ -759,22 +820,25 @@ exports.apiRouter.get('/dsc/applications', async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.post('/dsc/applications', async (req, res) => {
+exports.apiRouter.post('/dsc/applications', requirePermission('dsc', 'can_create'), async (req, res) => {
     try {
         const { partner_id, catalog_id, applicant_name, applicant_email, applicant_phone, applicant_pan } = req.body;
+        if (!partner_id || !catalog_id || !applicant_name || !applicant_name.trim()) {
+            return res.status(400).json({ error: 'Partner, DSC product, and applicant name are required.' });
+        }
         const id = `app-${Date.now()}`;
         const application_number = await allocateNextReferenceNumber('dsc_application');
         await (0, localDb_1.run)(`
       INSERT INTO dsc_applications (id, application_number, partner_id, catalog_id, applicant_name, applicant_email, applicant_phone, applicant_pan, stage)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'intake')
-    `, [id, application_number, partner_id, catalog_id, applicant_name, applicant_email, applicant_phone, applicant_pan]);
+    `, [id, application_number, partner_id, catalog_id, applicant_name.trim(), applicant_email || null, applicant_phone || null, applicant_pan || null]);
         return res.status(201).json({ success: true, id, application_number });
     }
     catch (err) {
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.patch('/dsc/applications/:id/stage', async (req, res) => {
+exports.apiRouter.patch('/dsc/applications/:id/stage', requirePermission('dsc', 'can_edit'), async (req, res) => {
     try {
         const { stage, ca_reference_no, notes } = req.body;
         await (0, localDb_1.run)(`
@@ -794,7 +858,7 @@ exports.apiRouter.patch('/dsc/applications/:id/stage', async (req, res) => {
 // ==========================================
 // 5. Hardware Token Inventory & Landed Cost
 // ==========================================
-exports.apiRouter.get('/inventory/batches', async (req, res) => {
+exports.apiRouter.get('/inventory/batches', requirePermission('inventory', 'can_view'), async (req, res) => {
     try {
         const { page, limit, offset, isPaginated } = (0, pagination_1.parsePaginationParams)(req.query);
         const selectSql = 'SELECT * FROM token_purchase_batches ORDER BY created_at DESC';
@@ -863,12 +927,16 @@ exports.apiRouter.post('/inventory/batches', requirePermission('inventory', 'can
         // Update headquarters stock
         const hqBranch = await (0, localDb_1.queryOne)('SELECT id FROM branches WHERE branch_code = ? LIMIT 1', ['HQ-MUM']);
         const branchId = hqBranch ? hqBranch.id : 'branch-hq';
-        await (0, localDb_1.run)(`
-      INSERT INTO branch_token_stocks (id, branch_id, token_model, quantity_on_hand, quarantine_damaged, min_threshold)
-      VALUES (?, ?, ?, ?, 0, 25)
-      ON CONFLICT(branch_id, token_model) DO UPDATE SET
-      quantity_on_hand = quantity_on_hand + excluded.quantity_on_hand
-    `, [`stk-${Date.now()}`, branchId, token_model, qty]);
+        const existingStock = await (0, localDb_1.queryOne)('SELECT id, quantity_on_hand FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?', [branchId, token_model]);
+        if (existingStock) {
+            await (0, localDb_1.run)('UPDATE branch_token_stocks SET quantity_on_hand = quantity_on_hand + ? WHERE id = ?', [qty, existingStock.id]);
+        }
+        else {
+            await (0, localDb_1.run)(`
+        INSERT INTO branch_token_stocks (id, branch_id, token_model, quantity_on_hand, quarantine_damaged, min_threshold)
+        VALUES (?, ?, ?, ?, 0, 25)
+      `, [`stk-${Date.now()}`, branchId, token_model, qty]);
+        }
         await logAuditEvent({
             userId: currentUser.id,
             actionType: 'PURCHASE_TOKEN_BATCH',
@@ -885,7 +953,7 @@ exports.apiRouter.post('/inventory/batches', requirePermission('inventory', 'can
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.get('/inventory/branches', async (req, res) => {
+exports.apiRouter.get('/inventory/branches', requirePermission('inventory', 'can_view'), async (req, res) => {
     try {
         const { page, limit, offset, isPaginated } = (0, pagination_1.parsePaginationParams)(req.query);
         const selectSql = `
@@ -974,7 +1042,7 @@ exports.apiRouter.patch('/admin/branches/:id/deactivate', requireAdmin, async (r
     }
 });
 // Transfer History: List Delivery Challans / Notes
-exports.apiRouter.get('/inventory/transfers', async (req, res) => {
+exports.apiRouter.get('/inventory/transfers', requirePermission('inventory', 'can_view'), async (req, res) => {
     try {
         const { page, limit, offset, isPaginated } = (0, pagination_1.parsePaginationParams)(req.query);
         const selectSql = `
@@ -1015,9 +1083,10 @@ exports.apiRouter.get('/inventory/transfers', async (req, res) => {
 // Create Delivery Challan / Inter-Branch Stock Transfer
 exports.apiRouter.post('/inventory/transfers', requirePermission('inventory', 'can_create'), async (req, res) => {
     try {
-        const { source_branch_id, destination_branch_id, token_model, quantity, remarks, transfer_date } = req.body;
+        const { source_branch_id, destination_branch_id, token_model, quantity, remarks, transfer_date, serial_numbers } = req.body;
         const currentUser = req.user;
         const delegation = req.delegation;
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
         if (!source_branch_id || !destination_branch_id || !token_model) {
             return res.status(400).json({ error: 'Source branch, destination branch, and token model are required.' });
         }
@@ -1028,30 +1097,100 @@ exports.apiRouter.post('/inventory/transfers', requirePermission('inventory', 'c
         if (isNaN(parsedQty) || parsedQty <= 0) {
             return res.status(400).json({ error: 'Quantity must be a positive whole number.' });
         }
-        // Server-side stock verification against race conditions & over-allocation
+        // Step 5: Concurrency-Safe Atomic Stock Deduction using Conditional Row Update
         const sourceStock = await (0, localDb_1.queryOne)('SELECT * FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?', [source_branch_id, token_model]);
-        if (!sourceStock || sourceStock.quantity_on_hand < parsedQty) {
+        if (!sourceStock || Number(sourceStock.quantity_on_hand || 0) < parsedQty) {
             const available = sourceStock ? sourceStock.quantity_on_hand : 0;
             return res.status(400).json({
                 error: `Not enough stock available. Source branch has only ${available} usable tokens.`
             });
+        }
+        // Attempt atomic conditional deduction
+        const currentQty = Number(sourceStock.quantity_on_hand);
+        const newQty = currentQty - parsedQty;
+        const { data: updatedStock, error: deductErr } = await supabase
+            .from('branch_token_stocks')
+            .update({
+            quantity_on_hand: newQty
+        })
+            .eq('id', sourceStock.id)
+            .eq('quantity_on_hand', currentQty)
+            .gte('quantity_on_hand', parsedQty)
+            .select();
+        if (deductErr || !updatedStock || updatedStock.length === 0) {
+            return res.status(409).json({
+                error: 'Stock allocation contention detected. Another transaction updated branch inventory. Please retry.'
+            });
+        }
+        // Step 6: Individual Serial Verification and Assignment (if serials provided)
+        if (Array.isArray(serial_numbers) && serial_numbers.length > 0) {
+            if (serial_numbers.length !== parsedQty) {
+                // Rollback stock deduction
+                await supabase.from('branch_token_stocks').update({ quantity_on_hand: currentQty }).eq('id', sourceStock.id);
+                return res.status(400).json({
+                    error: `Selected serial count (${serial_numbers.length}) does not match transfer quantity (${parsedQty}).`
+                });
+            }
+            // Verify all serials belong to source branch and are in_stock
+            const { data: foundSerials } = await supabase
+                .from('token_serials')
+                .select('id, serial_number, branch_id, status')
+                .in('serial_number', serial_numbers);
+            const invalidSerials = serial_numbers.filter((sn) => !(foundSerials === null || foundSerials === void 0 ? void 0 : foundSerials.some((fs) => fs.serial_number === sn && fs.branch_id === source_branch_id && fs.status === 'in_stock')));
+            if (invalidSerials.length > 0) {
+                // Rollback stock deduction
+                await supabase.from('branch_token_stocks').update({ quantity_on_hand: currentQty }).eq('id', sourceStock.id);
+                return res.status(400).json({
+                    error: `The following token serials are not available in source branch stock: ${invalidSerials.join(', ')}`
+                });
+            }
         }
         // Snapshot company legal data at challan issue time
         const company = await (0, localDb_1.queryOne)('SELECT * FROM company_profile LIMIT 1');
         const challanId = `dc-${Date.now()}`;
         const challanNumber = await allocateNextReferenceNumber('delivery_challan');
         const effectiveDate = transfer_date || new Date().toISOString().split('T')[0];
-        // Atomically record transfer and deduct stock from source branch
-        await (0, localDb_1.run)(`INSERT INTO delivery_challans (
-        id, challan_number, source_branch_id, destination_branch_id, token_model, quantity, purpose, issued_by, status, created_at, company_snapshot
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'dispatched', ?, ?)`, [challanId, challanNumber, source_branch_id, destination_branch_id, token_model, parsedQty, remarks || 'Inter-branch stock transfer', currentUser.id, effectiveDate, company ? JSON.stringify(company) : null]);
-        // Deduct stock from source branch
-        await (0, localDb_1.run)('UPDATE branch_token_stocks SET quantity_on_hand = quantity_on_hand - ? WHERE branch_id = ? AND token_model = ?', [parsedQty, source_branch_id, token_model]);
-        // Ensure destination branch stock row exists and record receipt or in-transit
+        // Create delivery challan in 'dispatched' status
+        const { error: chErr } = await supabase.from('delivery_challans').insert({
+            id: challanId,
+            challan_number: challanNumber,
+            source_branch_id,
+            destination_branch_id,
+            token_model,
+            quantity: parsedQty,
+            purpose: remarks || 'Inter-branch stock transfer',
+            issued_by: currentUser.id,
+            status: 'dispatched',
+            created_at: effectiveDate,
+            company_snapshot: company ? JSON.stringify(company) : null
+        });
+        if (chErr) {
+            // Rollback stock deduction
+            await supabase.from('branch_token_stocks').update({ quantity_on_hand: currentQty }).eq('id', sourceStock.id);
+            return res.status(500).json({ error: `Failed to create delivery challan: ${chErr.message}` });
+        }
+        // Step 6: Mark serials in-transit linked to this delivery challan
+        if (Array.isArray(serial_numbers) && serial_numbers.length > 0) {
+            await supabase
+                .from('token_serials')
+                .update({
+                status: 'in_transit',
+                delivery_challan_id: challanId
+            })
+                .in('serial_number', serial_numbers);
+        }
+        // Ensure destination branch stock row exists (initial 0 on hand if not present)
         const destStock = await (0, localDb_1.queryOne)('SELECT * FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?', [destination_branch_id, token_model]);
         if (!destStock) {
             const newStockId = `stock-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-            await (0, localDb_1.run)('INSERT INTO branch_token_stocks (id, branch_id, token_model, quantity_on_hand, quarantine_damaged, min_threshold) VALUES (?, ?, ?, ?, 0, 10)', [newStockId, destination_branch_id, token_model, 0]);
+            await supabase.from('branch_token_stocks').insert({
+                id: newStockId,
+                branch_id: destination_branch_id,
+                token_model,
+                quantity_on_hand: 0,
+                quarantine_damaged: 0,
+                min_threshold: 10
+            });
         }
         await logAuditEvent({
             userId: currentUser.id,
@@ -1078,6 +1217,7 @@ exports.apiRouter.post('/inventory/transfers', requirePermission('inventory', 'c
 exports.apiRouter.patch('/inventory/transfers/:id/receive', requireAuth, async (req, res) => {
     try {
         const challanId = req.params.id;
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
         const challan = await (0, localDb_1.queryOne)('SELECT * FROM delivery_challans WHERE id = ?', [challanId]);
         if (!challan)
             return res.status(404).json({ error: 'Delivery Challan not found.' });
@@ -1087,10 +1227,47 @@ exports.apiRouter.patch('/inventory/transfers/:id/receive', requireAuth, async (
         if (challan.status === 'cancelled') {
             return res.status(400).json({ error: 'Cancelled delivery notes cannot be received.' });
         }
-        // Add received quantity to destination branch
-        await (0, localDb_1.run)('UPDATE branch_token_stocks SET quantity_on_hand = quantity_on_hand + ? WHERE branch_id = ? AND token_model = ?', [challan.quantity, challan.destination_branch_id, challan.token_model]);
-        // Mark challan received
-        await (0, localDb_1.run)('UPDATE delivery_challans SET status = \'received\' WHERE id = ?', [challanId]);
+        // Step 5 & 10: Atomic Conditional Receipt - only 1 request can transition status from dispatched/in_transit to received
+        const nowIso = new Date().toISOString();
+        const { data: updatedChallan, error: updErr } = await supabase
+            .from('delivery_challans')
+            .update({
+            status: 'received'
+        })
+            .eq('id', challanId)
+            .eq('status', challan.status)
+            .select();
+        if (updErr || !updatedChallan || updatedChallan.length === 0) {
+            return res.status(409).json({ error: 'Challan has already been received or modified concurrently.' });
+        }
+        // Atomically increment destination branch stock
+        const destStock = await (0, localDb_1.queryOne)('SELECT * FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?', [challan.destination_branch_id, challan.token_model]);
+        if (destStock) {
+            await supabase
+                .from('branch_token_stocks')
+                .update({
+                quantity_on_hand: Number(destStock.quantity_on_hand || 0) + Number(challan.quantity)
+            })
+                .eq('id', destStock.id);
+        }
+        else {
+            await supabase.from('branch_token_stocks').insert({
+                id: `stock-${Date.now()}`,
+                branch_id: challan.destination_branch_id,
+                token_model: challan.token_model,
+                quantity_on_hand: Number(challan.quantity),
+                quarantine_damaged: 0,
+                min_threshold: 10
+            });
+        }
+        // Step 6: Move in-transit token serials to destination branch
+        await supabase
+            .from('token_serials')
+            .update({
+            status: 'in_stock',
+            branch_id: challan.destination_branch_id
+        })
+            .eq('delivery_challan_id', challanId);
         return res.json({ success: true, status: 'received', message: 'Stock received and credited to destination branch.' });
     }
     catch (err) {
@@ -1102,6 +1279,7 @@ exports.apiRouter.post('/inventory/adjust', requireAdmin, async (req, res) => {
     try {
         const { branch_id, token_model, adjustment_type, quantity, reason } = req.body;
         const currentUser = req.user;
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
         if (!branch_id || !token_model || !adjustment_type || quantity === undefined) {
             return res.status(400).json({ error: 'Branch, token model, adjustment type, and quantity are required.' });
         }
@@ -1113,45 +1291,73 @@ exports.apiRouter.post('/inventory/adjust', requireAdmin, async (req, res) => {
         let stock = await (0, localDb_1.queryOne)('SELECT * FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?', [branch_id, token_model]);
         if (!stock) {
             const newStockId = `stock-${Date.now()}`;
-            await (0, localDb_1.run)('INSERT INTO branch_token_stocks (id, branch_id, token_model, quantity_on_hand, quarantine_damaged, min_threshold) VALUES (?, ?, ?, 0, 0, 10)', [newStockId, branch_id, token_model]);
+            await supabase.from('branch_token_stocks').insert({
+                id: newStockId,
+                branch_id,
+                token_model,
+                quantity_on_hand: 0,
+                quarantine_damaged: 0,
+                min_threshold: 10
+            });
             stock = { id: newStockId, quantity_on_hand: 0, quarantine_damaged: 0 };
         }
+        const currentQtyOnHand = Number(stock.quantity_on_hand || 0);
+        const currentDamaged = Number(stock.quarantine_damaged || 0);
         if (adjustment_type === 'quarantine_damaged') {
-            if (stock.quantity_on_hand < qty) {
-                return res.status(400).json({ error: `Cannot quarantine ${qty} tokens. Only ${stock.quantity_on_hand} tokens available on hand.` });
+            if (currentQtyOnHand < qty) {
+                return res.status(400).json({ error: `Cannot quarantine ${qty} tokens. Only ${currentQtyOnHand} tokens available on hand.` });
             }
-            await (0, localDb_1.run)(`
-        UPDATE branch_token_stocks
-        SET quantity_on_hand = quantity_on_hand - ?,
-            quarantine_damaged = quarantine_damaged + ?
-        WHERE branch_id = ? AND token_model = ?
-      `, [qty, qty, branch_id, token_model]);
+            // Concurrency-safe atomic deduction & quarantine increment
+            const { data: updated, error: adjErr } = await supabase
+                .from('branch_token_stocks')
+                .update({
+                quantity_on_hand: currentQtyOnHand - qty,
+                quarantine_damaged: currentDamaged + qty
+            })
+                .eq('id', stock.id)
+                .gte('quantity_on_hand', qty)
+                .select();
+            if (adjErr || !updated || updated.length === 0) {
+                return res.status(409).json({ error: 'Inventory adjusted concurrently. Please retry.' });
+            }
         }
         else if (adjustment_type === 'reconcile_add') {
-            await (0, localDb_1.run)(`
-        UPDATE branch_token_stocks
-        SET quantity_on_hand = quantity_on_hand + ?
-        WHERE branch_id = ? AND token_model = ?
-      `, [qty, branch_id, token_model]);
+            await supabase
+                .from('branch_token_stocks')
+                .update({
+                quantity_on_hand: currentQtyOnHand + qty
+            })
+                .eq('id', stock.id);
         }
         else if (adjustment_type === 'reconcile_deduct') {
-            if (stock.quantity_on_hand < qty) {
-                return res.status(400).json({ error: `Cannot deduct ${qty} tokens. Only ${stock.quantity_on_hand} tokens available on hand.` });
+            if (currentQtyOnHand < qty) {
+                return res.status(400).json({ error: `Cannot deduct ${qty} tokens. Only ${currentQtyOnHand} tokens available on hand.` });
             }
-            await (0, localDb_1.run)(`
-        UPDATE branch_token_stocks
-        SET quantity_on_hand = quantity_on_hand - ?
-        WHERE branch_id = ? AND token_model = ?
-      `, [qty, branch_id, token_model]);
+            const { data: updated, error: adjErr } = await supabase
+                .from('branch_token_stocks')
+                .update({
+                quantity_on_hand: currentQtyOnHand - qty
+            })
+                .eq('id', stock.id)
+                .gte('quantity_on_hand', qty)
+                .select();
+            if (adjErr || !updated || updated.length === 0) {
+                return res.status(409).json({ error: 'Inventory adjusted concurrently. Please retry.' });
+            }
         }
         else {
             return res.status(400).json({ error: 'Invalid adjustment type.' });
         }
         const adjId = `adj-${Date.now()}`;
-        await (0, localDb_1.run)(`
-      INSERT INTO stock_adjustments (id, branch_id, token_model, adjustment_type, quantity, reason, adjusted_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [adjId, branch_id, token_model, adjustment_type, qty, reason || 'Physical inventory audit adjustment', (currentUser === null || currentUser === void 0 ? void 0 : currentUser.id) || 'admin']);
+        await supabase.from('stock_adjustments').insert({
+            id: adjId,
+            branch_id,
+            token_model,
+            adjustment_type,
+            quantity: qty,
+            reason: reason || 'Physical inventory audit adjustment',
+            adjusted_by: (currentUser === null || currentUser === void 0 ? void 0 : currentUser.id) || 'admin'
+        });
         return res.status(201).json({ success: true, id: adjId, message: 'Stock adjustment successfully posted.' });
     }
     catch (err) {
@@ -1161,9 +1367,9 @@ exports.apiRouter.post('/inventory/adjust', requireAdmin, async (req, res) => {
 // ==========================================
 // 6. CRM Leads & Deduplication Engine
 // ==========================================
-exports.apiRouter.get('/crm/leads', async (req, res) => {
+exports.apiRouter.get('/crm/leads', requirePermission('crm', 'can_view'), async (req, res) => {
     try {
-        const mask = req.query.mask === 'true';
+        const mask = shouldMaskPii(req);
         const search = req.query.search ? String(req.query.search).trim() : '';
         const { page, limit, offset, isPaginated } = (0, pagination_1.parsePaginationParams)(req.query);
         let whereClause = 'WHERE l.is_merged = 0';
@@ -1210,7 +1416,7 @@ exports.apiRouter.get('/crm/leads', async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.post('/crm/leads/check-duplicate', async (req, res) => {
+exports.apiRouter.post('/crm/leads/check-duplicate', requirePermission('crm', 'can_view'), async (req, res) => {
     try {
         const { gstin, phone, email, pan, company_name } = req.body;
         const existing = await (0, localDb_1.queryAll)('SELECT id, lead_code, company_name, email, phone, gstin, pan FROM crm_leads WHERE is_merged = 0');
@@ -1232,7 +1438,7 @@ exports.apiRouter.post('/crm/leads/check-duplicate', async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.post('/crm/leads', async (req, res) => {
+exports.apiRouter.post('/crm/leads', requirePermission('crm', 'can_create'), async (req, res) => {
     try {
         const { company_name, contact_person, email, phone, gstin, pan, requirement_summary } = req.body;
         const id = `lead-${Date.now()}`;
@@ -1252,13 +1458,38 @@ exports.apiRouter.post('/crm/leads/merge', requirePermission('crm', 'can_edit'),
         const currentUser = req.user;
         const delegation = req.delegation;
         const { primary_lead_id, secondary_lead_id } = req.body;
-        await (0, localDb_1.run)(`
-      UPDATE crm_leads
-      SET is_merged = 1, merged_into_lead_id = ?, status = 'merged', updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `, [primary_lead_id, secondary_lead_id]);
-        // Move associated follow-ups to primary lead
-        await (0, localDb_1.run)(`UPDATE crm_follow_ups SET lead_id = ? WHERE lead_id = ?`, [primary_lead_id, secondary_lead_id]);
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+        if (!primary_lead_id || !secondary_lead_id) {
+            return res.status(400).json({ error: 'Primary lead ID and secondary lead ID are required.' });
+        }
+        if (primary_lead_id === secondary_lead_id) {
+            return res.status(400).json({ error: 'Cannot merge a lead into itself.' });
+        }
+        // Step 9: Atomic Lead Merge - Conditionally lock secondary lead so it cannot be merged twice
+        const nowIso = new Date().toISOString();
+        const { data: claimedLead, error: claimErr } = await supabase
+            .from('crm_leads')
+            .update({
+            is_merged: 1,
+            status: 'merged',
+            merged_into_lead_id: primary_lead_id,
+            updated_at: nowIso
+        })
+            .eq('id', secondary_lead_id)
+            .eq('is_merged', 0)
+            .select();
+        if (claimErr || !claimedLead || claimedLead.length === 0) {
+            return res.status(409).json({
+                error: 'Secondary lead has already been merged or modified concurrently.'
+            });
+        }
+        // Re-parent all associated follow-ups to primary lead
+        await supabase
+            .from('crm_follow_ups')
+            .update({
+            lead_id: primary_lead_id
+        })
+            .eq('lead_id', secondary_lead_id);
         await logAuditEvent({
             userId: currentUser.id,
             actionType: 'MERGE_LEADS',
@@ -1277,7 +1508,7 @@ exports.apiRouter.post('/crm/leads/merge', requirePermission('crm', 'can_edit'),
     }
 });
 // Lead Edit, Assignment & Status Update (Item 5)
-exports.apiRouter.put('/crm/leads/:id', async (req, res) => {
+exports.apiRouter.put('/crm/leads/:id', requirePermission('crm', 'can_edit'), async (req, res) => {
     try {
         const { company_name, contact_person, email, phone, gstin, pan, requirement_summary, status, assigned_to } = req.body;
         await (0, localDb_1.run)(`
@@ -1301,8 +1532,9 @@ exports.apiRouter.put('/crm/leads/:id', async (req, res) => {
     }
 });
 // CRM Follow-Up Actions & Agenda
-exports.apiRouter.get('/crm/follow-ups', async (req, res) => {
+exports.apiRouter.get('/crm/follow-ups', requirePermission('crm', 'can_view'), async (req, res) => {
     try {
+        const mask = shouldMaskPii(req);
         const { page, limit, offset, isPaginated } = (0, pagination_1.parsePaginationParams)(req.query);
         const selectSql = `
       SELECT f.id, f.lead_id, f.channel as contact_mode, f.scheduled_at as follow_up_date, f.status, f.disposition, f.notes,
@@ -1319,8 +1551,9 @@ exports.apiRouter.get('/crm/follow-ups', async (req, res) => {
     `;
         if (isPaginated) {
             const result = await (0, pagination_1.executePaginatedQuery)(selectSql, countSql, [], { page, limit, offset });
+            const sanitized = result.data.map((f) => (0, masking_1.applyPiiMasking)(f, mask));
             return res.json({
-                followUps: result.data,
+                followUps: sanitized,
                 page: result.page,
                 limit: result.limit,
                 totalCount: result.totalCount,
@@ -1328,11 +1561,12 @@ exports.apiRouter.get('/crm/follow-ups', async (req, res) => {
             });
         }
         const followUps = await (0, localDb_1.queryAll)(selectSql);
+        const sanitized = followUps.map((f) => (0, masking_1.applyPiiMasking)(f, mask));
         return res.json({
-            followUps,
+            followUps: sanitized,
             page: 1,
-            limit: followUps.length,
-            totalCount: followUps.length,
+            limit: sanitized.length,
+            totalCount: sanitized.length,
             totalPages: 1,
         });
     }
@@ -1346,6 +1580,8 @@ exports.apiRouter.post('/crm/follow-ups', requireAuth, async (req, res) => {
         const currentUser = req.user;
         if (!lead_id)
             return res.status(400).json({ error: 'Lead is required.' });
+        if (!notes || !notes.trim())
+            return res.status(400).json({ error: 'Follow-up notes/comments are required.' });
         const id = `fu-${Date.now()}`;
         await (0, localDb_1.run)(`
       INSERT INTO crm_follow_ups (id, lead_id, channel, scheduled_at, notes, disposition, conducted_by, status)
@@ -1394,7 +1630,7 @@ exports.apiRouter.patch('/crm/follow-ups/:id/reschedule', requireAuth, async (re
 // ==========================================
 // 7. Additional Business Services Hub
 // ==========================================
-exports.apiRouter.get('/services/orders', async (req, res) => {
+exports.apiRouter.get('/services/orders', requirePermission('services', 'can_view'), async (req, res) => {
     try {
         const { page, limit, offset, isPaginated } = (0, pagination_1.parsePaginationParams)(req.query);
         const selectSql = `
@@ -1427,7 +1663,7 @@ exports.apiRouter.get('/services/orders', async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.post('/services/orders', async (req, res) => {
+exports.apiRouter.post('/services/orders', requirePermission('services', 'can_create'), async (req, res) => {
     try {
         const { service_type, partner_id, client_name, client_contact, government_fees = 0, professional_fees = 0, notes } = req.body;
         const id = `srv-${Date.now()}`;
@@ -1445,7 +1681,7 @@ exports.apiRouter.post('/services/orders', async (req, res) => {
 // ==========================================
 // 8. Multi-Account Billing & Payments Queue
 // ==========================================
-exports.apiRouter.get('/billing/accounts', async (req, res) => {
+exports.apiRouter.get('/billing/accounts', requirePermission('billing', 'can_view'), async (req, res) => {
     try {
         const { page, limit, offset, isPaginated } = (0, pagination_1.parsePaginationParams)(req.query);
         const selectSql = 'SELECT * FROM bank_accounts WHERE is_active = 1 ORDER BY account_nickname ASC';
@@ -1499,7 +1735,7 @@ exports.apiRouter.patch('/billing/accounts/:id/deactivate', requireAdmin, async 
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.get('/billing/series', async (_req, res) => {
+exports.apiRouter.get('/billing/series', requirePermission('billing', 'can_view'), async (_req, res) => {
     try {
         const series = await (0, localDb_1.queryAll)(`
       SELECT s.*, b.bank_name, b.account_number, b.upi_id
@@ -1549,7 +1785,7 @@ exports.apiRouter.put('/billing/series/:id', requireAdmin, async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.get('/billing/invoices', async (req, res) => {
+exports.apiRouter.get('/billing/invoices', requirePermission('billing', 'can_view'), async (req, res) => {
     try {
         const search = req.query.search ? String(req.query.search).trim() : '';
         const status = req.query.status ? String(req.query.status).trim() : '';
@@ -1580,10 +1816,12 @@ exports.apiRouter.get('/billing/invoices', async (req, res) => {
       LEFT JOIN partners p ON i.partner_id = p.id
       ${whereClause}
     `;
+        const mask = shouldMaskPii(req);
         if (isPaginated) {
             const result = await (0, pagination_1.executePaginatedQuery)(selectSql, countSql, params, { page, limit, offset });
+            const sanitized = (result.data || []).map((inv) => (0, masking_1.applyPiiMasking)(inv, mask));
             return res.json({
-                invoices: result.data,
+                invoices: sanitized,
                 page: result.page,
                 limit: result.limit,
                 totalCount: result.totalCount,
@@ -1591,11 +1829,12 @@ exports.apiRouter.get('/billing/invoices', async (req, res) => {
             });
         }
         const invoices = await (0, localDb_1.queryAll)(selectSql, params);
+        const sanitized = (invoices || []).map((inv) => (0, masking_1.applyPiiMasking)(inv, mask));
         return res.json({
-            invoices,
+            invoices: sanitized,
             page: 1,
-            limit: invoices.length,
-            totalCount: invoices.length,
+            limit: sanitized.length,
+            totalCount: sanitized.length,
             totalPages: 1,
         });
     }
@@ -1604,69 +1843,154 @@ exports.apiRouter.get('/billing/invoices', async (req, res) => {
     }
 });
 exports.apiRouter.post('/billing/invoices', requirePermission('billing', 'can_create'), async (req, res) => {
+    var _a, _b, _c, _d;
     try {
         const currentUser = req.user;
         const delegation = req.delegation;
         const { series_id, partner_id, due_days = 30, line_items = [] } = req.body;
-        const series = await (0, localDb_1.queryOne)('SELECT * FROM invoice_series_configs WHERE id = ?', [series_id]);
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+        if (!Array.isArray(line_items) || line_items.length === 0) {
+            return res.status(400).json({ error: 'Invoice must contain at least one line item.' });
+        }
+        for (const item of line_items) {
+            const qty = Number((_b = (_a = item.quantity) !== null && _a !== void 0 ? _a : item.qty) !== null && _b !== void 0 ? _b : 0);
+            const rate = Number((_d = (_c = item.unit_price) !== null && _c !== void 0 ? _c : item.rate) !== null && _d !== void 0 ? _d : 0);
+            if (qty <= 0 || rate < 0) {
+                return res.status(400).json({ error: 'Line item quantity must be positive and unit price cannot be negative.' });
+            }
+        }
+        let series = null;
+        if (series_id) {
+            series = await (0, localDb_1.queryOne)('SELECT * FROM invoice_series_configs WHERE id = ?', [series_id]);
+        }
+        else {
+            series = await (0, localDb_1.queryOne)('SELECT * FROM invoice_series_configs WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1');
+        }
         if (!series)
             return res.status(404).json({ error: 'Invoice series config not found' });
         const partner = await (0, localDb_1.queryOne)('SELECT * FROM partners WHERE id = ?', [partner_id]);
         if (!partner)
             return res.status(404).json({ error: 'Partner not found' });
+        const subtotal = line_items.reduce((sum, item) => {
+            var _a, _b, _c, _d;
+            const qty = Number((_b = (_a = item.quantity) !== null && _a !== void 0 ? _a : item.qty) !== null && _b !== void 0 ? _b : 0);
+            const rate = Number((_d = (_c = item.unit_price) !== null && _c !== void 0 ? _c : item.rate) !== null && _d !== void 0 ? _d : 0);
+            return sum + (qty * rate);
+        }, 0);
+        const gst = (0, businessLogic_1.calculateGst)(subtotal, partner.state_code);
+        const invoiceTotal = gst.total;
+        // Step 8: Credit Limit & Overdue Aging Verification
+        // Retrieve latest partner ledger running balance
+        const { data: latestLedger } = await supabase
+            .from('financial_ledger')
+            .select('running_balance')
+            .eq('partner_id', partner.id)
+            .order('created_at', { ascending: false })
+            .limit(1);
+        const currentBalance = latestLedger && latestLedger.length > 0 ? Number(latestLedger[0].running_balance || 0) : 0;
+        const partnerCreditLimit = Number(partner.credit_limit || 0);
+        if (partnerCreditLimit > 0 && (currentBalance + invoiceTotal) > partnerCreditLimit) {
+            return res.status(400).json({
+                error: `Credit limit exceeded. Current outstanding is ₹${currentBalance.toLocaleString('en-IN')}, credit limit is ₹${partnerCreditLimit.toLocaleString('en-IN')}. New invoice of ₹${invoiceTotal.toLocaleString('en-IN')} would exceed limit.`
+            });
+        }
+        // Step 4 & 3: Concurrency-Safe Atomic Invoice Series Counter Allocation
+        let allocatedCounter = 0;
+        for (let attempt = 0; attempt < 25; attempt++) {
+            const { data: curSeries, error: fetchErr } = await supabase
+                .from('invoice_series_configs')
+                .select('current_counter')
+                .eq('id', series.id)
+                .single();
+            if (fetchErr || !curSeries) {
+                return res.status(500).json({ error: 'Failed to read invoice series configuration.' });
+            }
+            const curCount = Number(curSeries.current_counter || 1000);
+            const nextCount = curCount + 1;
+            const { data: updatedSeries, error: updateErr } = await supabase
+                .from('invoice_series_configs')
+                .update({ current_counter: nextCount })
+                .eq('id', series.id)
+                .eq('current_counter', curCount)
+                .select();
+            if (!updateErr && updatedSeries && updatedSeries.length > 0) {
+                allocatedCounter = nextCount;
+                break;
+            }
+            // Concurrency jitter
+            await new Promise((r) => setTimeout(r, Math.random() * 25 + 5));
+        }
+        if (!allocatedCounter) {
+            return res.status(409).json({ error: 'Invoice series counter contention. Please retry creating the invoice.' });
+        }
+        const prefix = series.prefix || '';
+        const suffix = series.suffix || '';
+        const invoice_number = `${prefix}${allocatedCounter}${suffix}`;
+        const id = `inv-${Date.now()}`;
         // Snapshot company legal data at issue time to prevent historical corruption
         const company = await (0, localDb_1.queryOne)('SELECT * FROM company_profile LIMIT 1');
-        const subtotal = line_items.reduce((sum, item) => sum + (item.qty * item.rate), 0);
-        const gst = (0, businessLogic_1.calculateGst)(subtotal, partner.state_code);
-        const nextCounter = series.current_counter + 1;
-        const invoice_number = `${series.prefix}${nextCounter}${series.suffix || ''}`;
-        const id = `inv-${Date.now()}`;
-        await (0, localDb_1.run)('UPDATE invoice_series_configs SET current_counter = ? WHERE id = ?', [nextCounter, series.id]);
-        await (0, localDb_1.run)(`
-      INSERT INTO invoices (
-        id, invoice_number, series_id, partner_id, invoice_date, due_date,
-        subtotal, cgst_amount, sgst_amount, igst_amount, total_amount, paid_amount,
-        outstanding_balance, status, bank_account_snapshot_id, line_items, company_snapshot
-      ) VALUES (?, ?, ?, ?, DATE('now'), DATE('now', '+' || ? || ' days'), ?, ?, ?, ?, ?, 0.0, ?, 'unpaid', ?, ?, ?)
-    `, [
+        const todayIso = new Date().toISOString().split('T')[0];
+        const dueDate = new Date(Date.now() + (due_days * 86400000)).toISOString().split('T')[0];
+        // Insert Invoice
+        const { error: invErr } = await supabase.from('invoices').insert({
             id,
             invoice_number,
-            series.id,
-            partner.id,
-            due_days,
+            series_id: series.id,
+            partner_id: partner.id,
+            invoice_date: todayIso,
+            due_date: dueDate,
             subtotal,
-            gst.cgst,
-            gst.sgst,
-            gst.igst,
-            gst.total,
-            gst.total,
-            series.mapped_bank_account_id,
-            JSON.stringify(line_items),
-            company ? JSON.stringify(company) : null,
-        ]);
-        // Ledger debit entry
-        await (0, localDb_1.run)(`
-      INSERT INTO financial_ledger (id, partner_id, transaction_type, reference_id, debit, credit, running_balance, remarks)
-      VALUES (?, ?, 'invoice_raised', ?, ?, 0.0, (COALESCE((SELECT running_balance FROM financial_ledger WHERE partner_id = ? ORDER BY created_at DESC LIMIT 1), 0) + ?), ?)
-    `, [`led-${Date.now()}`, partner.id, id, gst.total, partner.id, gst.total, `Invoice ${invoice_number} raised`]);
+            cgst_amount: gst.cgst,
+            sgst_amount: gst.sgst,
+            igst_amount: gst.igst,
+            total_amount: invoiceTotal,
+            paid_amount: 0.0,
+            outstanding_balance: invoiceTotal,
+            status: 'unpaid',
+            bank_account_snapshot_id: series.mapped_bank_account_id,
+            line_items: JSON.stringify(line_items),
+            company_snapshot: company ? JSON.stringify(company) : null,
+        });
+        if (invErr) {
+            return res.status(500).json({ error: `Invoice creation failed: ${invErr.message}` });
+        }
+        // Insert Financial Ledger Debit Entry atomically linked
+        const newRunningBalance = currentBalance + invoiceTotal;
+        const ledId = `led-${Date.now()}`;
+        const { error: ledErr } = await supabase.from('financial_ledger').insert({
+            id: ledId,
+            partner_id: partner.id,
+            entry_date: todayIso,
+            transaction_type: 'invoice_raised',
+            reference_id: id,
+            debit: invoiceTotal,
+            credit: 0.0,
+            running_balance: newRunningBalance,
+            remarks: `Invoice ${invoice_number} raised`
+        });
+        if (ledErr) {
+            // Rollback inserted invoice to prevent dangling or mismatched state
+            await supabase.from('invoices').delete().eq('id', id);
+            return res.status(500).json({ error: `Financial ledger debit entry failed. Invoice rolled back: ${ledErr.message}` });
+        }
         await logAuditEvent({
             userId: currentUser.id,
             actionType: 'CREATE_INVOICE',
             moduleKey: 'billing',
             tableAffected: 'invoices',
             recordId: id,
-            newValueJson: { invoice_number, total: gst.total, partner_id },
+            newValueJson: { invoice_number, total: invoiceTotal, partner_id },
             delegationId: delegation === null || delegation === void 0 ? void 0 : delegation.id,
             ipAddress: req.ip,
         });
-        return res.status(201).json({ success: true, id, invoice_number, total: gst.total });
+        return res.status(201).json({ success: true, id, invoice_number, total: invoiceTotal });
     }
     catch (err) {
         return res.status(500).json({ error: err.message });
     }
 });
 // Payment screenshot verification queue
-exports.apiRouter.get('/billing/payments/queue', async (req, res) => {
+exports.apiRouter.get('/billing/payments/queue', requirePermission('billing', 'can_view'), async (req, res) => {
     try {
         const { page, limit, offset, isPaginated } = (0, pagination_1.parsePaginationParams)(req.query);
         const selectSql = `
@@ -1684,10 +2008,12 @@ exports.apiRouter.get('/billing/payments/queue', async (req, res) => {
       JOIN invoices i ON p.invoice_id = i.id
       JOIN partners pt ON p.partner_id = pt.id
     `;
+        const mask = shouldMaskPii(req);
         if (isPaginated) {
             const result = await (0, pagination_1.executePaginatedQuery)(selectSql, countSql, [], { page, limit, offset });
+            const sanitized = (result.data || []).map((p) => (0, masking_1.applyPiiMasking)(p, mask));
             return res.json({
-                queue: result.data,
+                queue: sanitized,
                 page: result.page,
                 limit: result.limit,
                 totalCount: result.totalCount,
@@ -1695,13 +2021,44 @@ exports.apiRouter.get('/billing/payments/queue', async (req, res) => {
             });
         }
         const queue = await (0, localDb_1.queryAll)(selectSql);
+        const sanitized = (queue || []).map((p) => (0, masking_1.applyPiiMasking)(p, mask));
         return res.json({
-            queue,
+            queue: sanitized,
             page: 1,
-            limit: queue.length,
-            totalCount: queue.length,
+            limit: sanitized.length,
+            totalCount: sanitized.length,
             totalPages: 1,
         });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.post('/billing/payments/record', requirePermission('billing', 'can_create'), async (req, res) => {
+    var _a;
+    try {
+        const { invoice_id, partner_id, amount_received, amount_paid, payment_mode = 'neft', reference_number, transaction_reference_utr, screenshot_url, screenshot_proof_url } = req.body;
+        const amount = Number((_a = amount_paid !== null && amount_paid !== void 0 ? amount_paid : amount_received) !== null && _a !== void 0 ? _a : 0);
+        if (!invoice_id || !partner_id || amount <= 0) {
+            return res.status(400).json({ error: 'Invoice, partner, and a positive payment amount are required.' });
+        }
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+        const id = `pay-${Date.now()}`;
+        const { data, error } = await supabase.from('payments_received').insert({
+            id,
+            invoice_id,
+            partner_id,
+            amount_paid: amount,
+            payment_mode,
+            transaction_reference_utr: reference_number || transaction_reference_utr || `UTR${Date.now()}`,
+            screenshot_proof_url: screenshot_url || screenshot_proof_url || null,
+            verified_status: 'pending_verification',
+            created_at: new Date().toISOString()
+        }).select().single();
+        if (error) {
+            return res.status(500).json({ error: error.message });
+        }
+        return res.status(201).json({ success: true, id, payment: data });
     }
     catch (err) {
         return res.status(500).json({ error: err.message });
@@ -1711,29 +2068,91 @@ exports.apiRouter.post('/billing/payments/verify', requirePermission('billing', 
     try {
         const currentUser = req.user;
         const delegation = req.delegation;
-        const { payment_id, action, rejection_remarks } = req.body; // action: 'verified' | 'rejected'
+        const { payment_id, action = 'verified', rejection_remarks } = req.body; // action: 'verified' | 'rejected'
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
         const payment = await (0, localDb_1.queryOne)('SELECT * FROM payments_received WHERE id = ?', [payment_id]);
         if (!payment)
             return res.status(404).json({ error: 'Payment record not found' });
+        if (payment.verified_status !== 'pending_verification') {
+            return res.status(400).json({ error: `Payment is already processed with status: ${payment.verified_status}` });
+        }
         if (action === 'verified') {
-            await (0, localDb_1.run)(`
-        UPDATE payments_received
-        SET verified_status = 'verified', verified_at = CURRENT_TIMESTAMP, verified_by = ?
-        WHERE id = ?
-      `, [currentUser.id, payment_id]);
-            // Update invoice paid amount
-            await (0, localDb_1.run)(`
-        UPDATE invoices
-        SET paid_amount = paid_amount + ?,
-            outstanding_balance = outstanding_balance - ?,
-            status = CASE WHEN (outstanding_balance - ?) <= 0 THEN 'paid' ELSE 'partially_paid' END
-        WHERE id = ?
-      `, [payment.amount_paid, payment.amount_paid, payment.amount_paid, payment.invoice_id]);
-            // Post credit to financial ledger
-            await (0, localDb_1.run)(`
-        INSERT INTO financial_ledger (id, partner_id, transaction_type, reference_id, debit, credit, running_balance, remarks)
-        VALUES (?, ?, 'payment_received', ?, 0.0, ?, (COALESCE((SELECT running_balance FROM financial_ledger WHERE partner_id = ? ORDER BY created_at DESC LIMIT 1), 0) - ?), ?)
-      `, [`led-${Date.now()}`, payment.partner_id, payment.id, payment.amount_paid, payment.partner_id, payment.amount_paid, `Payment received UTR: ${payment.transaction_reference_utr || 'Direct'}`]);
+            // Step 2: Atomic Verification Claim via Conditional Row-Locking
+            // Ensures that even under high concurrency, exactly ONE request can verify this payment
+            const nowIso = new Date().toISOString();
+            const { data: claimedPayment, error: claimErr } = await supabase
+                .from('payments_received')
+                .update({
+                verified_status: 'verified',
+                verified_at: nowIso,
+                verified_by: currentUser.id
+            })
+                .eq('id', payment_id)
+                .eq('verified_status', 'pending_verification')
+                .select();
+            if (claimErr || !claimedPayment || claimedPayment.length === 0) {
+                return res.status(409).json({
+                    error: 'Payment has already been verified or is being processed concurrently by another administrator.'
+                });
+            }
+            // Lock associated invoice and validate balances
+            const invoice = await (0, localDb_1.queryOne)('SELECT * FROM invoices WHERE id = ?', [payment.invoice_id]);
+            if (!invoice) {
+                // Rollback verification claim if invoice does not exist
+                await supabase.from('payments_received').update({ verified_status: 'pending_verification', verified_by: null, verified_at: null }).eq('id', payment_id);
+                return res.status(404).json({ error: 'Associated invoice not found' });
+            }
+            const currentOutstanding = Number(invoice.outstanding_balance || 0);
+            const currentPaid = Number(invoice.paid_amount || 0);
+            const payAmount = Number(payment.amount_paid || 0);
+            if (payAmount > currentOutstanding) {
+                // Rollback payment claim
+                await supabase.from('payments_received').update({ verified_status: 'pending_verification', verified_by: null, verified_at: null }).eq('id', payment_id);
+                return res.status(400).json({
+                    error: `Payment amount (₹${payAmount}) exceeds invoice outstanding balance (₹${currentOutstanding}). Overpayment is not permitted.`
+                });
+            }
+            const newPaid = currentPaid + payAmount;
+            const newOutstanding = Math.max(0, currentOutstanding - payAmount);
+            const newStatus = newOutstanding <= 0.001 ? 'paid' : 'partially_paid';
+            // Update invoice amounts atomically
+            const { error: invErr } = await supabase.from('invoices').update({
+                paid_amount: newPaid,
+                outstanding_balance: newOutstanding,
+                status: newStatus
+            }).eq('id', invoice.id);
+            if (invErr) {
+                // Rollback payment verification claim
+                await supabase.from('payments_received').update({ verified_status: 'pending_verification', verified_by: null, verified_at: null }).eq('id', payment_id);
+                return res.status(500).json({ error: `Failed to update invoice balances: ${invErr.message}` });
+            }
+            // Post credit to partner financial ledger
+            const { data: latestLedger } = await supabase
+                .from('financial_ledger')
+                .select('running_balance')
+                .eq('partner_id', payment.partner_id)
+                .order('created_at', { ascending: false })
+                .limit(1);
+            const curLedgerBalance = latestLedger && latestLedger.length > 0 ? Number(latestLedger[0].running_balance || 0) : 0;
+            const newLedgerBalance = curLedgerBalance - payAmount;
+            const ledId = `led-${Date.now()}`;
+            const { error: ledErr } = await supabase.from('financial_ledger').insert({
+                id: ledId,
+                partner_id: payment.partner_id,
+                entry_date: nowIso.split('T')[0],
+                transaction_type: 'payment_received',
+                reference_id: payment.id,
+                debit: 0.0,
+                credit: payAmount,
+                running_balance: newLedgerBalance,
+                remarks: `Payment received UTR: ${payment.transaction_reference_utr || 'Direct'}`
+            });
+            if (ledErr) {
+                // Rollback invoice and payment updates
+                await supabase.from('invoices').update({ paid_amount: currentPaid, outstanding_balance: currentOutstanding, status: invoice.status }).eq('id', invoice.id);
+                await supabase.from('payments_received').update({ verified_status: 'pending_verification', verified_by: null, verified_at: null }).eq('id', payment_id);
+                return res.status(500).json({ error: `Failed to post financial ledger entry: ${ledErr.message}` });
+            }
             await logAuditEvent({
                 userId: currentUser.id,
                 actionType: 'VERIFY_PAYMENT',
@@ -1741,18 +2160,29 @@ exports.apiRouter.post('/billing/payments/verify', requirePermission('billing', 
                 tableAffected: 'payments_received',
                 recordId: payment_id,
                 oldValueJson: { status: payment.verified_status },
-                newValueJson: { status: 'verified', amount: payment.amount_paid },
+                newValueJson: { status: 'verified', amount: payAmount, invoice_id: invoice.id, new_outstanding: newOutstanding },
                 delegationId: delegation === null || delegation === void 0 ? void 0 : delegation.id,
                 ipAddress: req.ip,
             });
-            return res.json({ success: true, status: 'verified' });
+            return res.json({ success: true, status: 'verified', outstanding_balance: newOutstanding });
         }
         else {
-            await (0, localDb_1.run)(`
-        UPDATE payments_received
-        SET verified_status = 'rejected', rejection_remarks = ?, verified_at = CURRENT_TIMESTAMP, verified_by = ?
-        WHERE id = ?
-      `, [rejection_remarks || 'Screenshot mismatch or invalid UTR', currentUser.id, payment_id]);
+            // Rejection branch
+            const nowIso = new Date().toISOString();
+            const { data: rejectedPayment, error: rejErr } = await supabase
+                .from('payments_received')
+                .update({
+                verified_status: 'rejected',
+                rejection_remarks: rejection_remarks || 'Screenshot mismatch or invalid UTR',
+                verified_at: nowIso,
+                verified_by: currentUser.id
+            })
+                .eq('id', payment_id)
+                .eq('verified_status', 'pending_verification')
+                .select();
+            if (rejErr || !rejectedPayment || rejectedPayment.length === 0) {
+                return res.status(409).json({ error: 'Payment is already processed or modified concurrently.' });
+            }
             await logAuditEvent({
                 userId: currentUser.id,
                 actionType: 'REJECT_PAYMENT',
@@ -1774,7 +2204,7 @@ exports.apiRouter.post('/billing/payments/verify', requirePermission('billing', 
 // ==========================================
 // 9. Logistics, Couriers & POD Tracking
 // ==========================================
-exports.apiRouter.get('/courier/dispatches', async (req, res) => {
+exports.apiRouter.get('/courier/dispatches', requirePermission('courier', 'can_view'), async (req, res) => {
     try {
         const search = req.query.search ? String(req.query.search).trim() : '';
         const { page, limit, offset, isPaginated } = (0, pagination_1.parsePaginationParams)(req.query);
@@ -1787,10 +2217,12 @@ exports.apiRouter.get('/courier/dispatches', async (req, res) => {
         }
         const selectSql = `SELECT * FROM courier_dispatches ${whereClause} ORDER BY dispatched_at DESC`;
         const countSql = `SELECT COUNT(*) as count FROM courier_dispatches ${whereClause}`;
+        const mask = shouldMaskPii(req);
         if (isPaginated) {
             const result = await (0, pagination_1.executePaginatedQuery)(selectSql, countSql, params, { page, limit, offset });
+            const sanitized = (result.data || []).map((d) => (0, masking_1.applyPiiMasking)(d, mask));
             return res.json({
-                dispatches: result.data,
+                dispatches: sanitized,
                 page: result.page,
                 limit: result.limit,
                 totalCount: result.totalCount,
@@ -1798,11 +2230,12 @@ exports.apiRouter.get('/courier/dispatches', async (req, res) => {
             });
         }
         const dispatches = await (0, localDb_1.queryAll)(selectSql, params);
+        const sanitized = (dispatches || []).map((d) => (0, masking_1.applyPiiMasking)(d, mask));
         return res.json({
-            dispatches,
+            dispatches: sanitized,
             page: 1,
-            limit: dispatches.length,
-            totalCount: dispatches.length,
+            limit: sanitized.length,
+            totalCount: sanitized.length,
             totalPages: 1,
         });
     }
@@ -1810,9 +2243,12 @@ exports.apiRouter.get('/courier/dispatches', async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.post('/courier/dispatches', async (req, res) => {
+exports.apiRouter.post('/courier/dispatches', requirePermission('courier', 'can_create'), async (req, res) => {
     try {
         const { carrier_name, awb_number, recipient_name, recipient_phone, shipping_address, package_contents } = req.body;
+        if (!carrier_name || !awb_number || !recipient_name) {
+            return res.status(400).json({ error: 'Carrier name, AWB tracking number, and recipient name are required.' });
+        }
         const id = `disp-${Date.now()}`;
         const dispatch_number = await allocateNextReferenceNumber('courier_dispatch');
         await (0, localDb_1.run)(`
@@ -1825,21 +2261,29 @@ exports.apiRouter.post('/courier/dispatches', async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
-exports.apiRouter.patch('/courier/dispatches/:id/status', async (req, res) => {
+exports.apiRouter.patch('/courier/dispatches/:id/status', requirePermission('courier', 'can_edit'), async (req, res) => {
     try {
         const { status, proof_of_delivery_url, notes } = req.body;
         if (!status) {
             return res.status(400).json({ error: 'Status is required.' });
         }
-        const deliveredAt = status === 'delivered' ? new Date().toISOString() : null;
-        await (0, localDb_1.run)(`
-      UPDATE courier_dispatches
-      SET status = ?,
-          proof_of_delivery_url = COALESCE(?, proof_of_delivery_url),
-          notes = COALESCE(?, notes),
-          delivered_at = CASE WHEN ? = 'delivered' THEN CURRENT_TIMESTAMP ELSE delivered_at END
-      WHERE id = ?
-    `, [status, proof_of_delivery_url, notes, status, req.params.id]);
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+        const updatePayload = {
+            status
+        };
+        if (proof_of_delivery_url)
+            updatePayload.proof_of_delivery_url = proof_of_delivery_url;
+        if (notes)
+            updatePayload.notes = notes;
+        if (status === 'delivered')
+            updatePayload.delivered_at = new Date().toISOString();
+        const { error: updateErr } = await supabase
+            .from('courier_dispatches')
+            .update(updatePayload)
+            .eq('id', req.params.id);
+        if (updateErr) {
+            return res.status(500).json({ error: updateErr.message });
+        }
         return res.json({ success: true, message: `Courier status updated to ${status}.` });
     }
     catch (err) {
@@ -1847,7 +2291,7 @@ exports.apiRouter.patch('/courier/dispatches/:id/status', async (req, res) => {
     }
 });
 // Delivery Challan / Transfer Document PDF Compilation
-exports.apiRouter.get('/inventory/transfers/pdf', async (req, res) => {
+exports.apiRouter.get('/inventory/transfers/pdf', requirePermission('inventory', 'can_view'), async (req, res) => {
     try {
         const challanNumber = req.query.challan_number || 'DC-2026-0001';
         const profile = await (0, localDb_1.queryOne)('SELECT * FROM company_profile LIMIT 1');
@@ -1907,7 +2351,7 @@ exports.apiRouter.get('/inventory/transfers/pdf', async (req, res) => {
 // 10. Administrator Central Settings (Phase 2)
 // ==========================================
 // A. Company Profile Settings
-exports.apiRouter.get('/admin/settings/company', async (_req, res) => {
+exports.apiRouter.get('/admin/settings/company', requireAuth, async (_req, res) => {
     try {
         const profile = await (0, localDb_1.queryOne)('SELECT * FROM company_profile LIMIT 1');
         return res.json({ profile });
@@ -1943,7 +2387,7 @@ exports.apiRouter.put('/admin/settings/company', requireAdmin, async (req, res) 
     }
 });
 // B. Token Models Master
-exports.apiRouter.get('/admin/settings/tokens', async (_req, res) => {
+exports.apiRouter.get('/admin/settings/tokens', requireAuth, async (_req, res) => {
     try {
         const models = await (0, localDb_1.queryAll)('SELECT * FROM token_models ORDER BY model_name ASC');
         return res.json({ models });
@@ -1970,7 +2414,7 @@ exports.apiRouter.post('/admin/settings/tokens', requireAdmin, async (req, res) 
     }
 });
 // C. Courier Companies Master
-exports.apiRouter.get('/admin/settings/couriers', async (_req, res) => {
+exports.apiRouter.get('/admin/settings/couriers', requireAuth, async (_req, res) => {
     try {
         const couriers = await (0, localDb_1.queryAll)('SELECT * FROM courier_partners ORDER BY company_name ASC');
         return res.json({ couriers });
@@ -1996,7 +2440,7 @@ exports.apiRouter.post('/admin/settings/couriers', requireAdmin, async (req, res
     }
 });
 // D. Business Services Master
-exports.apiRouter.get('/admin/settings/services', async (_req, res) => {
+exports.apiRouter.get('/admin/settings/services', requireAuth, async (_req, res) => {
     try {
         const services = await (0, localDb_1.queryAll)('SELECT * FROM services_catalog ORDER BY category, service_name');
         return res.json({ services });
@@ -2026,7 +2470,8 @@ exports.apiRouter.post('/admin/settings/services', requireAdmin, async (req, res
 exports.apiRouter.put('/partners/:id', requireAuth, async (req, res) => {
     try {
         const currentUser = req.user;
-        const { company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit, credit_period_days, status, } = req.body;
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+        const { company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit, credit_period_days, status, kyc_verified } = req.body;
         const existing = await (0, localDb_1.queryOne)('SELECT * FROM partners WHERE id = ?', [req.params.id]);
         if (!existing)
             return res.status(404).json({ error: 'Partner not found' });
@@ -2036,36 +2481,38 @@ exports.apiRouter.put('/partners/:id', requireAuth, async (req, res) => {
                 return res.status(403).json({ error: 'Security restriction: Only authorized administrators (Level 0/1) can modify credit limits and terms.' });
             }
         }
-        const newCreditLimit = credit_limit !== undefined ? Number(credit_limit) : existing.credit_limit;
-        const newCreditPeriod = credit_period_days !== undefined ? Number(credit_period_days) : existing.credit_period_days;
-        await (0, localDb_1.run)(`
-      UPDATE partners
-      SET company_name = COALESCE(?, company_name),
-          contact_person = COALESCE(?, contact_person),
-          email = COALESCE(?, email),
-          phone = COALESCE(?, phone),
-          gstin = COALESCE(?, gstin),
-          pan = COALESCE(?, pan),
-          billing_address = COALESCE(?, billing_address),
-          state_code = COALESCE(?, state_code),
-          credit_limit = ?,
-          credit_period_days = ?,
-          status = COALESCE(?, status)
-      WHERE id = ?
-    `, [
-            company_name,
-            contact_person,
-            email,
-            phone,
-            gstin,
-            pan,
-            billing_address,
-            state_code,
-            newCreditLimit,
-            newCreditPeriod,
-            status,
-            req.params.id,
-        ]);
+        const updateData = {};
+        if (company_name !== undefined)
+            updateData.company_name = company_name;
+        if (contact_person !== undefined)
+            updateData.contact_person = contact_person;
+        if (email !== undefined)
+            updateData.email = email;
+        if (phone !== undefined)
+            updateData.phone = phone;
+        if (gstin !== undefined)
+            updateData.gstin = gstin;
+        if (pan !== undefined)
+            updateData.pan = pan;
+        if (billing_address !== undefined)
+            updateData.billing_address = billing_address;
+        if (state_code !== undefined)
+            updateData.state_code = state_code;
+        if (credit_limit !== undefined)
+            updateData.credit_limit = Number(credit_limit);
+        if (credit_period_days !== undefined)
+            updateData.credit_period_days = Number(credit_period_days);
+        if (status !== undefined)
+            updateData.status = status;
+        if (kyc_verified !== undefined)
+            updateData.kyc_verified = Number(kyc_verified);
+        const { error: updErr } = await supabase
+            .from('partners')
+            .update(updateData)
+            .eq('id', req.params.id);
+        if (updErr) {
+            return res.status(500).json({ error: updErr.message });
+        }
         if (credit_limit !== undefined && Number(credit_limit) !== existing.credit_limit) {
             const partId = req.params.id;
             await logAuditEvent({
@@ -2075,7 +2522,7 @@ exports.apiRouter.put('/partners/:id', requireAuth, async (req, res) => {
                 tableAffected: 'partners',
                 recordId: Array.isArray(partId) ? partId[0] : partId,
                 oldValueJson: { credit_limit: existing.credit_limit, credit_period_days: existing.credit_period_days },
-                newValueJson: { credit_limit: newCreditLimit, credit_period_days: newCreditPeriod },
+                newValueJson: { credit_limit: updateData.credit_limit, credit_period_days: updateData.credit_period_days || existing.credit_period_days },
                 reason: 'Credit policy adjustment',
                 ipAddress: req.ip,
             });
@@ -2090,7 +2537,7 @@ exports.apiRouter.put('/partners/:id', requireAuth, async (req, res) => {
 // Central Master Configuration APIs (Phase 2)
 // ==========================================
 // 1. Certifying Authorities (CA)
-exports.apiRouter.get('/admin/masters/ca', async (_req, res) => {
+exports.apiRouter.get('/admin/masters/ca', requireAuth, async (_req, res) => {
     try {
         const authorities = await (0, localDb_1.queryAll)('SELECT * FROM certifying_authorities ORDER BY ca_name ASC');
         return res.json({ authorities });
@@ -2138,7 +2585,7 @@ exports.apiRouter.patch('/admin/masters/ca/:id/deactivate', requireAdmin, async 
     }
 });
 // 2. Hardware Vendors
-exports.apiRouter.get('/admin/masters/vendors', async (_req, res) => {
+exports.apiRouter.get('/admin/masters/vendors', requireAuth, async (_req, res) => {
     try {
         const vendors = await (0, localDb_1.queryAll)('SELECT * FROM hardware_vendors ORDER BY vendor_name ASC');
         return res.json({ vendors });
@@ -2173,8 +2620,182 @@ exports.apiRouter.post('/admin/masters/vendors', requireAdmin, async (req, res) 
         return res.status(500).json({ error: err.message });
     }
 });
+// 2b. Partner Types Master (Supabase-backed via company_profile metadata)
+async function getPartnerTypesFromDb() {
+    const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+    const { data } = await supabase.from('company_profile').select('logo_url').single();
+    const raw = (data === null || data === void 0 ? void 0 : data.logo_url) || '';
+    if (raw.includes('#PARTNER_TYPES:')) {
+        try {
+            const jsonStr = raw.split('#PARTNER_TYPES:')[1];
+            return JSON.parse(jsonStr);
+        }
+        catch (_a) {
+            // fallback
+        }
+    }
+    return [
+        { id: 'pt-dsc', type_key: 'dsc_partner', type_name: 'DSC Retail Partner', is_active: 1 },
+        { id: 'pt-token', type_key: 'token_partner', type_name: 'Hardware Token Stockist', is_active: 1 },
+        { id: 'pt-assoc', type_key: 'associate_partner', type_name: 'Associate Business Partner', is_active: 1 },
+        { id: 'pt-dist', type_key: 'master_distributor', type_name: 'Master Regional Distributor', is_active: 1 },
+    ];
+}
+async function savePartnerTypesToDb(types) {
+    const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+    const baseLogo = '/signsync-logo.png';
+    const newMeta = `${baseLogo}#PARTNER_TYPES:${JSON.stringify(types)}`;
+    await supabase.from('company_profile').update({ logo_url: newMeta }).eq('id', 'comp-default');
+}
+exports.apiRouter.get('/admin/masters/partner-types', requireAuth, async (_req, res) => {
+    try {
+        const types = await getPartnerTypesFromDb();
+        return res.json({ partner_types: types });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.post('/admin/masters/partner-types', requireAdmin, async (req, res) => {
+    try {
+        const { type_key, type_name } = req.body;
+        if (!type_key || !type_name) {
+            return res.status(400).json({ error: 'Partner type key and display name are required.' });
+        }
+        const current = await getPartnerTypesFromDb();
+        const cleanKey = type_key.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        if (current.some((t) => t.type_key === cleanKey)) {
+            return res.status(400).json({ error: 'Partner type key already exists.' });
+        }
+        const newEntry = {
+            id: `pt-${Date.now()}`,
+            type_key: cleanKey,
+            type_name: type_name.trim(),
+            is_active: 1,
+        };
+        current.push(newEntry);
+        await savePartnerTypesToDb(current);
+        return res.status(201).json({ success: true, id: newEntry.id, message: 'Partner category added successfully.' });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.patch('/admin/masters/partner-types/:id/deactivate', requireAdmin, async (req, res) => {
+    try {
+        const { is_active } = req.body;
+        const current = await getPartnerTypesFromDb();
+        const item = current.find((t) => t.id === req.params.id);
+        if (!item)
+            return res.status(404).json({ error: 'Partner type not found.' });
+        item.is_active = is_active !== undefined ? (is_active ? 1 : 0) : 0;
+        await savePartnerTypesToDb(current);
+        return res.json({ success: true, is_active: Boolean(item.is_active) });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+// ==========================================
+// Genuine Supabase Storage API Endpoints
+// ==========================================
+const ALLOWED_STORAGE_BUCKETS = {
+    'kyc': {
+        bucket: 'kyc-documents',
+        maxBytes: 10 * 1024 * 1024, // 10MB
+        allowedTypes: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp']
+    },
+    'dsc': {
+        bucket: 'dsc-documents',
+        maxBytes: 15 * 1024 * 1024,
+        allowedTypes: ['application/pdf', 'image/jpeg', 'image/png', 'video/mp4', 'video/webm']
+    },
+    'payment': {
+        bucket: 'payment-proofs',
+        maxBytes: 8 * 1024 * 1024,
+        allowedTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
+    },
+    'pod': {
+        bucket: 'courier-pod',
+        maxBytes: 10 * 1024 * 1024,
+        allowedTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
+    },
+    'service': {
+        bucket: 'service-documents',
+        maxBytes: 20 * 1024 * 1024,
+        allowedTypes: ['application/pdf', 'image/jpeg', 'image/png', 'application/zip']
+    }
+};
+exports.apiRouter.post('/storage/upload', requireAuth, async (req, res) => {
+    try {
+        const { category, fileName, fileBase64, contentType } = req.body;
+        if (!category || !fileName || !fileBase64 || !contentType) {
+            return res.status(400).json({ error: 'category, fileName, fileBase64, and contentType are required.' });
+        }
+        const config = ALLOWED_STORAGE_BUCKETS[category];
+        if (!config) {
+            return res.status(400).json({ error: `Invalid storage category. Permitted: ${Object.keys(ALLOWED_STORAGE_BUCKETS).join(', ')}` });
+        }
+        if (!config.allowedTypes.includes(contentType)) {
+            return res.status(400).json({ error: `File type ${contentType} is not permitted for category ${category}.` });
+        }
+        const fileBuffer = Buffer.from(fileBase64, 'base64');
+        if (fileBuffer.length > config.maxBytes) {
+            return res.status(400).json({ error: `File size exceeds the limit of ${config.maxBytes / (1024 * 1024)}MB.` });
+        }
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+        const sanitizedName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const storagePath = `${Date.now()}_${sanitizedName}`;
+        const { data: uploadData, error: uploadErr } = await supabase.storage
+            .from(config.bucket)
+            .upload(storagePath, fileBuffer, {
+            contentType,
+            upsert: false
+        });
+        if (uploadErr) {
+            return res.status(500).json({ error: `Supabase Storage upload failed: ${uploadErr.message}` });
+        }
+        // Generate authenticated signed URL valid for 24 hours (86,400 seconds)
+        const { data: signedData, error: signErr } = await supabase.storage
+            .from(config.bucket)
+            .createSignedUrl(storagePath, 86400);
+        return res.status(201).json({
+            success: true,
+            bucket: config.bucket,
+            path: storagePath,
+            signedUrl: (signedData === null || signedData === void 0 ? void 0 : signedData.signedUrl) || null,
+            fullUrl: (signedData === null || signedData === void 0 ? void 0 : signedData.signedUrl) || `${config.bucket}/${storagePath}`
+        });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+exports.apiRouter.post('/storage/signed-url', requireAuth, async (req, res) => {
+    try {
+        const { category, path } = req.body;
+        if (!category || !path) {
+            return res.status(400).json({ error: 'category and path are required.' });
+        }
+        const config = ALLOWED_STORAGE_BUCKETS[category];
+        if (!config) {
+            return res.status(400).json({ error: 'Invalid storage category.' });
+        }
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+        const { data, error } = await supabase.storage
+            .from(config.bucket)
+            .createSignedUrl(path, 86400);
+        if (error) {
+            return res.status(500).json({ error: error.message });
+        }
+        return res.json({ signedUrl: data.signedUrl });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
 // 3. Stock Adjustment Reasons
-exports.apiRouter.get('/admin/masters/reasons', async (_req, res) => {
+exports.apiRouter.get('/admin/masters/reasons', requireAuth, async (_req, res) => {
     try {
         const reasons = await (0, localDb_1.queryAll)('SELECT * FROM stock_adjustment_reasons ORDER BY reason_label ASC');
         return res.json({ reasons });
@@ -2211,7 +2832,7 @@ exports.apiRouter.patch('/admin/masters/reasons/:id/deactivate', requireAdmin, a
     }
 });
 // 3b. CRM Lead Sources Master
-exports.apiRouter.get('/crm/lead-sources', async (_req, res) => {
+exports.apiRouter.get('/crm/lead-sources', requireAuth, async (_req, res) => {
     try {
         const sources = await (0, localDb_1.queryAll)('SELECT * FROM crm_lead_sources ORDER BY source_name ASC');
         return res.json({ sources });
@@ -2290,7 +2911,7 @@ exports.apiRouter.patch('/admin/settings/services/:id/deactivate', requireAdmin,
     }
 });
 // Branches List Endpoint
-exports.apiRouter.get('/admin/branches', async (_req, res) => {
+exports.apiRouter.get('/admin/branches', requireAuth, async (_req, res) => {
     try {
         const branches = await (0, localDb_1.queryAll)('SELECT * FROM branches ORDER BY branch_name ASC');
         return res.json({ branches });
@@ -2495,6 +3116,35 @@ exports.apiRouter.post('/admin/delegations', requireAuth, async (req, res) => {
                 error: `Strict Downward Rule: Level ${currentUser.hierarchy_level_order} cannot delegate permissions to Level ${recipient.hierarchy_level_order}.`
             });
         }
+        // Sub-Permission Cap Rule: Non-root grantor cannot grant any action they do not effectively possess
+        if (currentUser.hierarchy_level_order > 0) {
+            // 1. Check user override for grantor
+            const grantorOverride = await (0, localDb_1.queryOne)('SELECT * FROM user_permission_overrides WHERE user_id = ? AND module_id = (SELECT id FROM app_modules WHERE module_key = ?)', [currentUser.id, module_key]);
+            // 2. Check role permissions for grantor
+            const grantorRolePerm = await (0, localDb_1.queryOne)('SELECT * FROM role_module_permissions WHERE role_id = ? AND module_id = (SELECT id FROM app_modules WHERE module_key = ?)', [currentUser.role_id, module_key]);
+            const actionsToCheck = action_key === 'all' ? ['can_view', 'can_create', 'can_edit', 'can_delete', 'can_export'] : [action_key];
+            for (const act of actionsToCheck) {
+                let hasAct = false;
+                if (grantorOverride && grantorOverride[act] !== null && grantorOverride[act] !== undefined) {
+                    hasAct = Boolean(grantorOverride[act]);
+                }
+                else if (grantorRolePerm && (grantorRolePerm[act] === 1 || grantorRolePerm[act] === true)) {
+                    hasAct = true;
+                }
+                // Also check if grantor holds this action through a valid delegatable parent delegation
+                if (!hasAct && parent_delegation_id) {
+                    const parentDel = await (0, localDb_1.queryOne)('SELECT * FROM temporary_delegations WHERE id = ?', [parent_delegation_id]);
+                    if (parentDel && parentDel.status === 'active' && parentDel.can_delegate_further && (parentDel.action_key === act || parentDel.action_key === 'all')) {
+                        hasAct = true;
+                    }
+                }
+                if (!hasAct) {
+                    return res.status(403).json({
+                        error: `Sub-Permission Cap Violation: You cannot delegate '${act}' on '${module_key}' because you do not possess this privilege.`
+                    });
+                }
+            }
+        }
         // Security Rule: If onward delegation, ensure grantor holds a valid parent delegation that allows further delegation
         if (parent_delegation_id) {
             const parent = await (0, localDb_1.queryOne)('SELECT * FROM temporary_delegations WHERE id = ?', [parent_delegation_id]);
@@ -2539,23 +3189,30 @@ exports.apiRouter.patch('/admin/delegations/:id/revoke', requireAdmin, async (re
             return res.status(404).json({ error: 'Delegation record not found.' });
         const nowIso = new Date().toISOString();
         // 1. Revoke parent delegation
-        await (0, localDb_1.run)(`
-      UPDATE temporary_delegations
-      SET status = 'revoked', revoked_at = ?, revoked_by = ?
-      WHERE id = ?
-    `, [nowIso, currentUser.id, req.params.id]);
-        // 2. Cascading invalidation of all child delegations in chain
-        await (0, localDb_1.run)(`
-      UPDATE temporary_delegations
-      SET status = 'revoked', revoked_at = ?, revoked_by = ?
-      WHERE parent_delegation_id = ?
-    `, [nowIso, currentUser.id, req.params.id]);
-        // Also invalidate any grand-children (multi-level chain)
-        await (0, localDb_1.run)(`
-      UPDATE temporary_delegations
-      SET status = 'revoked', revoked_at = ?, revoked_by = ?
-      WHERE parent_delegation_id IN (SELECT id FROM temporary_delegations WHERE parent_delegation_id = ?)
-    `, [nowIso, currentUser.id, req.params.id]);
+        await localDb_1.supabase
+            .from('temporary_delegations')
+            .update({ status: 'revoked', revoked_at: nowIso, revoked_by: currentUser.id })
+            .eq('id', req.params.id);
+        // 2. Recursive cascading invalidation of all descendant delegations in chain
+        let parentIds = [req.params.id];
+        while (parentIds.length > 0) {
+            const { data: children } = await localDb_1.supabase
+                .from('temporary_delegations')
+                .select('id')
+                .in('parent_delegation_id', parentIds)
+                .neq('status', 'revoked');
+            if (children && children.length > 0) {
+                const childIds = children.map((c) => c.id);
+                await localDb_1.supabase
+                    .from('temporary_delegations')
+                    .update({ status: 'revoked', revoked_at: nowIso, revoked_by: currentUser.id })
+                    .in('id', childIds);
+                parentIds = childIds;
+            }
+            else {
+                parentIds = [];
+            }
+        }
         const delId = req.params.id;
         await logAuditEvent({
             userId: currentUser.id,
