@@ -3,7 +3,15 @@ import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  const url = process.env.SUPABASE_URL || 'NOT_SET'
+  let rawUrl = process.env.SUPABASE_URL || 'https://kbqwsfmfiomcakbhclca.supabase.co'
+  if (rawUrl.endsWith('.supabase.c')) {
+    rawUrl += 'o'
+  } else if (rawUrl.endsWith('.supabase.')) {
+    rawUrl += 'co'
+  } else if (!rawUrl.includes('.supabase.co') && rawUrl.includes('kbqwsfmfiomcakbhclca')) {
+    rawUrl = 'https://kbqwsfmfiomcakbhclca.supabase.co'
+  }
+  const url = rawUrl
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || 'NOT_SET'
 
   let testResult = 'unknown'
