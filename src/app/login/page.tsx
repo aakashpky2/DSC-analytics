@@ -50,8 +50,7 @@ export default function LoginPage() {
       }
 
       // Successful login - redirect to business overview dashboard
-      router.push('/')
-      router.refresh()
+      window.location.href = '/'
     } catch {
       setError('Incorrect email or password. Please try again.')
       setLoading(false)
