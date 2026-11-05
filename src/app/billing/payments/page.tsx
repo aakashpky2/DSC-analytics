@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { CheckCircle2, XCircle, ArrowLeft, Landmark, Image as ImageIcon, Eye } from 'lucide-react'
+import { CheckCircle2, XCircle, ArrowLeft, Landmark, Image as ImageIcon, ExternalLink, X } from 'lucide-react'
 import { Pagination } from '@/components/Pagination'
 import { PaymentReceivedRecord } from '@/types/models'
 
@@ -11,6 +11,7 @@ export default function PaymentsVerificationPage() {
   const [queue, setQueue] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [viewingImage, setViewingImage] = useState<string | null>(null)
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1)
@@ -122,39 +123,52 @@ export default function PaymentsVerificationPage() {
               </div>
 
               {/* Card Body - Split Screen Audit */}
-              <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
                 {/* Left: Payment Proof Screenshot */}
-                <div className="space-y-3">
-                  <div className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                    <ImageIcon className="w-4 h-4 text-cyan-400" />
-                    <span>Payment Proof Screenshot</span>
-                  </div>
-
-                  <div className="aspect-[4/3] rounded-xl bg-slate-950 border border-slate-800 flex flex-col items-center justify-center p-6 text-center text-slate-500 relative overflow-hidden group">
-                    {p.screenshot_proof_url ? (
-                      <div className="w-full h-full flex flex-col items-center justify-center">
-                        <img
-                          src={p.screenshot_proof_url}
-                          alt="Payment Screenshot"
-                          className="max-h-full max-w-full object-contain rounded-lg"
-                        />
-                      </div>
-                    ) : (
-                      <>
-                        <div className="w-12 h-12 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center mb-2 text-cyan-400">
-                          <Landmark className="w-6 h-6" />
-                        </div>
-                        <div className="text-xs font-medium text-slate-300">Bank Transfer / UPI Screenshot</div>
-                        <div className="text-[11px] text-slate-400 font-mono mt-1">UTR: {p.transaction_reference_utr || 'Direct Portal Transfer'}</div>
-                      </>
+                <div className="space-y-2">
+                  <div className="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <ImageIcon className="w-4 h-4 text-cyan-400" />
+                      <span>Payment Proof Screenshot</span>
+                    </div>
+                    {p.screenshot_proof_url && (
+                      <button
+                        type="button"
+                        onClick={() => setViewingImage(p.screenshot_proof_url)}
+                        className="text-[11px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1 cursor-pointer transition"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        <span>View Full Image</span>
+                      </button>
                     )}
                   </div>
+
+                  {p.screenshot_proof_url ? (
+                    <div className="rounded-xl bg-slate-950 border border-slate-800 p-2 flex items-center justify-center max-h-[300px] overflow-hidden group">
+                      <img
+                        src={p.screenshot_proof_url}
+                        alt="Payment Screenshot"
+                        className="max-h-[284px] w-auto max-w-full object-contain rounded-lg cursor-pointer transition hover:opacity-90"
+                        onClick={() => setViewingImage(p.screenshot_proof_url)}
+                      />
+                    </div>
+                  ) : (
+                    <div className="h-[105px] rounded-xl bg-slate-950/60 border border-slate-800/80 flex flex-col items-center justify-center p-3 text-center">
+                      <div className="flex items-center gap-2 text-slate-400 mb-1">
+                        <Landmark className="w-4 h-4 text-cyan-400" />
+                        <span className="text-xs font-medium text-slate-300">No payment screenshot uploaded</span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-mono">
+                        UTR / Ref: {p.transaction_reference_utr || p.transaction_ref || 'Direct Portal Transfer'}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Right: Reconciliation Details */}
-                <div className="flex flex-col justify-between space-y-4">
+                <div className="flex flex-col space-y-4">
                   <div>
-                    <div className="text-xs font-semibold text-slate-300 mb-3">Reconciliation Details</div>
+                    <div className="text-xs font-semibold text-slate-300 mb-2.5">Reconciliation Details</div>
                     <div className="space-y-1.5 text-xs">
                       <div className="flex justify-between py-1 border-b border-slate-800/80">
                         <span className="text-slate-400">Invoice Total:</span>
@@ -172,16 +186,20 @@ export default function PaymentsVerificationPage() {
                         <span className="text-slate-400">Receiving Bank:</span>
                         <span className="text-slate-300 font-mono">{p.bank_name || 'HDFC Bank'}</span>
                       </div>
-                      <div className="flex justify-between py-1">
+                      <div className="flex justify-between py-1 border-b border-slate-800/80">
                         <span className="text-slate-400">Payment Mode:</span>
                         <span className="text-slate-300 uppercase">{p.payment_mode}</span>
+                      </div>
+                      <div className="flex justify-between py-1">
+                        <span className="text-slate-400">Transaction Ref:</span>
+                        <span className="text-slate-300 font-mono text-[11px]">{p.transaction_ref || p.transaction_reference_utr || 'N/A'}</span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Actions Bar */}
+                  {/* Actions Bar immediately below details */}
                   {p.verified_status === 'pending_verification' && (
-                    <div className="flex items-center gap-3 pt-4 border-t border-slate-800">
+                    <div className="flex items-center gap-3 pt-3 border-t border-slate-800">
                       <button
                         onClick={() => handleAction(p.id, 'verified')}
                         disabled={actionLoading === p.id}
@@ -217,6 +235,38 @@ export default function PaymentsVerificationPage() {
               onPageSizeChange={handlePageSizeChange}
               isLoading={loading}
             />
+          </div>
+        </div>
+      )}
+
+      {/* Lightbox / Full Image Modal */}
+      {viewingImage && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+          onClick={() => setViewingImage(null)}
+        >
+          <div 
+            className="relative max-w-4xl max-h-[90vh] bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden p-2 shadow-2xl flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-2 border-b border-slate-800 text-xs text-slate-300">
+              <span className="font-medium flex items-center gap-1.5">
+                <ImageIcon className="w-4 h-4 text-cyan-400" /> Payment Proof Full View
+              </span>
+              <button
+                onClick={() => setViewingImage(null)}
+                className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-2 overflow-auto flex items-center justify-center max-h-[80vh]">
+              <img
+                src={viewingImage}
+                alt="Payment Screenshot Full"
+                className="max-h-full max-w-full object-contain rounded-lg shadow-md"
+              />
+            </div>
           </div>
         </div>
       )}
