@@ -17,7 +17,9 @@ import {
   Check,
   Receipt,
   FileCheck2,
-  Eye
+  Eye,
+  Search,
+  ChevronDown
 } from 'lucide-react'
 import { Pagination } from '@/components/Pagination'
 import { PaymentReceivedRecord } from '@/types/models'
@@ -46,6 +48,12 @@ export default function PaymentsVerificationPage() {
     transaction_reference_utr: '',
     screenshot_proof_url: '',
   })
+
+  // Invoice Combobox State (Filter & 5 items pagination)
+  const [invoiceSearch, setInvoiceSearch] = useState('')
+  const [isInvoiceDropdownOpen, setIsInvoiceDropdownOpen] = useState(false)
+  const [invoiceDropdownPage, setInvoiceDropdownPage] = useState(1)
+  const INVOICE_ITEMS_PER_PAGE = 5
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1)
@@ -102,6 +110,9 @@ export default function PaymentsVerificationPage() {
     setRecordError('')
     setRecordSuccess('')
     setUploadSuccess(false)
+    setInvoiceSearch('')
+    setInvoiceDropdownPage(1)
+    setIsInvoiceDropdownOpen(false)
     setIsRecordModalOpen(true)
   }
 
@@ -503,24 +514,142 @@ export default function PaymentsVerificationPage() {
 
             <form onSubmit={handleRecordSubmit} className="space-y-4 text-xs">
               {/* Select Unpaid Invoice */}
-              <div>
+              <div className="relative">
                 <label className="block text-slate-300 font-medium mb-1">Select Invoice *</label>
-                <select
-                  required
-                  value={paymentForm.invoice_id}
-                  onChange={(e) => handleInvoiceSelect(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
-                >
-                  {unpaidInvoices.length === 0 ? (
-                    <option value="">No unpaid invoices found</option>
-                  ) : (
-                    unpaidInvoices.map((inv) => (
-                      <option key={inv.id} value={inv.id}>
-                        {inv.invoice_number} — {inv.partners?.company_name || inv.partner_company || 'Partner'} (Due: ₹{(inv.outstanding_balance ?? inv.total_amount)?.toLocaleString('en-IN')})
-                      </option>
-                    ))
-                  )}
-                </select>
+                
+                {/* Custom Trigger Button */}
+                {(() => {
+                  const selectedInv = unpaidInvoices.find((i) => i.id === paymentForm.invoice_id)
+                  const filteredInvoices = unpaidInvoices.filter((inv) => {
+                    const q = invoiceSearch.toLowerCase().trim()
+                    if (!q) return true
+                    const num = (inv.invoice_number || '').toLowerCase()
+                    const company = (inv.partners?.company_name || inv.partner_company || '').toLowerCase()
+                    return num.includes(q) || company.includes(q)
+                  })
+                  const totalFilteredPages = Math.max(1, Math.ceil(filteredInvoices.length / INVOICE_ITEMS_PER_PAGE))
+                  const currentPageClamped = Math.min(invoiceDropdownPage, totalFilteredPages)
+                  const startIndex = (currentPageClamped - 1) * INVOICE_ITEMS_PER_PAGE
+                  const visibleInvoices = filteredInvoices.slice(startIndex, startIndex + INVOICE_ITEMS_PER_PAGE)
+
+                  return (
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setIsInvoiceDropdownOpen(!isInvoiceDropdownOpen)}
+                        className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-lg px-3 py-2 text-left text-white flex items-center justify-between transition-colors focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                      >
+                        {selectedInv ? (
+                          <div className="flex items-center gap-2 truncate">
+                            <span className="font-mono text-cyan-400 font-semibold">{selectedInv.invoice_number}</span>
+                            <span className="text-slate-400">—</span>
+                            <span className="truncate text-slate-200">{selectedInv.partners?.company_name || selectedInv.partner_company || 'Partner'}</span>
+                            <span className="text-amber-400 font-semibold shrink-0 ml-auto mr-1">
+                              (Due: ₹{(selectedInv.outstanding_balance ?? selectedInv.total_amount)?.toLocaleString('en-IN')})
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-slate-500">Select an unpaid invoice...</span>
+                        )}
+                        <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${isInvoiceDropdownOpen ? 'rotate-180' : ''}`} />
+                      </button>
+
+                      {/* Dropdown Menu */}
+                      {isInvoiceDropdownOpen && (
+                        <div className="absolute z-50 left-0 right-0 mt-1 bg-slate-900 border border-slate-800 rounded-lg shadow-2xl p-2">
+                          {/* Search Input */}
+                          <div className="relative mb-2">
+                            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                            <input
+                              type="text"
+                              autoFocus
+                              placeholder="Search invoice # or partner..."
+                              value={invoiceSearch}
+                              onChange={(e) => {
+                                setInvoiceSearch(e.target.value)
+                                setInvoiceDropdownPage(1)
+                              }}
+                              className="w-full pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                            />
+                          </div>
+
+                          {/* 5-Item Display List */}
+                          <div className="space-y-1">
+                            {visibleInvoices.length === 0 ? (
+                              <div className="py-4 text-center text-slate-500 text-xs">
+                                No matching unpaid invoices
+                              </div>
+                            ) : (
+                              visibleInvoices.map((inv) => {
+                                const isSelected = inv.id === paymentForm.invoice_id
+                                return (
+                                  <button
+                                    key={inv.id}
+                                    type="button"
+                                    onClick={() => {
+                                      handleInvoiceSelect(inv.id)
+                                      setIsInvoiceDropdownOpen(false)
+                                    }}
+                                    className={`w-full text-left px-2.5 py-2 rounded flex items-center justify-between transition-colors ${
+                                      isSelected 
+                                        ? 'bg-cyan-500/15 border border-cyan-500/30 text-white' 
+                                        : 'hover:bg-slate-800/70 text-slate-300'
+                                    }`}
+                                  >
+                                    <div className="flex flex-col min-w-0 mr-2">
+                                      <span className="font-mono text-cyan-400 font-semibold text-xs">
+                                        {inv.invoice_number}
+                                      </span>
+                                      <span className="text-[11px] text-slate-400 truncate">
+                                        {inv.partners?.company_name || inv.partner_company || 'Partner'}
+                                      </span>
+                                    </div>
+                                    <div className="text-right shrink-0">
+                                      <div className="text-amber-400 font-semibold text-xs">
+                                        ₹{(inv.outstanding_balance ?? inv.total_amount)?.toLocaleString('en-IN')}
+                                      </div>
+                                      <span className="text-[10px] text-slate-500">outstanding</span>
+                                    </div>
+                                  </button>
+                                )
+                              })
+                            )}
+                          </div>
+
+                          {/* Pagination Footer (capped to 5 items per view) */}
+                          {filteredInvoices.length > INVOICE_ITEMS_PER_PAGE && (
+                            <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400 px-1">
+                              <span>
+                                Showing {startIndex + 1}–{Math.min(startIndex + INVOICE_ITEMS_PER_PAGE, filteredInvoices.length)} of {filteredInvoices.length}
+                              </span>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  disabled={currentPageClamped <= 1}
+                                  onClick={() => setInvoiceDropdownPage((p) => Math.max(1, p - 1))}
+                                  className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none text-white text-[10px]"
+                                >
+                                  Prev
+                                </button>
+                                <span className="px-1 text-slate-500 text-[10px]">
+                                  {currentPageClamped}/{totalFilteredPages}
+                                </span>
+                                <button
+                                  type="button"
+                                  disabled={currentPageClamped >= totalFilteredPages}
+                                  onClick={() => setInvoiceDropdownPage((p) => Math.min(totalFilteredPages, p + 1))}
+                                  className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none text-white text-[10px]"
+                                >
+                                  Next
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
