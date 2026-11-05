@@ -1756,6 +1756,33 @@ exports.apiRouter.post('/services/orders', requirePermission('services', 'can_cr
         return res.status(500).json({ error: err.message });
     }
 });
+exports.apiRouter.patch('/services/orders/:id/stage', requirePermission('services', 'can_edit'), async (req, res) => {
+    try {
+        const { stage, notes, certificate_url, query_remarks } = req.body;
+        if (!stage) {
+            return res.status(400).json({ error: 'stage is required' });
+        }
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+        const updatePayload = { stage };
+        if (notes)
+            updatePayload.notes = notes;
+        if (certificate_url)
+            updatePayload.certificate_url = certificate_url;
+        if (query_remarks)
+            updatePayload.query_remarks = query_remarks;
+        const { error: updateErr } = await supabase
+            .from('service_orders')
+            .update(updatePayload)
+            .eq('id', req.params.id);
+        if (updateErr) {
+            return res.status(500).json({ error: updateErr.message });
+        }
+        return res.json({ success: true, stage });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
 // ==========================================
 // 8. Multi-Account Billing & Payments Queue
 // ==========================================
