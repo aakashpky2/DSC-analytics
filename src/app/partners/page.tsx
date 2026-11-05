@@ -24,7 +24,8 @@ export default function PartnersPage() {
   const [totalPages, setTotalPages] = useState(1)
 
   // System overview KPIs (all records)
-  const [kpis, setKpis] = useState({ totalPartners: 0, totalWallet: 0, totalCreditLimit: 0 })
+  const [typeFilter, setTypeFilter] = useState('')
+  const [kpis, setKpis] = useState({ totalPartners: 0, totalWallet: 0, totalCreditLimit: 0, highRiskCount: 0 })
 
   const loadKpis = () => {
     fetch('/api/partners?mask=true')
@@ -33,7 +34,8 @@ export default function PartnersPage() {
         const all: PartnerRecord[] = d.partners || []
         const totalWallet = all.reduce((sum, p) => sum + (p.wallet_balance || 0), 0)
         const totalCreditLimit = all.reduce((sum, p) => sum + (p.credit_limit || 0), 0)
-        setKpis({ totalPartners: all.length, totalWallet, totalCreditLimit })
+        const highRiskCount = all.filter((p: any) => (p.credit_limit || 0) > 0 && (p.wallet_balance || 0) < 0).length
+        setKpis({ totalPartners: all.length, totalWallet, totalCreditLimit, highRiskCount })
       })
       .catch(() => {})
   }
@@ -47,6 +49,9 @@ export default function PartnersPage() {
     })
     if (search.trim()) {
       params.append('search', search.trim())
+    }
+    if (typeFilter) {
+      params.append('type', typeFilter)
     }
 
     fetch(`/api/partners?${params.toString()}`)
@@ -66,7 +71,7 @@ export default function PartnersPage() {
 
   useEffect(() => {
     loadPartners()
-  }, [loadPartners])
+  }, [loadPartners, typeFilter])
 
   const handleSearchChange = (val: string) => {
     setSearch(val)
@@ -103,11 +108,11 @@ export default function PartnersPage() {
       </div>
 
       {/* Summary KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
           <div className="text-xs text-slate-400">Active Partners</div>
           <div className="text-2xl font-bold text-white mt-1">{kpis.totalPartners}</div>
-          <div className="text-[11px] text-emerald-400 mt-1">100% Documents Verified</div>
+          <div className="text-[11px] text-emerald-400 mt-1">100% KYC Verified</div>
         </div>
         <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
           <div className="text-xs text-slate-400">Total Wallet Balance</div>
@@ -123,12 +128,36 @@ export default function PartnersPage() {
           </div>
           <div className="text-[11px] text-slate-400 mt-1">Net-30 / Net-45 credit terms</div>
         </div>
+        <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+          <div className="text-xs text-slate-400">High-Risk Aging Accounts</div>
+          <div className="text-2xl font-bold text-amber-400 mt-1">{kpis.highRiskCount}</div>
+          <div className="text-[11px] text-slate-400 mt-1">Overdue or threshold alerts</div>
+        </div>
       </div>
 
       {/* Partners List */}
       <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
         <div className="p-4 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="text-xs font-semibold text-white">Registered Partners List</div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-semibold text-white">Registered Partners List</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] text-slate-400">Filter Type:</span>
+              <select
+                value={typeFilter}
+                onChange={(e) => {
+                  setTypeFilter(e.target.value)
+                  setCurrentPage(1)
+                }}
+                className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+              >
+                <option value="">All Partner Types</option>
+                <option value="dsc_partner">DSC Partner</option>
+                <option value="token_partner">Token Partner</option>
+                <option value="associate_partner">Associate Partner</option>
+                <option value="master_distributor">Master Distributor</option>
+              </select>
+            </div>
+          </div>
           <div className="relative w-full sm:w-64">
             <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
             <input
