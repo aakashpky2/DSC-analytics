@@ -2133,17 +2133,27 @@ exports.apiRouter.get('/billing/payments/queue', requirePermission('billing', 'c
 exports.apiRouter.post('/billing/payments/record', requirePermission('billing', 'can_create'), async (req, res) => {
     var _a;
     try {
-        const { invoice_id, partner_id, amount_received, amount_paid, payment_mode = 'neft', reference_number, transaction_reference_utr, screenshot_url, screenshot_proof_url } = req.body;
+        const { invoice_id, partner_id, bank_account_id, amount_received, amount_paid, payment_mode = 'neft', reference_number, transaction_reference_utr, screenshot_url, screenshot_proof_url } = req.body;
         const amount = Number((_a = amount_paid !== null && amount_paid !== void 0 ? amount_paid : amount_received) !== null && _a !== void 0 ? _a : 0);
-        if (!invoice_id || !partner_id || amount <= 0) {
-            return res.status(400).json({ error: 'Invoice, partner, and a positive payment amount are required.' });
+        if (!invoice_id || amount <= 0) {
+            return res.status(400).json({ error: 'Invoice and a positive payment amount are required.' });
         }
         const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+        // If partner_id is not explicitly provided, resolve from the invoice
+        let resolvedPartnerId = partner_id;
+        if (!resolvedPartnerId) {
+            const { data: inv } = await supabase.from('invoices').select('partner_id').eq('id', invoice_id).maybeSingle();
+            resolvedPartnerId = inv === null || inv === void 0 ? void 0 : inv.partner_id;
+        }
+        if (!resolvedPartnerId) {
+            return res.status(400).json({ error: 'Associated partner could not be identified for this invoice.' });
+        }
         const id = `pay-${Date.now()}`;
         const { data, error } = await supabase.from('payments_received').insert({
             id,
             invoice_id,
-            partner_id,
+            partner_id: resolvedPartnerId,
+            bank_account_id: bank_account_id || null,
             amount_paid: amount,
             payment_mode,
             transaction_reference_utr: reference_number || transaction_reference_utr || `UTR${Date.now()}`,
