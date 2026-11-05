@@ -951,12 +951,22 @@ apiRouter.patch('/dsc/applications/:id/stage', requirePermission('dsc', 'can_edi
 // ==========================================
 apiRouter.get('/inventory/batches', requirePermission('inventory', 'can_view'), async (req: Request, res: Response) => {
   try {
+    const search = req.query.search ? String(req.query.search).trim() : ''
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
-    const selectSql = 'SELECT * FROM token_purchase_batches ORDER BY created_at DESC'
-    const countSql = 'SELECT COUNT(*) as count FROM token_purchase_batches'
+
+    let whereClause = ''
+    const params: any[] = []
+    if (search) {
+      whereClause = 'WHERE (batch_number LIKE ? OR token_model LIKE ? OR vendor_name LIKE ?)'
+      const s = `%${search}%`
+      params.push(s, s, s)
+    }
+
+    const selectSql = `SELECT * FROM token_purchase_batches ${whereClause} ORDER BY created_at DESC`
+    const countSql = `SELECT COUNT(*) as count FROM token_purchase_batches ${whereClause}`
 
     if (isPaginated) {
-      const result = await executePaginatedQuery(selectSql, countSql, [], { page, limit, offset })
+      const result = await executePaginatedQuery(selectSql, countSql, params, { page, limit, offset })
       return res.json({
         batches: result.data,
         page: result.page,
@@ -966,7 +976,7 @@ apiRouter.get('/inventory/batches', requirePermission('inventory', 'can_view'), 
       })
     }
 
-    const batches = await queryAll(selectSql)
+    const batches = await queryAll(selectSql, params)
     return res.json({
       batches,
       page: 1,
@@ -1064,23 +1074,35 @@ apiRouter.post('/inventory/batches', requirePermission('inventory', 'can_create'
 
 apiRouter.get('/inventory/branches', requirePermission('inventory', 'can_view'), async (req: Request, res: Response) => {
   try {
+    const search = req.query.search ? String(req.query.search).trim() : ''
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+
+    let whereClause = ''
+    const params: any[] = []
+    if (search) {
+      whereClause = 'WHERE (b.branch_name LIKE ? OR b.branch_code LIKE ? OR s.token_model LIKE ?)'
+      const s = `%${search}%`
+      params.push(s, s, s)
+    }
+
     const selectSql = `
       SELECT s.*, b.branch_name, b.branch_code
       FROM branch_token_stocks s
       JOIN branches b ON s.branch_id = b.id
+      ${whereClause}
       ORDER BY b.branch_name ASC
     `
     const countSql = `
       SELECT COUNT(*) as count
       FROM branch_token_stocks s
       JOIN branches b ON s.branch_id = b.id
+      ${whereClause}
     `
 
     const branches = await queryAll('SELECT id, branch_name, branch_code, city, state_code FROM branches ORDER BY branch_name ASC')
 
     if (isPaginated) {
-      const result = await executePaginatedQuery(selectSql, countSql, [], { page, limit, offset })
+      const result = await executePaginatedQuery(selectSql, countSql, params, { page, limit, offset })
       return res.json({
         stock: result.data,
         branches,
@@ -1091,7 +1113,7 @@ apiRouter.get('/inventory/branches', requirePermission('inventory', 'can_view'),
       })
     }
 
-    const stock = await queryAll(selectSql)
+    const stock = await queryAll(selectSql, params)
     return res.json({
       stock,
       branches,
@@ -1158,7 +1180,17 @@ apiRouter.patch('/admin/branches/:id/deactivate', requireAdmin, async (req: Requ
 // Transfer History: List Delivery Challans / Notes
 apiRouter.get('/inventory/transfers', requirePermission('inventory', 'can_view'), async (req: Request, res: Response) => {
   try {
+    const search = req.query.search ? String(req.query.search).trim() : ''
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+
+    let whereClause = ''
+    const params: any[] = []
+    if (search) {
+      whereClause = 'WHERE (dc.challan_number LIKE ? OR dc.token_model LIKE ? OR sb.branch_name LIKE ? OR db.branch_name LIKE ?)'
+      const s = `%${search}%`
+      params.push(s, s, s, s)
+    }
+
     const selectSql = `
       SELECT dc.*, 
              sb.branch_name as source_branch_name, sb.branch_code as source_branch_code,
@@ -1168,12 +1200,19 @@ apiRouter.get('/inventory/transfers', requirePermission('inventory', 'can_view')
       LEFT JOIN branches sb ON dc.source_branch_id = sb.id
       LEFT JOIN branches db ON dc.destination_branch_id = db.id
       LEFT JOIN user_profiles u ON dc.issued_by = u.id
+      ${whereClause}
       ORDER BY dc.created_at DESC
     `
-    const countSql = `SELECT COUNT(*) as count FROM delivery_challans`
+    const countSql = `
+      SELECT COUNT(*) as count
+      FROM delivery_challans dc
+      LEFT JOIN branches sb ON dc.source_branch_id = sb.id
+      LEFT JOIN branches db ON dc.destination_branch_id = db.id
+      ${whereClause}
+    `
 
     if (isPaginated) {
-      const result = await executePaginatedQuery(selectSql, countSql, [], { page, limit, offset })
+      const result = await executePaginatedQuery(selectSql, countSql, params, { page, limit, offset })
       return res.json({
         challans: result.data,
         page: result.page,
@@ -1183,7 +1222,7 @@ apiRouter.get('/inventory/transfers', requirePermission('inventory', 'can_view')
       })
     }
 
-    const challans = await queryAll(selectSql)
+    const challans = await queryAll(selectSql, params)
     return res.json({
       challans,
       page: 1,
@@ -1718,23 +1757,35 @@ apiRouter.put('/crm/leads/:id', requirePermission('crm', 'can_edit'), async (req
 apiRouter.get('/crm/follow-ups', requirePermission('crm', 'can_view'), async (req: Request, res: Response) => {
   try {
     const mask = shouldMaskPii(req)
+    const search = req.query.search ? String(req.query.search).trim() : ''
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+
+    let whereClause = ''
+    const params: any[] = []
+    if (search) {
+      whereClause = 'WHERE (l.company_name LIKE ? OR l.contact_person LIKE ? OR l.lead_code LIKE ? OR f.notes LIKE ?)'
+      const s = `%${search}%`
+      params.push(s, s, s, s)
+    }
+
     const selectSql = `
       SELECT f.id, f.lead_id, f.channel as contact_mode, f.scheduled_at as follow_up_date, f.status, f.disposition, f.notes,
              l.company_name, l.contact_person, l.phone, l.email, l.lead_code, u.full_name as conducted_by_name
       FROM crm_follow_ups f
       JOIN crm_leads l ON f.lead_id = l.id
       LEFT JOIN user_profiles u ON f.conducted_by = u.id
+      ${whereClause}
       ORDER BY f.scheduled_at ASC
     `
     const countSql = `
       SELECT COUNT(*) as count
       FROM crm_follow_ups f
       JOIN crm_leads l ON f.lead_id = l.id
+      ${whereClause}
     `
 
     if (isPaginated) {
-      const result = await executePaginatedQuery(selectSql, countSql, [], { page, limit, offset })
+      const result = await executePaginatedQuery(selectSql, countSql, params, { page, limit, offset })
       const sanitized = result.data.map((f: any) => applyPiiMasking(f, mask))
       return res.json({
         followUps: sanitized,
@@ -1745,7 +1796,7 @@ apiRouter.get('/crm/follow-ups', requirePermission('crm', 'can_view'), async (re
       })
     }
 
-    const followUps = await queryAll(selectSql)
+    const followUps = await queryAll(selectSql, params)
     const sanitized = followUps.map((f: any) => applyPiiMasking(f, mask))
     return res.json({
       followUps: sanitized,
@@ -1813,6 +1864,43 @@ apiRouter.patch('/crm/follow-ups/:id/reschedule', requireAuth, async (req: Reque
 // ==========================================
 // 7. Additional Business Services Hub
 // ==========================================
+apiRouter.get('/services', requirePermission('services', 'can_view'), async (req: Request, res: Response) => {
+  try {
+    const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+    const selectSql = `
+      SELECT s.*, p.company_name as partner_company
+      FROM service_orders s
+      LEFT JOIN partners p ON s.partner_id = p.id
+      ORDER BY s.created_at DESC
+    `
+    const countSql = `SELECT COUNT(*) as count FROM service_orders`
+
+    if (isPaginated) {
+      const result = await executePaginatedQuery(selectSql, countSql, [], { page, limit, offset })
+      return res.json({
+        services: result.data,
+        orders: result.data,
+        page: result.page,
+        limit: result.limit,
+        totalCount: result.totalCount,
+        totalPages: result.totalPages,
+      })
+    }
+
+    const services = await queryAll(selectSql)
+    return res.json({
+      services,
+      orders: services,
+      page: 1,
+      limit: services.length,
+      totalCount: services.length,
+      totalPages: 1,
+    })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
 apiRouter.get('/services/orders', requirePermission('services', 'can_view'), async (req: Request, res: Response) => {
   try {
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
@@ -1870,12 +1958,22 @@ apiRouter.post('/services/orders', requirePermission('services', 'can_create'), 
 // ==========================================
 apiRouter.get('/billing/accounts', requirePermission('billing', 'can_view'), async (req: Request, res: Response) => {
   try {
+    const search = req.query.search ? String(req.query.search).trim() : ''
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
-    const selectSql = 'SELECT * FROM bank_accounts WHERE is_active = 1 ORDER BY account_nickname ASC'
-    const countSql = 'SELECT COUNT(*) as count FROM bank_accounts WHERE is_active = 1'
+
+    let whereClause = 'WHERE is_active = 1'
+    const params: any[] = []
+    if (search) {
+      whereClause += ' AND (bank_name LIKE ? OR account_nickname LIKE ? OR account_number LIKE ?)'
+      const s = `%${search}%`
+      params.push(s, s, s)
+    }
+
+    const selectSql = `SELECT * FROM bank_accounts ${whereClause} ORDER BY account_nickname ASC`
+    const countSql = `SELECT COUNT(*) as count FROM bank_accounts ${whereClause}`
 
     if (isPaginated) {
-      const result = await executePaginatedQuery(selectSql, countSql, [], { page, limit, offset })
+      const result = await executePaginatedQuery(selectSql, countSql, params, { page, limit, offset })
       return res.json({
         accounts: result.data,
         page: result.page,
@@ -1885,7 +1983,7 @@ apiRouter.get('/billing/accounts', requirePermission('billing', 'can_view'), asy
       })
     }
 
-    const accounts = await queryAll(selectSql)
+    const accounts = await queryAll(selectSql, params)
     return res.json({
       accounts,
       page: 1,
@@ -2209,7 +2307,17 @@ apiRouter.post('/billing/invoices', requirePermission('billing', 'can_create'), 
 // Payment screenshot verification queue
 apiRouter.get('/billing/payments/queue', requirePermission('billing', 'can_view'), async (req: Request, res: Response) => {
   try {
+    const search = req.query.search ? String(req.query.search).trim() : ''
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+
+    let whereClause = ''
+    const params: any[] = []
+    if (search) {
+      whereClause = 'WHERE (i.invoice_number LIKE ? OR pt.company_name LIKE ? OR p.transaction_ref LIKE ?)'
+      const s = `%${search}%`
+      params.push(s, s, s)
+    }
+
     const selectSql = `
       SELECT p.*, i.invoice_number, i.total_amount, i.outstanding_balance, i.line_items,
              pt.company_name as partner_company, b.bank_name, b.account_number
@@ -2217,6 +2325,7 @@ apiRouter.get('/billing/payments/queue', requirePermission('billing', 'can_view'
       JOIN invoices i ON p.invoice_id = i.id
       JOIN partners pt ON p.partner_id = pt.id
       LEFT JOIN bank_accounts b ON p.bank_account_id = b.id
+      ${whereClause}
       ORDER BY p.created_at DESC
     `
     const countSql = `
@@ -2224,12 +2333,13 @@ apiRouter.get('/billing/payments/queue', requirePermission('billing', 'can_view'
       FROM payments_received p
       JOIN invoices i ON p.invoice_id = i.id
       JOIN partners pt ON p.partner_id = pt.id
+      ${whereClause}
     `
 
     const mask = shouldMaskPii(req)
 
     if (isPaginated) {
-      const result = await executePaginatedQuery(selectSql, countSql, [], { page, limit, offset })
+      const result = await executePaginatedQuery(selectSql, countSql, params, { page, limit, offset })
       const sanitized = (result.data || []).map((p: any) => applyPiiMasking(p, mask))
       return res.json({
         queue: sanitized,
@@ -2240,7 +2350,7 @@ apiRouter.get('/billing/payments/queue', requirePermission('billing', 'can_view'
       })
     }
 
-    const queue = await queryAll(selectSql)
+    const queue = await queryAll(selectSql, params)
     const sanitized = (queue || []).map((p: any) => applyPiiMasking(p, mask))
     return res.json({
       queue: sanitized,
@@ -3378,18 +3488,66 @@ apiRouter.post('/inventory/tokens/serials', requirePermission('inventory', 'can_
 // ==========================================
 // Temporary Delegations Management (Phase 4)
 // ==========================================
-apiRouter.get('/admin/delegations', requireAdmin, async (_req: Request, res: Response) => {
+apiRouter.get('/admin/delegations', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const delegations = await queryAll(`
+    const search = req.query.search ? String(req.query.search).trim() : ''
+    const status = req.query.status ? String(req.query.status).trim() : ''
+    const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+
+    const conditions: string[] = []
+    const params: any[] = []
+
+    if (status) {
+      conditions.push('d.status = ?')
+      params.push(status)
+    }
+
+    if (search) {
+      conditions.push('(g.full_name LIKE ? OR g.email LIKE ? OR r.full_name LIKE ? OR r.email LIKE ? OR d.module_key LIKE ? OR d.action_key LIKE ?)')
+      const s = `%${search}%`
+      params.push(s, s, s, s, s, s)
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+    const selectSql = `
       SELECT d.*,
              g.full_name as grantor_name, g.email as grantor_email,
              r.full_name as recipient_name, r.email as recipient_email
       FROM temporary_delegations d
       JOIN user_profiles g ON d.grantor_user_id = g.id
       JOIN user_profiles r ON d.recipient_user_id = r.id
+      ${whereClause}
       ORDER BY d.created_at DESC
-    `)
-    return res.json({ delegations })
+    `
+
+    const countSql = `
+      SELECT COUNT(*) as count
+      FROM temporary_delegations d
+      JOIN user_profiles g ON d.grantor_user_id = g.id
+      JOIN user_profiles r ON d.recipient_user_id = r.id
+      ${whereClause}
+    `
+
+    if (isPaginated) {
+      const result = await executePaginatedQuery(selectSql, countSql, params, { page, limit, offset })
+      return res.json({
+        delegations: result.data,
+        page: result.page,
+        limit: result.limit,
+        totalCount: result.totalCount,
+        totalPages: result.totalPages,
+      })
+    }
+
+    const delegations = await queryAll(selectSql, params)
+    return res.json({
+      delegations,
+      page: 1,
+      limit: delegations.length,
+      totalCount: delegations.length,
+      totalPages: 1,
+    })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }
@@ -3570,17 +3728,42 @@ apiRouter.patch('/admin/delegations/:id/revoke', requireAdmin, async (req: Reque
 // ==========================================
 apiRouter.get('/admin/audit-logs', requireAdmin, async (req: Request, res: Response) => {
   try {
+    const search = req.query.search ? String(req.query.search).trim() : ''
+    const actionType = req.query.action_type ? String(req.query.action_type).trim() : ''
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+
+    const conditions: string[] = []
+    const params: any[] = []
+
+    if (actionType) {
+      conditions.push('a.action_type = ?')
+      params.push(actionType)
+    }
+
+    if (search) {
+      conditions.push('(u.full_name LIKE ? OR u.email LIKE ? OR a.action_type LIKE ? OR a.table_affected LIKE ? OR a.record_id LIKE ?)')
+      const s = `%${search}%`
+      params.push(s, s, s, s, s)
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
     const selectSql = `
       SELECT a.*, u.full_name as staff_name, u.email as staff_email
       FROM audit_logs a
       LEFT JOIN user_profiles u ON a.user_id = u.id
+      ${whereClause}
       ORDER BY a.created_at DESC
     `
-    const countSql = 'SELECT COUNT(*) as count FROM audit_logs'
+    const countSql = `
+      SELECT COUNT(*) as count
+      FROM audit_logs a
+      LEFT JOIN user_profiles u ON a.user_id = u.id
+      ${whereClause}
+    `
 
     if (isPaginated) {
-      const result = await executePaginatedQuery(selectSql, countSql, [], { page, limit, offset })
+      const result = await executePaginatedQuery(selectSql, countSql, params, { page, limit, offset })
       return res.json({
         logs: result.data,
         page: result.page,
@@ -3590,7 +3773,7 @@ apiRouter.get('/admin/audit-logs', requireAdmin, async (req: Request, res: Respo
       })
     }
 
-    const logs = await queryAll(selectSql)
+    const logs = await queryAll(selectSql, params)
     return res.json({ logs, totalCount: logs.length })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })

@@ -24,8 +24,10 @@ interface AuditLogRecord {
 export default function AdminAuditLogsPage() {
   const [logs, setLogs] = useState<AuditLogRecord[]>([])
   const [loading, setLoading] = useState(true)
+  const [searchTerm, setSearchTerm] = useState('')
+  const [actionTypeFilter, setActionTypeFilter] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState(10)
+  const [pageSize, setPageSize] = useState(5)
   const [totalCount, setTotalCount] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
 
@@ -35,6 +37,8 @@ export default function AdminAuditLogsPage() {
       page: String(currentPage),
       limit: String(pageSize),
     })
+    if (searchTerm.trim()) params.append('search', searchTerm.trim())
+    if (actionTypeFilter) params.append('action_type', actionTypeFilter)
 
     fetch(`/api/admin/audit-logs?${params.toString()}`)
       .then((r) => r.json())
@@ -44,7 +48,7 @@ export default function AdminAuditLogsPage() {
         setTotalPages(d.totalPages || 1)
       })
       .finally(() => setLoading(false))
-  }, [currentPage, pageSize])
+  }, [currentPage, pageSize, searchTerm, actionTypeFilter])
 
   useEffect(() => {
     loadLogs()
@@ -67,8 +71,40 @@ export default function AdminAuditLogsPage() {
       </div>
 
       <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+        <div className="p-4 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="text-xs font-semibold text-white">System Security & Modification Logs</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-500" />
+              <input
+                type="text"
+                placeholder="Search staff, action, record..."
+                value={searchTerm}
+                onChange={(e) => {
+                  setSearchTerm(e.target.value)
+                  setCurrentPage(1)
+                }}
+                className="pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 w-52"
+              />
+            </div>
+            <select
+              value={actionTypeFilter}
+              onChange={(e) => {
+                setActionTypeFilter(e.target.value)
+                setCurrentPage(1)
+              }}
+              className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+            >
+              <option value="">All Action Types</option>
+              <option value="UPDATE_ROLE_PERMISSIONS">Update Role Matrix</option>
+              <option value="FREEZE_USER_PERMISSIONS">Freeze Permissions</option>
+              <option value="UNFREEZE_USER_PERMISSIONS">Unfreeze Permissions</option>
+              <option value="GRANT_DELEGATION">Grant Delegation</option>
+              <option value="REVOKE_DELEGATION">Revoke Delegation</option>
+              <option value="VERIFY_PAYMENT">Verify Payment</option>
+              <option value="REJECT_PAYMENT">Reject Payment</option>
+            </select>
+          </div>
         </div>
 
         <div className="overflow-x-auto">

@@ -29,6 +29,56 @@ function extractTableName(sql: string): string {
   return match ? match[1].toLowerCase() : ''
 }
 
+// Helper to apply in-memory filtering, sorting, and pagination (LIMIT/OFFSET) for complex JOINs
+function applySqlFilteringAndPagination<T = any>(items: T[], sql: string, params: any[]): T[] {
+  let result = [...items]
+
+  // Extract limit & offset
+  let limit: number | null = null
+  let offset = 0
+
+  const limitParamMatch = sql.match(/limit\s+\?\s+offset\s+\?/i)
+  if (limitParamMatch && params.length >= 2) {
+    limit = parseInt(String(params[params.length - 2]), 10)
+    offset = parseInt(String(params[params.length - 1]), 10)
+    // Remove the limit and offset params from the filter params slice
+    params = params.slice(0, -2)
+  } else {
+    const limitNumMatch = sql.match(/limit\s+(\d+)(?:\s+offset\s+(\d+))?/i)
+    if (limitNumMatch) {
+      limit = parseInt(limitNumMatch[1], 10)
+      if (limitNumMatch[2]) {
+        offset = parseInt(limitNumMatch[2], 10)
+      }
+    }
+  }
+
+  // Filter if WHERE clause exists
+  const whereIdx = sql.toLowerCase().indexOf('where')
+  if (whereIdx !== -1) {
+    const wherePart = sql.substring(whereIdx + 5).split(/order\s+by|limit/i)[0].trim()
+    // Check if there are search LIKE params
+    const likeParams = params.filter(p => typeof p === 'string' && p.startsWith('%') && p.endsWith('%'))
+    if (likeParams.length > 0) {
+      const searchTerm = likeParams[0].slice(1, -1).toLowerCase()
+      result = result.filter(item => {
+        const itemStr = Object.values(item as any)
+          .map(v => (typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v || '')))
+          .join(' ')
+          .toLowerCase()
+        return itemStr.includes(searchTerm)
+      })
+    }
+  }
+
+  // Pagination slice
+  if (limit !== null && !isNaN(limit)) {
+    result = result.slice(offset, offset + limit)
+  }
+
+  return result
+}
+
 export async function queryAll<T = any>(sql: string, params: any[] = []): Promise<T[]> {
   const table = extractTableName(sql)
   if (!table) return []
@@ -47,7 +97,7 @@ export async function queryAll<T = any>(sql: string, params: any[] = []): Promis
         staff_count: counts[r.id] || 0
       })) || []
       res.sort((a, b) => (a.level_order || 0) - (b.level_order || 0))
-      return res as T[]
+      return applySqlFilteringAndPagination(res, sql, params) as T[]
     }
 
     // 2. User profiles with relations
@@ -61,7 +111,7 @@ export async function queryAll<T = any>(sql: string, params: any[] = []): Promis
         branch_name: u.branches?.branch_name
       })) || []
       res.sort((a, b) => (a.level_order || 0) - (b.level_order || 0))
-      return res as T[]
+      return applySqlFilteringAndPagination(res, sql, params) as T[]
     }
 
     // 3. DSC Applications with partner & product relations
@@ -74,7 +124,7 @@ export async function queryAll<T = any>(sql: string, params: any[] = []): Promis
         certificate_type: a.dsc_catalog?.certificate_type,
         validity_years: a.dsc_catalog?.validity_years
       })) || []
-      return res as T[]
+      return applySqlFilteringAndPagination(res, sql, params) as T[]
     }
 
     // 4. Branch token stocks with branch relations
@@ -85,7 +135,7 @@ export async function queryAll<T = any>(sql: string, params: any[] = []): Promis
         branch_name: s.branches?.branch_name,
         branch_code: s.branches?.branch_code
       })) || []
-      return res as T[]
+      return applySqlFilteringAndPagination(res, sql, params) as T[]
     }
 
     // 5. CRM Leads with assigned agent
@@ -95,7 +145,7 @@ export async function queryAll<T = any>(sql: string, params: any[] = []): Promis
         ...l,
         assigned_agent_name: l.user_profiles?.full_name
       })) || []
-      return res as T[]
+      return applySqlFilteringAndPagination(res, sql, params) as T[]
     }
 
     // 6. Service orders with partner relations
@@ -105,7 +155,7 @@ export async function queryAll<T = any>(sql: string, params: any[] = []): Promis
         ...o,
         partner_company: o.partners?.company_name
       })) || []
-      return res as T[]
+      return applySqlFilteringAndPagination(res, sql, params) as T[]
     }
 
     // 7. Temporary delegations with grantor details
@@ -124,7 +174,7 @@ export async function queryAll<T = any>(sql: string, params: any[] = []): Promis
           grantor_status: grantor?.status
         }
       }) || []
-      return res as T[]
+      return applySqlFilteringAndPagination(res, sql, params) as T[]
     }
 
     // 8. Audit logs with user details
@@ -136,7 +186,7 @@ export async function queryAll<T = any>(sql: string, params: any[] = []): Promis
         staff_email: a.user_profiles?.email
       })) || []
       res.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-      return res as T[]
+      return applySqlFilteringAndPagination(res, sql, params) as T[]
     }
 
     // 9. Invoices with partner & bank details
@@ -149,7 +199,7 @@ export async function queryAll<T = any>(sql: string, params: any[] = []): Promis
         account_nickname: i.bank_accounts?.account_nickname
       })) || []
       res.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-      return res as T[]
+      return applySqlFilteringAndPagination(res, sql, params) as T[]
     }
 
     // 10. Payments Received queue with invoices and partner joins
@@ -168,7 +218,7 @@ export async function queryAll<T = any>(sql: string, params: any[] = []): Promis
         bank_name: p.bank_accounts?.bank_name,
         account_number: p.bank_accounts?.account_number
       })) || []
-      return res as T[]
+      return applySqlFilteringAndPagination(res, sql, params) as T[]
     }
 
     // 11. CRM Follow-ups with leads and staff joins
@@ -188,7 +238,26 @@ export async function queryAll<T = any>(sql: string, params: any[] = []): Promis
         lead_code: f.crm_leads?.lead_code,
         conducted_by_name: f.user_profiles?.full_name
       })) || []
-      return res as T[]
+      return applySqlFilteringAndPagination(res, sql, params) as T[]
+    }
+
+    // 12. Delivery challans with branches joins
+    if (table === 'delivery_challans' && sql.includes('JOIN')) {
+      const { data: challans } = await supabase.from('delivery_challans').select('*')
+      const { data: branches } = await supabase.from('branches').select('id, branch_name, branch_code')
+      const branchMap = new Map(branches?.map(b => [b.id, b]))
+      const res = challans?.map(dc => {
+        const sb = branchMap.get(dc.source_branch_id)
+        const db = branchMap.get(dc.destination_branch_id)
+        return {
+          ...dc,
+          source_branch_name: sb?.branch_name,
+          source_branch_code: sb?.branch_code,
+          destination_branch_name: db?.branch_name,
+          destination_branch_code: db?.branch_code,
+        }
+      }) || []
+      return applySqlFilteringAndPagination(res, sql, params) as T[]
     }
 
     // Default query builder
@@ -207,6 +276,23 @@ export async function queryAll<T = any>(sql: string, params: any[] = []): Promis
           query = query.eq('is_active', 1)
         } else if (trimmedCond.includes('is_active = 0')) {
           query = query.eq('is_active', 0)
+        } else if (trimmedCond.includes(' OR ') || trimmedCond.includes(' or ')) {
+          // Compound OR search condition, e.g. (col1 LIKE ? OR col2 LIKE ?)
+          const orCols: string[] = []
+          const re = /([a-z_0-9\.]+)\s*(?:like|ilike)\s*\?/gi
+          let m: RegExpExecArray | null
+          let searchVal = ''
+          while ((m = re.exec(trimmedCond)) !== null) {
+            orCols.push(m[1].replace(/^[a-z0-9_]+\./i, ''))
+            if (paramIndex < params.length) {
+              searchVal = String(params[paramIndex++])
+            }
+          }
+          if (orCols.length > 0 && searchVal) {
+            const cleanVal = searchVal.replace(/%/g, '')
+            const orClause = orCols.map(c => `${c}.ilike.%${cleanVal}%`).join(',')
+            query = query.or(orClause)
+          }
         } else {
           const match = trimmedCond.match(/([a-z_0-9\.]+)\s*(=|!=|<>|>|<|>=|<=|like|ilike)\s*\?/i)
           if (match && paramIndex < params.length) {
@@ -243,11 +329,21 @@ export async function queryAll<T = any>(sql: string, params: any[] = []): Promis
     }
 
     // Handle LIMIT / OFFSET
-    const limitMatch = sql.match(/limit\s+(\d+)(\s+offset\s+(\d+))?/i)
-    if (limitMatch) {
-      const l = parseInt(limitMatch[1], 10)
-      const o = limitMatch[3] ? parseInt(limitMatch[3], 10) : 0
-      query = query.range(o, o + l - 1)
+    let limitNum: number | null = null
+    let offsetNum = 0
+    const limitParamMatch = sql.match(/limit\s+\?\s+offset\s+\?/i)
+    if (limitParamMatch && params.length >= 2) {
+      limitNum = parseInt(String(params[params.length - 2]), 10)
+      offsetNum = parseInt(String(params[params.length - 1]), 10)
+    } else {
+      const limitMatch = sql.match(/limit\s+(\d+)(\s+offset\s+(\d+))?/i)
+      if (limitMatch) {
+        limitNum = parseInt(limitMatch[1], 10)
+        offsetNum = limitMatch[3] ? parseInt(limitMatch[3], 10) : 0
+      }
+    }
+    if (limitNum !== null && !isNaN(limitNum)) {
+      query = query.range(offsetNum, offsetNum + limitNum - 1)
     }
 
     const { data, error } = await query
@@ -267,6 +363,12 @@ export async function queryOne<T = any>(sql: string, params: any[] = []): Promis
   if (!table) return null
 
   try {
+    // 0. Handle COUNT(*) queries directly
+    if (/select\s+count\s*\(\s*\*\s*\)\s*(?:as\s+count)?/i.test(sql)) {
+      const allRows = await queryAll(sql.replace(/select\s+count\s*\(\s*\*\s*\)\s*(?:as\s+count)?/i, 'SELECT *'), params)
+      return { count: allRows.length } as unknown as T
+    }
+
     // 1. User Profiles join lookup
     if (table === 'user_profiles' && (sql.includes('JOIN') || sql.includes('join'))) {
       const isEmailQuery = /lower\s*\(\s*(?:u\.)?email\s*\)\s*=\s*\?|(?:u\.)?email\s*=\s*\?/i.test(sql)

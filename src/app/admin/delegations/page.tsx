@@ -1,7 +1,8 @@
 'use client'
 
 import React, { useState, useEffect, useCallback } from 'react'
-import { ShieldCheck, Plus, Calendar, Clock, AlertTriangle, CheckCircle2, XCircle, Search } from 'lucide-react'
+import { ShieldCheck, Plus, Calendar, Clock, AlertTriangle, CheckCircle2, XCircle, Search, Filter } from 'lucide-react'
+import { Pagination } from '@/components/Pagination'
 
 interface DelegationRecord {
   id: string
@@ -46,18 +47,35 @@ export default function AdminDelegationsPage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
+  // Search, filter & pagination states
+  const [searchTerm, setSearchTerm] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(5)
+  const [totalCount, setTotalCount] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+
   const loadData = useCallback(() => {
     setLoading(true)
+    const params = new URLSearchParams({
+      page: String(currentPage),
+      limit: String(pageSize),
+    })
+    if (searchTerm.trim()) params.append('search', searchTerm.trim())
+    if (statusFilter) params.append('status', statusFilter)
+
     Promise.all([
-      fetch('/api/admin/delegations').then((r) => r.json()),
+      fetch(`/api/admin/delegations?${params.toString()}`).then((r) => r.json()),
       fetch('/api/admin/users?limit=100').then((r) => r.json()),
     ])
       .then(([delData, usrData]) => {
         setDelegations(delData.delegations || [])
+        setTotalCount(delData.totalCount ?? (delData.delegations?.length || 0))
+        setTotalPages(delData.totalPages ?? 1)
         setStaff(usrData.users || [])
       })
       .finally(() => setLoading(false))
-  }, [])
+  }, [currentPage, pageSize, searchTerm, statusFilter])
 
   useEffect(() => {
     loadData()
@@ -134,8 +152,36 @@ export default function AdminDelegationsPage() {
 
       {/* Delegations Table */}
       <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+        <div className="p-4 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="text-xs font-semibold text-white">Active & Historical Permission Grants</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-500" />
+              <input
+                type="text"
+                placeholder="Search staff, module, action..."
+                value={searchTerm}
+                onChange={(e) => {
+                  setSearchTerm(e.target.value)
+                  setCurrentPage(1)
+                }}
+                className="pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 w-52"
+              />
+            </div>
+            <select
+              value={statusFilter}
+              onChange={(e) => {
+                setStatusFilter(e.target.value)
+                setCurrentPage(1)
+              }}
+              className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+            >
+              <option value="">All Statuses</option>
+              <option value="active">Active</option>
+              <option value="revoked">Revoked</option>
+              <option value="expired">Expired</option>
+            </select>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -211,6 +257,20 @@ export default function AdminDelegationsPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Database Pagination */}
+        <Pagination
+          currentPage={currentPage}
+          pageSize={pageSize}
+          totalCount={totalCount}
+          totalPages={totalPages}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={(newSize) => {
+            setPageSize(newSize)
+            setCurrentPage(1)
+          }}
+          isLoading={loading}
+        />
       </div>
 
       {/* Grant Modal */}

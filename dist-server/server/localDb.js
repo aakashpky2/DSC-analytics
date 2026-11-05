@@ -30,6 +30,51 @@ function extractTableName(sql) {
     const match = sql.match(/(?:from|into|update)\s+([a-z_0-9]+)/i);
     return match ? match[1].toLowerCase() : '';
 }
+// Helper to apply in-memory filtering, sorting, and pagination (LIMIT/OFFSET) for complex JOINs
+function applySqlFilteringAndPagination(items, sql, params) {
+    let result = [...items];
+    // Extract limit & offset
+    let limit = null;
+    let offset = 0;
+    const limitParamMatch = sql.match(/limit\s+\?\s+offset\s+\?/i);
+    if (limitParamMatch && params.length >= 2) {
+        limit = parseInt(String(params[params.length - 2]), 10);
+        offset = parseInt(String(params[params.length - 1]), 10);
+        // Remove the limit and offset params from the filter params slice
+        params = params.slice(0, -2);
+    }
+    else {
+        const limitNumMatch = sql.match(/limit\s+(\d+)(?:\s+offset\s+(\d+))?/i);
+        if (limitNumMatch) {
+            limit = parseInt(limitNumMatch[1], 10);
+            if (limitNumMatch[2]) {
+                offset = parseInt(limitNumMatch[2], 10);
+            }
+        }
+    }
+    // Filter if WHERE clause exists
+    const whereIdx = sql.toLowerCase().indexOf('where');
+    if (whereIdx !== -1) {
+        const wherePart = sql.substring(whereIdx + 5).split(/order\s+by|limit/i)[0].trim();
+        // Check if there are search LIKE params
+        const likeParams = params.filter(p => typeof p === 'string' && p.startsWith('%') && p.endsWith('%'));
+        if (likeParams.length > 0) {
+            const searchTerm = likeParams[0].slice(1, -1).toLowerCase();
+            result = result.filter(item => {
+                const itemStr = Object.values(item)
+                    .map(v => (typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v || '')))
+                    .join(' ')
+                    .toLowerCase();
+                return itemStr.includes(searchTerm);
+            });
+        }
+    }
+    // Pagination slice
+    if (limit !== null && !isNaN(limit)) {
+        result = result.slice(offset, offset + limit);
+    }
+    return result;
+}
 async function queryAll(sql, params = []) {
     const table = extractTableName(sql);
     if (!table)
@@ -46,7 +91,7 @@ async function queryAll(sql, params = []) {
                 return (Object.assign(Object.assign({}, r), { level_order: (_a = r.hierarchy_levels) === null || _a === void 0 ? void 0 : _a.level_order, level_name: (_b = r.hierarchy_levels) === null || _b === void 0 ? void 0 : _b.level_name, staff_count: counts[r.id] || 0 }));
             })) || [];
             res.sort((a, b) => (a.level_order || 0) - (b.level_order || 0));
-            return res;
+            return applySqlFilteringAndPagination(res, sql, params);
         }
         // 2. User profiles with relations
         if (table === 'user_profiles' && sql.includes('JOIN')) {
@@ -56,7 +101,7 @@ async function queryAll(sql, params = []) {
                 return (Object.assign(Object.assign({}, u), { role_name: (_a = u.roles) === null || _a === void 0 ? void 0 : _a.name, level_order: (_b = u.hierarchy_levels) === null || _b === void 0 ? void 0 : _b.level_order, level_name: (_c = u.hierarchy_levels) === null || _c === void 0 ? void 0 : _c.level_name, branch_name: (_d = u.branches) === null || _d === void 0 ? void 0 : _d.branch_name }));
             })) || [];
             res.sort((a, b) => (a.level_order || 0) - (b.level_order || 0));
-            return res;
+            return applySqlFilteringAndPagination(res, sql, params);
         }
         // 3. DSC Applications with partner & product relations
         if (table === 'dsc_applications' && sql.includes('JOIN')) {
@@ -65,7 +110,7 @@ async function queryAll(sql, params = []) {
                 var _a, _b, _c, _d;
                 return (Object.assign(Object.assign({}, a), { partner_company: (_a = a.partners) === null || _a === void 0 ? void 0 : _a.company_name, class_type: ((_b = a.dsc_catalog) === null || _b === void 0 ? void 0 : _b.class_type) || a.class_type, certificate_type: (_c = a.dsc_catalog) === null || _c === void 0 ? void 0 : _c.certificate_type, validity_years: (_d = a.dsc_catalog) === null || _d === void 0 ? void 0 : _d.validity_years }));
             })) || [];
-            return res;
+            return applySqlFilteringAndPagination(res, sql, params);
         }
         // 4. Branch token stocks with branch relations
         if (table === 'branch_token_stocks' && sql.includes('JOIN branches')) {
@@ -74,7 +119,7 @@ async function queryAll(sql, params = []) {
                 var _a, _b;
                 return (Object.assign(Object.assign({}, s), { branch_name: (_a = s.branches) === null || _a === void 0 ? void 0 : _a.branch_name, branch_code: (_b = s.branches) === null || _b === void 0 ? void 0 : _b.branch_code }));
             })) || [];
-            return res;
+            return applySqlFilteringAndPagination(res, sql, params);
         }
         // 5. CRM Leads with assigned agent
         if (table === 'crm_leads' && sql.includes('JOIN')) {
@@ -83,7 +128,7 @@ async function queryAll(sql, params = []) {
                 var _a;
                 return (Object.assign(Object.assign({}, l), { assigned_agent_name: (_a = l.user_profiles) === null || _a === void 0 ? void 0 : _a.full_name }));
             })) || [];
-            return res;
+            return applySqlFilteringAndPagination(res, sql, params);
         }
         // 6. Service orders with partner relations
         if (table === 'service_orders' && sql.includes('JOIN')) {
@@ -92,7 +137,7 @@ async function queryAll(sql, params = []) {
                 var _a;
                 return (Object.assign(Object.assign({}, o), { partner_company: (_a = o.partners) === null || _a === void 0 ? void 0 : _a.company_name }));
             })) || [];
-            return res;
+            return applySqlFilteringAndPagination(res, sql, params);
         }
         // 7. Temporary delegations with grantor details
         if (table === 'temporary_delegations' && sql.includes('JOIN')) {
@@ -104,7 +149,7 @@ async function queryAll(sql, params = []) {
                 const recipient = userMap.get(d.recipient_user_id);
                 return Object.assign(Object.assign({}, d), { grantor_name: grantor === null || grantor === void 0 ? void 0 : grantor.full_name, recipient_name: recipient === null || recipient === void 0 ? void 0 : recipient.full_name, grantor_frozen: grantor === null || grantor === void 0 ? void 0 : grantor.permissions_frozen, grantor_status: grantor === null || grantor === void 0 ? void 0 : grantor.status });
             })) || [];
-            return res;
+            return applySqlFilteringAndPagination(res, sql, params);
         }
         // 8. Audit logs with user details
         if (table === 'audit_logs' && sql.includes('JOIN')) {
@@ -114,7 +159,7 @@ async function queryAll(sql, params = []) {
                 return (Object.assign(Object.assign({}, a), { staff_name: (_a = a.user_profiles) === null || _a === void 0 ? void 0 : _a.full_name, staff_email: (_b = a.user_profiles) === null || _b === void 0 ? void 0 : _b.email }));
             })) || [];
             res.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-            return res;
+            return applySqlFilteringAndPagination(res, sql, params);
         }
         // 9. Invoices with partner & bank details
         if (table === 'invoices' && sql.includes('JOIN')) {
@@ -124,7 +169,7 @@ async function queryAll(sql, params = []) {
                 return (Object.assign(Object.assign({}, i), { company_name: (_a = i.partners) === null || _a === void 0 ? void 0 : _a.company_name, partner_code: (_b = i.partners) === null || _b === void 0 ? void 0 : _b.partner_code, account_nickname: (_c = i.bank_accounts) === null || _c === void 0 ? void 0 : _c.account_nickname }));
             })) || [];
             res.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-            return res;
+            return applySqlFilteringAndPagination(res, sql, params);
         }
         // 10. Payments Received queue with invoices and partner joins
         if (table === 'payments_received' && sql.includes('JOIN invoices')) {
@@ -136,7 +181,7 @@ async function queryAll(sql, params = []) {
                 var _a, _b, _c, _d, _e, _f, _g;
                 return (Object.assign(Object.assign({}, p), { invoice_number: (_a = p.invoices) === null || _a === void 0 ? void 0 : _a.invoice_number, total_amount: (_b = p.invoices) === null || _b === void 0 ? void 0 : _b.total_amount, outstanding_balance: (_c = p.invoices) === null || _c === void 0 ? void 0 : _c.outstanding_balance, line_items: (_d = p.invoices) === null || _d === void 0 ? void 0 : _d.line_items, partner_company: (_e = p.partners) === null || _e === void 0 ? void 0 : _e.company_name, bank_name: (_f = p.bank_accounts) === null || _f === void 0 ? void 0 : _f.bank_name, account_number: (_g = p.bank_accounts) === null || _g === void 0 ? void 0 : _g.account_number }));
             })) || [];
-            return res;
+            return applySqlFilteringAndPagination(res, sql, params);
         }
         // 11. CRM Follow-ups with leads and staff joins
         if (table === 'crm_follow_ups' && sql.includes('JOIN')) {
@@ -148,7 +193,19 @@ async function queryAll(sql, params = []) {
                 var _a, _b, _c, _d, _e, _f;
                 return (Object.assign(Object.assign({}, f), { contact_mode: f.channel, follow_up_date: f.scheduled_at, company_name: (_a = f.crm_leads) === null || _a === void 0 ? void 0 : _a.company_name, contact_person: (_b = f.crm_leads) === null || _b === void 0 ? void 0 : _b.contact_person, phone: (_c = f.crm_leads) === null || _c === void 0 ? void 0 : _c.phone, email: (_d = f.crm_leads) === null || _d === void 0 ? void 0 : _d.email, lead_code: (_e = f.crm_leads) === null || _e === void 0 ? void 0 : _e.lead_code, conducted_by_name: (_f = f.user_profiles) === null || _f === void 0 ? void 0 : _f.full_name }));
             })) || [];
-            return res;
+            return applySqlFilteringAndPagination(res, sql, params);
+        }
+        // 12. Delivery challans with branches joins
+        if (table === 'delivery_challans' && sql.includes('JOIN')) {
+            const { data: challans } = await exports.supabase.from('delivery_challans').select('*');
+            const { data: branches } = await exports.supabase.from('branches').select('id, branch_name, branch_code');
+            const branchMap = new Map(branches === null || branches === void 0 ? void 0 : branches.map(b => [b.id, b]));
+            const res = (challans === null || challans === void 0 ? void 0 : challans.map(dc => {
+                const sb = branchMap.get(dc.source_branch_id);
+                const db = branchMap.get(dc.destination_branch_id);
+                return Object.assign(Object.assign({}, dc), { source_branch_name: sb === null || sb === void 0 ? void 0 : sb.branch_name, source_branch_code: sb === null || sb === void 0 ? void 0 : sb.branch_code, destination_branch_name: db === null || db === void 0 ? void 0 : db.branch_name, destination_branch_code: db === null || db === void 0 ? void 0 : db.branch_code });
+            })) || [];
+            return applySqlFilteringAndPagination(res, sql, params);
         }
         // Default query builder
         let query = exports.supabase.from(table).select('*');
@@ -165,6 +222,24 @@ async function queryAll(sql, params = []) {
                 }
                 else if (trimmedCond.includes('is_active = 0')) {
                     query = query.eq('is_active', 0);
+                }
+                else if (trimmedCond.includes(' OR ') || trimmedCond.includes(' or ')) {
+                    // Compound OR search condition, e.g. (col1 LIKE ? OR col2 LIKE ?)
+                    const orCols = [];
+                    const re = /([a-z_0-9\.]+)\s*(?:like|ilike)\s*\?/gi;
+                    let m;
+                    let searchVal = '';
+                    while ((m = re.exec(trimmedCond)) !== null) {
+                        orCols.push(m[1].replace(/^[a-z0-9_]+\./i, ''));
+                        if (paramIndex < params.length) {
+                            searchVal = String(params[paramIndex++]);
+                        }
+                    }
+                    if (orCols.length > 0 && searchVal) {
+                        const cleanVal = searchVal.replace(/%/g, '');
+                        const orClause = orCols.map(c => `${c}.ilike.%${cleanVal}%`).join(',');
+                        query = query.or(orClause);
+                    }
                 }
                 else {
                     const match = trimmedCond.match(/([a-z_0-9\.]+)\s*(=|!=|<>|>|<|>=|<=|like|ilike)\s*\?/i);
@@ -205,11 +280,22 @@ async function queryAll(sql, params = []) {
             query = query.order(col, { ascending: asc });
         }
         // Handle LIMIT / OFFSET
-        const limitMatch = sql.match(/limit\s+(\d+)(\s+offset\s+(\d+))?/i);
-        if (limitMatch) {
-            const l = parseInt(limitMatch[1], 10);
-            const o = limitMatch[3] ? parseInt(limitMatch[3], 10) : 0;
-            query = query.range(o, o + l - 1);
+        let limitNum = null;
+        let offsetNum = 0;
+        const limitParamMatch = sql.match(/limit\s+\?\s+offset\s+\?/i);
+        if (limitParamMatch && params.length >= 2) {
+            limitNum = parseInt(String(params[params.length - 2]), 10);
+            offsetNum = parseInt(String(params[params.length - 1]), 10);
+        }
+        else {
+            const limitMatch = sql.match(/limit\s+(\d+)(\s+offset\s+(\d+))?/i);
+            if (limitMatch) {
+                limitNum = parseInt(limitMatch[1], 10);
+                offsetNum = limitMatch[3] ? parseInt(limitMatch[3], 10) : 0;
+            }
+        }
+        if (limitNum !== null && !isNaN(limitNum)) {
+            query = query.range(offsetNum, offsetNum + limitNum - 1);
         }
         const { data, error } = await query;
         if (error) {
@@ -229,6 +315,11 @@ async function queryOne(sql, params = []) {
     if (!table)
         return null;
     try {
+        // 0. Handle COUNT(*) queries directly
+        if (/select\s+count\s*\(\s*\*\s*\)\s*(?:as\s+count)?/i.test(sql)) {
+            const allRows = await queryAll(sql.replace(/select\s+count\s*\(\s*\*\s*\)\s*(?:as\s+count)?/i, 'SELECT *'), params);
+            return { count: allRows.length };
+        }
         // 1. User Profiles join lookup
         if (table === 'user_profiles' && (sql.includes('JOIN') || sql.includes('join'))) {
             const isEmailQuery = /lower\s*\(\s*(?:u\.)?email\s*\)\s*=\s*\?|(?:u\.)?email\s*=\s*\?/i.test(sql);
