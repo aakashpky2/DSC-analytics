@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    if (user.status !== 'ACTIVE') {
+    if (user.status && user.status.toLowerCase() !== 'active') {
       return NextResponse.json(
         { error: 'Account is deactivated. Contact your administrator.' },
         { status: 403 }
