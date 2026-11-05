@@ -3,8 +3,9 @@
 
 import React, { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Send } from 'lucide-react'
+import { ArrowLeft, Send, CheckCircle2 } from 'lucide-react'
 import { Pagination } from '@/components/Pagination'
+import { PaymentReminderModal } from '@/components/PaymentReminderModal'
 
 export default function LedgerAgingPage() {
   const [partners, setPartners] = useState<any[]>([])
@@ -19,6 +20,9 @@ export default function LedgerAgingPage() {
 
   // Buckets calculation states
   const [buckets, setBuckets] = useState({ b0to30: 0, b31to60: 0, b61to90: 0, b90Plus: 0 })
+
+  // Reminder Modal State
+  const [activeReminderPartner, setActiveReminderPartner] = useState<{ id: string; name: string } | null>(null)
 
   const loadData = useCallback(() => {
     setLoading(true)
@@ -174,11 +178,19 @@ export default function LedgerAgingPage() {
                         ₹{outstanding.toLocaleString('en-IN')}
                       </td>
                       <td className="p-3 text-center">
-                        <button
-                          className="px-2.5 py-1 rounded bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 font-medium text-[10px] border border-indigo-500/40 inline-flex items-center gap-1 cursor-pointer"
-                        >
-                          <Send className="w-2.5 h-2.5" /> Send Reminder
-                        </button>
+                        {outstanding > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => setActiveReminderPartner({ id: p.id, name: p.company_name })}
+                            className="px-2.5 py-1 rounded bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 font-medium text-[10px] border border-indigo-500/40 inline-flex items-center gap-1 cursor-pointer transition-colors"
+                          >
+                            <Send className="w-2.5 h-2.5" /> Send Reminder
+                          </button>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-[10px] font-medium border border-emerald-500/20 inline-flex items-center gap-1">
+                            <CheckCircle2 className="w-2.5 h-2.5" /> No Dues
+                          </span>
+                        )}
                       </td>
                     </tr>
                   )
@@ -199,6 +211,18 @@ export default function LedgerAgingPage() {
           isLoading={loading}
         />
       </div>
+
+      {/* Payment Reminder Modal */}
+      {activeReminderPartner && (
+        <PaymentReminderModal
+          partnerId={activeReminderPartner.id}
+          partnerName={activeReminderPartner.name}
+          onClose={() => setActiveReminderPartner(null)}
+          onReminderLogged={() => {
+            // Optional callback when reminder is logged
+          }}
+        />
+      )}
     </div>
   )
 }

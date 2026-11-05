@@ -2575,6 +2575,283 @@ apiRouter.post('/billing/payments/verify', requirePermission('billing', 'can_edi
 })
 
 // ==========================================
+// 8.1 Payment Reminders & Aging Follow-ups
+// ==========================================
+
+// GET /api/billing/reminders/preview?partner_id=...
+// Prepares reminder details, calculating real outstanding invoices and bank payment info
+apiRouter.get('/billing/reminders/preview', requirePermission('billing', 'can_view'), async (req: Request, res: Response) => {
+  try {
+    const partnerId = String(req.query.partner_id || '').trim()
+    if (!partnerId) {
+      return res.status(400).json({ error: 'partner_id is required' })
+    }
+
+    const partner = await queryOne<any>('SELECT * FROM partners WHERE id = ?', [partnerId])
+    if (!partner) {
+      return res.status(404).json({ error: 'Partner not found' })
+    }
+
+    // Fetch active unpaid / partially_paid invoices (exclude paid, rejected, cancelled)
+    const allInvoices = await queryAll<any>(
+      'SELECT id, invoice_number, total_amount, outstanding_balance, due_date, status, invoice_date FROM invoices WHERE partner_id = ? AND status IN (?, ?) AND outstanding_balance > 0 ORDER BY due_date ASC',
+      [partnerId, 'unpaid', 'partially_paid']
+    )
+
+    const totalOutstanding = allInvoices.reduce((sum, inv) => sum + Number(inv.outstanding_balance || 0), 0)
+
+    // Calculate earliest due date and overdue days
+    let earliestDueDate: string | null = null
+    let maxOverdueDays = 0
+    const now = Date.now()
+
+    if (allInvoices.length > 0) {
+      earliestDueDate = allInvoices[0].due_date
+      allInvoices.forEach(inv => {
+        if (inv.due_date) {
+          const dueTime = new Date(inv.due_date).getTime()
+          const diff = Math.floor((now - dueTime) / (1000 * 60 * 60 * 24))
+          if (diff > maxOverdueDays) {
+            maxOverdueDays = diff
+          }
+        }
+      })
+    }
+
+    // Fetch primary active bank account for payment details
+    const bankAccount = await queryOne<any>('SELECT bank_name, account_number, ifsc_code, upi_id, account_holder_name FROM bank_accounts WHERE is_active = 1 LIMIT 1')
+
+    const mask = shouldMaskPii(req)
+    const sanitizedPartner = applyPiiMasking(partner, mask)
+
+    // Construct default suggested message
+    const isOverdue = maxOverdueDays > 0
+    const greeting = partner.contact_person ? `Dear ${partner.contact_person} (${partner.company_name}),` : `Dear ${partner.company_name},`
+    
+    let invoiceLines = ''
+    if (allInvoices.length === 1) {
+      const inv = allInvoices[0]
+      const dueStr = inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-IN') : 'Immediate'
+      invoiceLines = `${inv.invoice_number} — ₹${Number(inv.outstanding_balance).toLocaleString('en-IN')} (Due: ${dueStr})`
+    } else {
+      invoiceLines = allInvoices.slice(0, 5).map(inv => {
+        const dueStr = inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-IN') : 'Immediate'
+        return `• ${inv.invoice_number} — ₹${Number(inv.outstanding_balance).toLocaleString('en-IN')} (Due: ${dueStr})`
+      }).join('\n')
+      if (allInvoices.length > 5) {
+        invoiceLines += `\n• ...and ${allInvoices.length - 5} more invoice(s)`
+      }
+    }
+
+    let bankBlock = ''
+    if (bankAccount) {
+      bankBlock = `\nBank Transfer Details:\n• Bank: ${bankAccount.bank_name}\n• A/C No: ${bankAccount.account_number}\n• IFSC: ${bankAccount.ifsc_code}${bankAccount.upi_id ? `\n• UPI: ${bankAccount.upi_id}` : ''}\n`
+    }
+
+    const toneText = isOverdue
+      ? `This is a friendly payment reminder regarding overdue invoice(s) with an outstanding balance of ₹${totalOutstanding.toLocaleString('en-IN')}:`
+      : `This is a payment reminder regarding the upcoming balance of ₹${totalOutstanding.toLocaleString('en-IN')} against invoice(s):`
+
+    const defaultMessage = `${greeting}\n\n${toneText}\n\n${invoiceLines}\n\nTotal Outstanding: ₹${totalOutstanding.toLocaleString('en-IN')}\n${bankBlock}\nKindly arrange payment at your earliest convenience. If payment has already been initiated, please reply with the UTR / transaction receipt so we can update your statement.\n\nRegards,\nSignSync Accounts Team`
+
+    return res.json({
+      partner: sanitizedPartner,
+      raw_phone: mask ? null : partner.phone,
+      raw_email: mask ? null : partner.email,
+      invoices: allInvoices,
+      total_outstanding: totalOutstanding,
+      earliest_due_date: earliestDueDate,
+      overdue_days: maxOverdueDays,
+      is_overdue: isOverdue,
+      bank_account: bankAccount,
+      default_message: defaultMessage
+    })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+// POST /api/billing/reminders/log
+// Records reminder action in Supabase audit_logs with idempotent check and strict permission enforcement
+apiRouter.post('/billing/reminders/log', requirePermission('billing', 'can_create'), async (req: Request, res: Response) => {
+  try {
+    const currentUser = (req as any).user
+    const delegation = (req as any).delegation
+    const {
+      partner_id,
+      channel, // 'whatsapp' | 'email'
+      status,  // 'drafted' | 'opened' | 'staff_confirmed_sent'
+      outstanding_amount,
+      invoices,
+      recipient_phone,
+      recipient_email,
+      message_content,
+      client_timestamp
+    } = req.body
+
+    if (!partner_id || !channel || !status) {
+      return res.status(400).json({ error: 'partner_id, channel, and status are required' })
+    }
+
+    if (!['whatsapp', 'email'].includes(channel)) {
+      return res.status(400).json({ error: 'Channel must be whatsapp or email' })
+    }
+
+    if (!['drafted', 'opened', 'staff_confirmed_sent'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid reminder status' })
+    }
+
+    // Verify partner exists
+    const partner = await queryOne<any>('SELECT id, company_name FROM partners WHERE id = ?', [partner_id])
+    if (!partner) {
+      return res.status(404).json({ error: 'Partner not found' })
+    }
+
+    // Double-click idempotency guard: check for identical reminder logged by same user in last 10 seconds
+    const tenSecondsAgo = new Date(Date.now() - 10000).toISOString()
+    const { data: recentLogs } = await supabase
+      .from('audit_logs')
+      .select('id, created_at, new_value_json')
+      .eq('action_type', 'PAYMENT_REMINDER_LOGGED')
+      .eq('user_id', currentUser.id)
+      .eq('record_id', partner_id)
+      .gte('created_at', tenSecondsAgo)
+
+    if (recentLogs && recentLogs.length > 0) {
+      // Find if same channel and status was recorded
+      const duplicate = recentLogs.find((l: any) => {
+        try {
+          const parsed = typeof l.new_value_json === 'string' ? JSON.parse(l.new_value_json) : l.new_value_json
+          return parsed?.channel === channel && parsed?.status === status
+        } catch {
+          return false
+        }
+      })
+      if (duplicate) {
+        return res.status(200).json({
+          success: true,
+          id: duplicate.id,
+          message: 'Reminder already logged recently (idempotent response)'
+        })
+      }
+    }
+
+    const reminderId = `rem-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+    const reminderPayload = {
+      reminder_id: reminderId,
+      partner_id,
+      partner_name: partner.company_name,
+      channel,
+      status, // 'drafted' | 'opened' | 'staff_confirmed_sent'
+      outstanding_amount: Number(outstanding_amount) || 0,
+      invoices: Array.isArray(invoices) ? invoices : [],
+      recipient_phone: recipient_phone || null,
+      recipient_email: recipient_email || null,
+      message_snapshot: message_content || '',
+      staff_id: currentUser.id,
+      staff_name: currentUser.full_name,
+      client_timestamp: client_timestamp || new Date().toISOString()
+    }
+
+    await logAuditEvent({
+      userId: currentUser.id,
+      actionType: 'PAYMENT_REMINDER_LOGGED',
+      moduleKey: 'billing',
+      tableAffected: 'partners',
+      recordId: partner_id,
+      newValueJson: reminderPayload,
+      reason: `Payment reminder ${status} via ${channel} to ${partner.company_name} (₹${outstanding_amount})`,
+      delegationId: delegation?.id,
+      ipAddress: req.ip
+    })
+
+    return res.status(201).json({
+      success: true,
+      id: reminderId,
+      status,
+      channel,
+      created_at: new Date().toISOString()
+    })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+// GET /api/billing/reminders/history?partner_id=...
+// Retrieves logged reminder history from Supabase audit_logs for a partner
+apiRouter.get('/billing/reminders/history', requirePermission('billing', 'can_view'), async (req: Request, res: Response) => {
+  try {
+    const partnerId = String(req.query.partner_id || '').trim()
+    const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+
+    let query = supabase
+      .from('audit_logs')
+      .select('id, user_id, action_type, new_value_json, created_at', { count: 'exact' })
+      .eq('action_type', 'PAYMENT_REMINDER_LOGGED')
+
+    if (partnerId) {
+      query = query.eq('record_id', partnerId)
+    }
+
+    query = query.order('created_at', { ascending: false })
+
+    if (isPaginated) {
+      query = query.range(offset, offset + limit - 1)
+    } else {
+      query = query.limit(20)
+    }
+
+    const { data, count, error } = await query
+    if (error) {
+      return res.status(500).json({ error: error.message })
+    }
+
+    // Fetch user names for users who logged reminders
+    const userIds = Array.from(new Set((data || []).map((d: any) => d.user_id).filter(Boolean)))
+    let userMap: Record<string, string> = {}
+    if (userIds.length > 0) {
+      const { data: users } = await supabase.from('user_profiles').select('id, full_name').in('id', userIds)
+      users?.forEach((u: any) => { userMap[u.id] = u.full_name })
+    }
+
+    const history = (data || []).map((row: any) => {
+      let payload: any = {}
+      try {
+        payload = typeof row.new_value_json === 'string' ? JSON.parse(row.new_value_json) : (row.new_value_json || {})
+      } catch {
+        payload = {}
+      }
+      return {
+        id: row.id,
+        reminder_id: payload.reminder_id || row.id,
+        partner_id: payload.partner_id || row.record_id,
+        partner_name: payload.partner_name,
+        channel: payload.channel,
+        status: payload.status,
+        outstanding_amount: payload.outstanding_amount,
+        invoices: payload.invoices,
+        recipient_phone: payload.recipient_phone,
+        recipient_email: payload.recipient_email,
+        message_snapshot: payload.message_snapshot,
+        staff_id: row.user_id,
+        staff_name: userMap[row.user_id] || payload.staff_name || 'Staff',
+        created_at: row.created_at
+      }
+    })
+
+    return res.json({
+      history,
+      totalCount: count || history.length,
+      page: isPaginated ? page : 1,
+      limit: isPaginated ? limit : history.length,
+      totalPages: isPaginated ? Math.max(1, Math.ceil((count || 0) / limit)) : 1
+    })
+  } catch (err: unknown) {
+    return res.status(500).json({ error: (err as Error).message })
+  }
+})
+
+// ==========================================
 // 9. Logistics, Couriers & POD Tracking
 // ==========================================
 apiRouter.get('/courier/dispatches', requirePermission('courier', 'can_view'), async (req: Request, res: Response) => {
