@@ -48,6 +48,7 @@ const auth_1 = require("../auth");
 const leadManagement_1 = require("./leadManagement");
 const dscMaster_1 = require("./dscMaster");
 const courierModule_1 = require("./courierModule");
+const billingModule_1 = require("./billingModule");
 const leadStore_1 = require("../leadStore");
 const partnerMatchEngine_1 = require("../partnerMatchEngine");
 exports.apiRouter = (0, express_1.Router)();
@@ -79,10 +80,11 @@ async function resolveUserContext(req, _res, next) {
     }
 }
 exports.apiRouter.use(resolveUserContext);
-// Mount Lead Management Sub-router (Masters, Queues, Clubbing, Interactions, Tracking)
+// Mount Sub-routers (Lead Management, DSC Masters, Logistics, and Invoicing & Billing)
 exports.apiRouter.use(leadManagement_1.leadManagementRouter);
 exports.apiRouter.use(dscMaster_1.dscMasterRouter);
 exports.apiRouter.use(courierModule_1.courierModuleRouter);
+exports.apiRouter.use(billingModule_1.billingRouter);
 function requireAuth(req, res, next) {
     const user = req.user;
     if (!user) {

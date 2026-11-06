@@ -20,6 +20,7 @@ import {
 import { leadManagementRouter } from './leadManagement'
 import { dscMasterRouter } from './dscMaster'
 import { courierModuleRouter } from './courierModule'
+import { billingRouter } from './billingModule'
 import { loadLeadStore, saveLeadStore } from '../leadStore'
 import { evaluatePartnerMatch } from '../partnerMatchEngine'
 
@@ -51,10 +52,11 @@ async function resolveUserContext(req: Request, _res: Response, next: NextFuncti
 
 apiRouter.use(resolveUserContext)
 
-// Mount Lead Management Sub-router (Masters, Queues, Clubbing, Interactions, Tracking)
+// Mount Sub-routers (Lead Management, DSC Masters, Logistics, and Invoicing & Billing)
 apiRouter.use(leadManagementRouter)
 apiRouter.use(dscMasterRouter)
 apiRouter.use(courierModuleRouter)
+apiRouter.use(billingRouter)
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const user = (req as any).user
