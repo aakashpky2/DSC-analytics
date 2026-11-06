@@ -1,4 +1,4 @@
-const { queryAll, queryOne, run } = require('../dist-server/server/supabaseDb');
+const { queryAll, queryOne, run } = require('../dist-server/server/supabase');
 
 async function testSupabaseAdapter() {
   console.log('--- Testing queryAll ---');

@@ -1,4 +1,4 @@
-import { supabase, run } from './localDb'
+import { supabase, run } from './supabase'
 import crypto from 'crypto'
 import bcrypt from 'bcryptjs'
 

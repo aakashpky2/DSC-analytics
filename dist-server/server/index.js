@@ -12,7 +12,7 @@ const cookie_parser_1 = __importDefault(require("cookie-parser"));
 const next_1 = __importDefault(require("next"));
 const api_1 = require("./routes/api");
 const auth_1 = require("./auth");
-const localDb_1 = require("./localDb");
+const supabase_1 = require("./supabase");
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = process.env.HOSTNAME || '0.0.0.0';
 const port = parseInt(process.env.PORT || '3000', 10);
@@ -37,7 +37,7 @@ const PUBLIC_PAGE_PREFIXES = [
 async function startServer() {
     await nextApp.prepare();
     // Ensure sessions and password reset tables exist
-    await (0, localDb_1.run)(`
+    await (0, supabase_1.run)(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -46,7 +46,7 @@ async function startServer() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
-    await (0, localDb_1.run)(`
+    await (0, supabase_1.run)(`
     CREATE TABLE IF NOT EXISTS password_resets (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,

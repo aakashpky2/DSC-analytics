@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express'
-import { queryAll, queryOne, run, supabase } from '../localDb'
+import { queryAll, queryOne, run, supabase } from '../supabase'
 import { calculateLandedCost, evaluateLeadDuplicates, calculateGst } from '../../lib/businessLogic'
 import { formatReferenceNumber, NumberingConfig } from '../../lib/numberingEngine'
 import { applyPiiMasking } from '../../lib/masking'
@@ -17,6 +17,11 @@ import {
   getUserProfileByEmail,
   getUserProfileById,
 } from '../auth'
+import { leadManagementRouter } from './leadManagement'
+import { dscMasterRouter } from './dscMaster'
+import { courierModuleRouter } from './courierModule'
+import { loadLeadStore, saveLeadStore } from '../leadStore'
+import { evaluatePartnerMatch } from '../partnerMatchEngine'
 
 export const apiRouter = Router()
 
@@ -46,7 +51,12 @@ async function resolveUserContext(req: Request, _res: Response, next: NextFuncti
 
 apiRouter.use(resolveUserContext)
 
-function requireAuth(req: Request, res: Response, next: NextFunction) {
+// Mount Lead Management Sub-router (Masters, Queues, Clubbing, Interactions, Tracking)
+apiRouter.use(leadManagementRouter)
+apiRouter.use(dscMasterRouter)
+apiRouter.use(courierModuleRouter)
+
+export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const user = (req as any).user
   if (!user) {
     return res.status(401).json({ error: 'Please enter your email and password to sign in.' })
@@ -94,7 +104,7 @@ function shouldMaskPii(req: Request): boolean {
  * Granular Permission Guard: Checks module-level CRUD or specific action permission,
  * resolving role matrix, user overrides, and valid temporary delegations.
  */
-function requirePermission(moduleKey: string, actionKey: string) {
+export function requirePermission(moduleKey: string, actionKey: string) {
   return async (req: Request, res: Response, next: NextFunction) => {
     const user = (req as any).user
     if (!user) {
@@ -187,7 +197,7 @@ function requirePermission(moduleKey: string, actionKey: string) {
 /**
  * Record administrative change in audit_logs
  */
-async function logAuditEvent(params: {
+export async function logAuditEvent(params: {
   userId: string
   actionType: string
   moduleKey: string
@@ -226,11 +236,11 @@ async function logAuditEvent(params: {
  * Concurrency-Safe Document Reference Number Allocator
  * Atomically increments counter using optimistic concurrency locking loop and formats business reference string.
  */
-async function allocateNextReferenceNumber(
+export async function allocateNextReferenceNumber(
   documentType: string,
   options?: { companyCode?: string; branchCode?: string; date?: Date }
 ): Promise<string> {
-  const { supabase } = await import('../localDb')
+  const { supabase } = await import('../supabase')
 
   // Attempt optimistic concurrency lock up to 25 retries
   for (let attempt = 0; attempt < 25; attempt++) {
@@ -1241,7 +1251,7 @@ apiRouter.post('/inventory/transfers', requirePermission('inventory', 'can_creat
     const { source_branch_id, destination_branch_id, token_model, quantity, remarks, transfer_date, serial_numbers } = req.body
     const currentUser = (req as any).user
     const delegation = (req as any).delegation
-    const { supabase } = await import('../localDb')
+    const { supabase } = await import('../supabase')
 
     if (!source_branch_id || !destination_branch_id || !token_model) {
       return res.status(400).json({ error: 'Source branch, destination branch, and token model are required.' })
@@ -1400,7 +1410,7 @@ apiRouter.post('/inventory/transfers', requirePermission('inventory', 'can_creat
 apiRouter.patch('/inventory/transfers/:id/receive', requireAuth, async (req: Request, res: Response) => {
   try {
     const challanId = req.params.id as string
-    const { supabase } = await import('../localDb')
+    const { supabase } = await import('../supabase')
 
     const challan = await queryOne<any>('SELECT * FROM delivery_challans WHERE id = ?', [challanId])
     if (!challan) return res.status(404).json({ error: 'Delivery Challan not found.' })
@@ -1471,7 +1481,7 @@ apiRouter.post('/inventory/adjust', requireAdmin, async (req: Request, res: Resp
   try {
     const { branch_id, token_model, adjustment_type, quantity, reason } = req.body
     const currentUser = (req as any).user
-    const { supabase } = await import('../localDb')
+    const { supabase } = await import('../supabase')
 
     if (!branch_id || !token_model || !adjustment_type || quantity === undefined) {
       return res.status(400).json({ error: 'Branch, token model, adjustment type, and quantity are required.' })
@@ -1572,9 +1582,17 @@ apiRouter.post('/inventory/adjust', requireAdmin, async (req: Request, res: Resp
 // ==========================================
 apiRouter.get('/crm/leads', requirePermission('crm', 'can_view'), async (req: Request, res: Response) => {
   try {
+    const user = (req as any).user
     const mask = shouldMaskPii(req)
     const search = req.query.search ? String(req.query.search).trim() : ''
+    const { category_id, status } = req.query
     const { page, limit, offset, isPaginated } = parsePaginationParams(req.query)
+
+    const store = loadLeadStore()
+    const isSupervisor = user.hierarchy_level_order <= 1
+    const userCatIds = (store.user_category_access || [])
+      .filter((a: any) => a.user_id === user.id)
+      .map((a: any) => a.category_id)
 
     let whereClause = 'WHERE l.is_merged = 0'
     const params: any[] = []
@@ -1582,6 +1600,11 @@ apiRouter.get('/crm/leads', requirePermission('crm', 'can_view'), async (req: Re
       whereClause += ' AND (l.company_name LIKE ? OR l.contact_person LIKE ? OR l.lead_code LIKE ? OR l.email LIKE ? OR l.phone LIKE ?)'
       const s = `%${search}%`
       params.push(s, s, s, s, s)
+    }
+
+    if (status) {
+      whereClause += ' AND l.status = ?'
+      params.push(String(status))
     }
 
     const selectSql = `
@@ -1592,26 +1615,60 @@ apiRouter.get('/crm/leads', requirePermission('crm', 'can_view'), async (req: Re
       ORDER BY l.created_at DESC
     `
 
-    const countSql = `
-      SELECT COUNT(*) as count
-      FROM crm_leads l
-      ${whereClause}
-    `
+    const rawLeads = await queryAll(selectSql, params)
+
+    // Merge extended metadata (category, source, service_intent, match_status, geography)
+    const enriched = rawLeads.map((l: any) => {
+      const ext = store.extended_leads[l.id] || {}
+      return {
+        ...l,
+        alternate_name: ext.alternate_name || null,
+        state: ext.state || null,
+        district: ext.district || null,
+        address: ext.address || null,
+        pin_code: ext.pin_code || null,
+        source_id: ext.source_id || null,
+        category_id: ext.category_id || null,
+        service_intent: ext.service_intent || 'Undecided',
+        match_status: ext.match_status || 'NO_MATCH',
+        linked_partner_id: ext.linked_partner_id || null,
+        partner_match_score: ext.partner_match_score || 0,
+        partner_match_factors: ext.partner_match_factors || null,
+        city: ext.city || null,
+        pipeline_status: ext.pipeline_status || (l.status === 'merged' ? 'WON' : l.status.toUpperCase()),
+        applied_tat_days: ext.applied_tat_days || null,
+        first_contact_due_at: ext.first_contact_due_at || null,
+        assignment_history: ext.assignment_history || []
+      }
+    })
+
+    // LM-16: Strict Backend Category-Level Data Isolation
+    const scopedLeads = enriched.filter((l: any) => {
+      if (isSupervisor) {
+        if (category_id && l.category_id !== category_id) return false
+        return true
+      }
+      // Unassigned staff cannot see uncategorized leads (LM-17)
+      if (!l.category_id) return false
+      // Only view assigned categories
+      if (!userCatIds.includes(l.category_id)) return false
+      if (category_id && l.category_id !== category_id) return false
+      return true
+    })
+
+    const sanitized = scopedLeads.map((l: any) => applyPiiMasking(l, mask))
 
     if (isPaginated) {
-      const result = await executePaginatedQuery(selectSql, countSql, params, { page, limit, offset })
-      const sanitized = result.data.map((l: any) => applyPiiMasking(l, mask))
+      const paginatedSlice = sanitized.slice(offset, offset + limit)
       return res.json({
-        leads: sanitized,
-        page: result.page,
-        limit: result.limit,
-        totalCount: result.totalCount,
-        totalPages: result.totalPages,
+        leads: paginatedSlice,
+        page,
+        limit,
+        totalCount: sanitized.length,
+        totalPages: Math.ceil(sanitized.length / limit),
       })
     }
 
-    const leads = await queryAll(selectSql, params)
-    const sanitized = leads.map((l: any) => applyPiiMasking(l, mask))
     return res.json({
       leads: sanitized,
       page: 1,
@@ -1652,16 +1709,183 @@ apiRouter.post('/crm/leads/check-duplicate', requirePermission('crm', 'can_view'
 
 apiRouter.post('/crm/leads', requirePermission('crm', 'can_create'), async (req: Request, res: Response) => {
   try {
-    const { company_name, contact_person, email, phone, gstin, pan, requirement_summary } = req.body
+    const user = (req as any).user
+    const {
+      company_name,
+      alternate_name,
+      contact_person,
+      email,
+      phone,
+      state,
+      district,
+      address,
+      pin_code,
+      source_id,
+      category_id,
+      service_intent,
+      city,
+      pan,
+      requirement_summary,
+      pipeline_status
+    } = req.body
+
+    // LM-06: All lead fields optional. No personal/contact field may block saving.
+    // If not supplied, provide clean empty string for legacy not-null columns while keeping extendedStore unpolluted
+    const cleanCompany = company_name ? company_name.trim() : ''
+    const cleanContact = contact_person ? contact_person.trim() : ''
+    const cleanEmail = email ? email.trim().toLowerCase() : ''
+    const cleanPhone = phone ? phone.trim() : ''
+        const cleanPan = pan ? pan.trim().toUpperCase() : null
+    const cleanReq = requirement_summary ? requirement_summary.trim() : ''
+
     const id = `lead-${Date.now()}`
     const lead_code = await allocateNextReferenceNumber('lead')
 
+    // LM-08 to LM-11: Evaluate partner matching immediately on creation
+    const partnerMatch = await evaluatePartnerMatch({
+      company_name: cleanCompany,
+      alternate_name: alternate_name ? alternate_name.trim() : null,
+      email: cleanEmail,
+      phone: cleanPhone
+    })
+
+    // Insert primary record in crm_leads (PostgreSQL / Supabase compatible)
     await run(`
       INSERT INTO crm_leads (id, lead_code, company_name, contact_person, email, phone, gstin, pan, requirement_summary, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
-    `, [id, lead_code, company_name, contact_person, email, phone, gstin, pan, requirement_summary])
+    `, [id, lead_code, cleanCompany, cleanContact, cleanEmail, cleanPhone, cleanPan, cleanReq])
 
-    return res.status(201).json({ success: true, id, lead_code })
+    // Save extended specification attributes into leadStore
+    if (id && id !== 'undefined' && String(id).trim().length > 0) {
+    const store = loadLeadStore()
+
+    // DEF-04: Resolve active TAT setting for snapshot
+    let appliedTatDays = 2
+    try {
+      const { data: tatData } = await supabase
+        .from('crm_tat_settings')
+        .select('first_contact_tat_days')
+        .eq('is_active', 1)
+        .order('effective_from', { ascending: false })
+        .limit(1)
+      if (tatData && tatData.length > 0 && tatData[0].first_contact_tat_days) {
+        appliedTatDays = Number(tatData[0].first_contact_tat_days)
+      } else if (store.tat_settings?.[0]?.first_contact_tat_days) {
+        appliedTatDays = Number(store.tat_settings[0].first_contact_tat_days)
+      }
+    } catch (e) {
+      if (store.tat_settings?.[0]?.first_contact_tat_days) {
+        appliedTatDays = Number(store.tat_settings[0].first_contact_tat_days)
+      }
+    }
+
+    const firstContactDueAt = new Date(Date.now() + appliedTatDays * 24 * 60 * 60 * 1000).toISOString()
+
+    store.extended_leads[id] = {
+      alternate_name: alternate_name ? alternate_name.trim() : null,
+      city: city ? city.trim() : null,
+      state: state ? state.trim() : null,
+      district: district ? district.trim() : null,
+      address: address ? address.trim() : null,
+      pin_code: pin_code ? pin_code.trim() : null,
+      source_id: source_id || null,
+      category_id: category_id || null,
+      service_intent: service_intent || 'Undecided',
+      pipeline_status: pipeline_status || 'NEW',
+      match_status: partnerMatch.matchStatus,
+      linked_partner_id: partnerMatch.matchedPartner?.id || null,
+      partner_match_score: partnerMatch.matchScore,
+      partner_match_factors: partnerMatch.matchFactors.join(' | '),
+      applied_tat_days: appliedTatDays,
+      first_contact_due_at: firstContactDueAt
+    }
+
+    // Initialize service activation tracking (LM-26, LM-27)
+    const lstId = `lst-${Date.now()}`
+    const lstNowIso = new Date().toISOString()
+    const tokenReq = (service_intent === 'Token' || service_intent === 'Both') ? 1 : 0
+    const dscReq = (service_intent === 'DSC' || service_intent === 'Both') ? 1 : 0
+
+    store.service_tracking[id] = {
+      id: lstId,
+      lead_id: id,
+      service_intent: service_intent || 'Undecided',
+      token_requested: tokenReq,
+      token_fulfilled: 0,
+      dsc_requested: dscReq,
+      dsc_fulfilled: 0,
+      tracking_status: 'PENDING_QUALIFICATION',
+      last_updated_by: user?.id,
+      updated_at: lstNowIso
+    }
+
+    // Direct Relational Persistence into crm_lead_service_tracking (DEF-01)
+    try {
+      await supabase.from('crm_lead_service_tracking').upsert({
+        id: lstId,
+        lead_id: id,
+        service_intent: service_intent || 'Undecided',
+        token_requested: tokenReq,
+        token_fulfilled: 0,
+        token_fulfilled_at: null,
+        token_batch_id: null,
+        dsc_requested: dscReq,
+        dsc_fulfilled: 0,
+        dsc_fulfilled_at: null,
+        dsc_application_id: null,
+        tracking_status: 'PENDING_QUALIFICATION',
+        last_updated_by: user?.id,
+        updated_at: lstNowIso
+      })
+    } catch (e: any) {
+      console.error('Direct persist POST /crm/leads service_tracking error:', e.message)
+    }
+
+    // Record review item if match detected
+    if (partnerMatch.hasMatch && partnerMatch.matchedPartner) {
+      const pmrId = `pmr-${Date.now()}`
+      const pmrNowIso = new Date().toISOString()
+      const matchTypeVal = partnerMatch.matchType || 'PHONE_SIMILARITY'
+      const matchDetailsVal = {
+        factors: partnerMatch.matchFactors,
+        partner_code: partnerMatch.matchedPartner.partner_code
+      }
+
+      store.match_reviews.push({
+        id: pmrId,
+        lead_id: id,
+        partner_id: partnerMatch.matchedPartner.id,
+        match_type: matchTypeVal,
+        match_details: matchDetailsVal,
+        resolution_status: 'PENDING_REVIEW',
+        created_at: pmrNowIso
+      })
+
+      // Direct Relational Persistence into crm_partner_match_reviews (DEF-01)
+      try {
+        await supabase.from('crm_partner_match_reviews').upsert({
+          id: pmrId,
+          lead_id: id,
+          partner_id: partnerMatch.matchedPartner.id,
+          match_type: matchTypeVal,
+          match_details: matchDetailsVal,
+          resolution_status: 'PENDING_REVIEW',
+          created_at: pmrNowIso
+        })
+      } catch (e: any) {
+        console.error('Direct persist POST /crm/leads match_reviews error:', e.message)
+      }
+    }
+
+    saveLeadStore(store)
+    }
+
+    return res.status(201).json({
+      success: true,
+      id,
+      lead_code,
+      partnerMatch
+    })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
   }
@@ -1672,7 +1896,7 @@ apiRouter.post('/crm/leads/merge', requirePermission('crm', 'can_edit'), async (
     const currentUser = (req as any).user
     const delegation = (req as any).delegation
     const { primary_lead_id, secondary_lead_id } = req.body
-    const { supabase } = await import('../localDb')
+    const { supabase } = await import('../supabase')
 
     if (!primary_lead_id || !secondary_lead_id) {
       return res.status(400).json({ error: 'Primary lead ID and secondary lead ID are required.' })
@@ -1731,7 +1955,42 @@ apiRouter.post('/crm/leads/merge', requirePermission('crm', 'can_edit'), async (
 // Lead Edit, Assignment & Status Update (Item 5)
 apiRouter.put('/crm/leads/:id', requirePermission('crm', 'can_edit'), async (req: Request, res: Response) => {
   try {
-    const { company_name, contact_person, email, phone, gstin, pan, requirement_summary, status, assigned_to } = req.body
+    const user = (req as any).user
+    const leadId = String(req.params.id)
+    const store = loadLeadStore()
+    const ext = store.extended_leads[leadId] || {}
+
+    // LM-16: Category isolation check
+    const isSupervisor = user.hierarchy_level_order <= 1
+    const userCatIds = (store.user_category_access || [])
+      .filter((a: any) => a.user_id === user.id)
+      .map((a: any) => a.category_id)
+
+    if (!isSupervisor && ext.category_id && !userCatIds.includes(ext.category_id)) {
+      return res.status(403).json({ error: 'You do not have permission to edit leads in this category.' })
+    }
+
+    const {
+      company_name,
+      alternate_name,
+      contact_person,
+      email,
+      phone,
+      state,
+      district,
+      address,
+      pin_code,
+      source_id,
+      category_id,
+      service_intent,
+      gstin,
+      pan,
+      requirement_summary,
+      status,
+      assigned_to
+    } = req.body
+
+    // Update core table
     await run(`
       UPDATE crm_leads
       SET company_name = COALESCE(?, company_name),
@@ -1745,7 +2004,38 @@ apiRouter.put('/crm/leads/:id', requirePermission('crm', 'can_edit'), async (req
           assigned_to = COALESCE(?, assigned_to),
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `, [company_name, contact_person, email, phone, gstin, pan, requirement_summary, status, assigned_to, req.params.id])
+    `, [company_name, contact_person, email, phone, gstin, pan, requirement_summary, status, assigned_to, leadId])
+
+    // Update extended specification attributes
+    if (alternate_name !== undefined) ext.alternate_name = alternate_name
+    if (state !== undefined) ext.state = state
+    if (district !== undefined) ext.district = district
+    if (address !== undefined) ext.address = address
+    if (pin_code !== undefined) ext.pin_code = pin_code
+    if (source_id !== undefined) ext.source_id = source_id
+    if (category_id !== undefined) ext.category_id = category_id
+    if (service_intent !== undefined) ext.service_intent = service_intent
+
+    // LM-13: Re-evaluate partner match on update of identifying fields
+    if (phone !== undefined || email !== undefined || company_name !== undefined || alternate_name !== undefined) {
+      const match = await evaluatePartnerMatch({
+        company_name: company_name || ext.alternate_name,
+        alternate_name: ext.alternate_name,
+        email: email,
+        phone: phone
+      })
+      ext.match_status = match.matchStatus
+      ext.partner_match_score = match.matchScore
+      ext.partner_match_factors = match.matchFactors.join(' | ')
+      if (match.matchedPartner) {
+        ext.linked_partner_id = match.matchedPartner.id
+      }
+    }
+
+    if (leadId && leadId !== 'undefined' && leadId.trim().length > 0) {
+      store.extended_leads[leadId] = ext
+      saveLeadStore(store)
+    }
 
     return res.json({ success: true, message: 'Lead updated successfully.' })
   } catch (err: unknown) {
@@ -1960,7 +2250,7 @@ apiRouter.patch('/services/orders/:id/stage', requirePermission('services', 'can
       return res.status(400).json({ error: 'stage is required' })
     }
 
-    const { supabase } = await import('../localDb')
+    const { supabase } = await import('../supabase')
     const updatePayload: any = { stage }
     if (notes) updatePayload.notes = notes
     if (certificate_url) updatePayload.certificate_url = certificate_url
@@ -2171,7 +2461,7 @@ apiRouter.post('/billing/invoices', requirePermission('billing', 'can_create'), 
     const currentUser = (req as any).user
     const delegation = (req as any).delegation
     const { series_id, partner_id, due_days = 30, line_items = [] } = req.body
-    const { supabase } = await import('../localDb')
+    const { supabase } = await import('../supabase')
 
     if (!Array.isArray(line_items) || line_items.length === 0) {
       return res.status(400).json({ error: 'Invoice must contain at least one line item.' })
@@ -2411,7 +2701,7 @@ apiRouter.post('/billing/payments/record', requirePermission('billing', 'can_cre
       return res.status(400).json({ error: 'Invoice and a positive payment amount are required.' })
     }
 
-    const { supabase } = await import('../localDb')
+    const { supabase } = await import('../supabase')
 
     // If partner_id is not explicitly provided, resolve from the invoice
     let resolvedPartnerId = partner_id
@@ -2453,7 +2743,7 @@ apiRouter.post('/billing/payments/verify', requirePermission('billing', 'can_edi
     const currentUser = (req as any).user
     const delegation = (req as any).delegation
     const { payment_id, action = 'verified', rejection_remarks } = req.body // action: 'verified' | 'rejected'
-    const { supabase } = await import('../localDb')
+    const { supabase } = await import('../supabase')
 
     const payment = await queryOne<any>('SELECT * FROM payments_received WHERE id = ?', [payment_id])
     if (!payment) return res.status(404).json({ error: 'Payment record not found' })
@@ -2953,7 +3243,7 @@ apiRouter.patch('/courier/dispatches/:id/status', requirePermission('courier', '
       return res.status(400).json({ error: 'Status is required.' })
     }
 
-    const { supabase } = await import('../localDb')
+    const { supabase } = await import('../supabase')
     const updatePayload: any = {
       status
     }
@@ -3165,7 +3455,7 @@ apiRouter.post('/admin/settings/services', requireAdmin, async (req: Request, re
 apiRouter.put('/partners/:id', requireAuth, async (req: Request, res: Response) => {
   try {
     const currentUser = (req as any).user
-    const { supabase } = await import('../localDb')
+    const { supabase } = await import('../supabase')
     const {
       company_name,
       contact_person,
@@ -3328,7 +3618,7 @@ apiRouter.post('/admin/masters/vendors', requireAdmin, async (req: Request, res:
 
 // 2b. Partner Types Master (Supabase-backed via company_profile metadata)
 async function getPartnerTypesFromDb(): Promise<any[]> {
-  const { supabase } = await import('../localDb')
+  const { supabase } = await import('../supabase')
   const { data } = await supabase.from('company_profile').select('logo_url').single()
   const raw = data?.logo_url || ''
   if (raw.includes('#PARTNER_TYPES:')) {
@@ -3348,7 +3638,7 @@ async function getPartnerTypesFromDb(): Promise<any[]> {
 }
 
 async function savePartnerTypesToDb(types: any[]): Promise<void> {
-  const { supabase } = await import('../localDb')
+  const { supabase } = await import('../supabase')
   const baseLogo = '/signsync-logo.png'
   const newMeta = `${baseLogo}#PARTNER_TYPES:${JSON.stringify(types)}`
   await supabase.from('company_profile').update({ logo_url: newMeta }).eq('id', 'comp-default')
@@ -3454,7 +3744,7 @@ apiRouter.post('/storage/upload', requireAuth, async (req: Request, res: Respons
       return res.status(400).json({ error: `File size exceeds the limit of ${config.maxBytes / (1024 * 1024)}MB.` })
     }
 
-    const { supabase } = await import('../localDb')
+    const { supabase } = await import('../supabase')
     const sanitizedName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_')
     const storagePath = `${Date.now()}_${sanitizedName}`
 
@@ -3498,7 +3788,7 @@ apiRouter.post('/storage/signed-url', requireAuth, async (req: Request, res: Res
       return res.status(400).json({ error: 'Invalid storage category.' })
     }
 
-    const { supabase } = await import('../localDb')
+    const { supabase } = await import('../supabase')
     const { data, error } = await supabase.storage
       .from(config.bucket)
       .createSignedUrl(path, 86400)
@@ -3805,6 +4095,7 @@ apiRouter.post('/inventory/tokens/serials', requirePermission('inventory', 'can_
     return res.status(201).json({
       success: true,
       insertedCount: inserted.length,
+      inserted,
       duplicateCount: duplicates.length,
       duplicates,
       message: `Imported ${inserted.length} token serials successfully.`,

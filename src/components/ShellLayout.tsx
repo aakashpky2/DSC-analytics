@@ -82,6 +82,7 @@ const navigationGroups: NavGroup[] = [
     basePath: '/crm',
     badge: 'Smart',
     items: [
+      { name: 'Calling Queue (TAT)', href: '/crm/calling-queue', badge: 'Queue' },
       { name: 'Lead Manager', href: '/crm/leads', badge: 'Dedupe' },
       { name: 'Follow-Up Agenda', href: '/crm/follow-ups' }
     ]

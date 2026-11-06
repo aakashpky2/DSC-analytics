@@ -1,42 +1,59 @@
-// DSC Application Progress (/dsc/applications)
+// DSC Application Progress (/dsc/applications) - Dynamic Workflow & Token Allocation
 'use client'
 
 import React, { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Clock, CheckCircle2, AlertCircle, Plus, X, ChevronRight, FileCheck, LayoutGrid, List, Upload, Check } from 'lucide-react'
+import {
+  ArrowLeft,
+  Clock,
+  CheckCircle2,
+  AlertCircle,
+  Plus,
+  X,
+  ChevronRight,
+  FileCheck,
+  LayoutGrid,
+  List,
+  Upload,
+  Check,
+  Cpu,
+  Truck,
+  ShieldCheck,
+} from 'lucide-react'
 import { Pagination } from '@/components/Pagination'
-
-const STAGES = [
-  { key: 'intake', label: 'Application Received', color: 'border-blue-500/40 text-blue-400' },
-  { key: 'document_verification', label: 'Document Review', color: 'border-amber-500/40 text-amber-400' },
-  { key: 'video_recording', label: 'Video Verification', color: 'border-purple-500/40 text-purple-400' },
-  { key: 'ca_portal_approval', label: 'Approval in Progress', color: 'border-cyan-500/40 text-cyan-400' },
-  { key: 'issued_dispatched', label: 'Issued & Dispatched', color: 'border-emerald-500/40 text-emerald-400' },
-]
 
 export default function DscApplicationsPage() {
   const [apps, setApps] = useState<any[]>([])
   const [partners, setPartners] = useState<any[]>([])
   const [catalog, setCatalog] = useState<any[]>([])
+  const [workflowStages, setWorkflowStages] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [viewMode, setViewMode] = useState<'board' | 'list'>('board')
 
+  // Token assignment modal
+  const [assigningApp, setAssigningApp] = useState<any | null>(null)
+  const [availableTokens, setAvailableTokens] = useState<any[]>([])
+  const [selectedTokenSerial, setSelectedTokenSerial] = useState('')
+  const [assigningLoading, setAssigningLoading] = useState(false)
+  const [assignError, setAssignError] = useState('')
+
+  // Stage transition modal
+  const [transitioningApp, setTransitioningApp] = useState<any | null>(null)
+  const [targetStage, setTargetStage] = useState('')
+  const [transitionNotes, setTransitionNotes] = useState('')
+  const [caRefNo, setCaRefNo] = useState('')
+  const [transitionError, setTransitionError] = useState('')
+  const [transitionLoading, setTransitionLoading] = useState(false)
+
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState(5)
+  const [pageSize, setPageSize] = useState(10)
   const [totalCount, setTotalCount] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
   const [stageFilter, setStageFilter] = useState('')
 
-  // Column pagination offsets for board view
-  const [columnPages, setColumnPages] = useState<{ [key: string]: number }>({
-    intake: 1,
-    document_verification: 1,
-    video_recording: 1,
-    ca_portal_approval: 1,
-    issued_dispatched: 1,
-  })
+  const [columnPages, setColumnPages] = useState<{ [key: string]: number }>({})
   const COLUMN_PAGE_SIZE = 5
 
   const [formData, setFormData] = useState({
@@ -51,6 +68,22 @@ export default function DscApplicationsPage() {
   const [submitting, setSubmitting] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadSuccess, setUploadSuccess] = useState(false)
+
+  // 1. Load Dynamic Workflow Stages from Central Database
+  useEffect(() => {
+    fetch('/api/dsc/masters/all')
+      .then((r) => r.json())
+      .then((d) => {
+        const stages = (d.workflowStages || []).filter((s: any) => s.is_active !== 0)
+        setWorkflowStages(stages)
+        const initialColPages: { [key: string]: number } = {}
+        stages.forEach((s: any) => {
+          initialColPages[s.stage_key] = 1
+        })
+        setColumnPages(initialColPages)
+      })
+      .catch((err) => console.error('Failed to load workflow stages:', err))
+  }, [])
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -127,9 +160,102 @@ export default function DscApplicationsPage() {
     setCurrentPage(1)
   }
 
-  const handleStageFilterChange = (st: string) => {
-    setStageFilter(st)
-    setCurrentPage(1)
+  // Open Transition Modal
+  const handleOpenTransition = (app: any) => {
+    setTransitioningApp(app)
+    setCaRefNo(app.ca_reference_no || '')
+    setTransitionNotes('')
+    setTransitionError('')
+
+    const currentStage = workflowStages.find((s) => s.stage_key === (app.stage || 'intake'))
+    const allowed = currentStage?.allowed_transitions || []
+    setTargetStage(allowed.length > 0 ? allowed[0] : '')
+  }
+
+  const handleExecuteTransition = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!transitioningApp || !targetStage) return
+
+    setTransitionLoading(true)
+    setTransitionError('')
+
+    try {
+      const res = await fetch(`/api/dsc/applications/${transitioningApp.id}/transition`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target_stage: targetStage,
+          ca_reference_no: caRefNo || undefined,
+          notes: transitionNotes || undefined,
+        }),
+      })
+
+      const data = await res.json()
+      if (!res.ok) {
+        setTransitionError(data.error || 'Workflow transition failed.')
+        return
+      }
+
+      setTransitioningApp(null)
+      loadData()
+    } catch (err: any) {
+      setTransitionError(err.message || 'Workflow transition error')
+    } finally {
+      setTransitionLoading(false)
+    }
+  }
+
+  // Open Token Assignment Modal
+  const handleOpenAssignToken = async (app: any) => {
+    setAssigningApp(app)
+    setAssignError('')
+    setAssigningLoading(true)
+
+    try {
+      const res = await fetch('/api/inventory/tokens/available')
+      const data = await res.json()
+      const tokens = data.tokens || []
+      setAvailableTokens(tokens)
+      setSelectedTokenSerial(tokens[0]?.serial_number || '')
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setAssigningLoading(false)
+    }
+  }
+
+  const handleExecuteTokenReservation = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!assigningApp || !selectedTokenSerial) return
+
+    setAssigningLoading(true)
+    setAssignError('')
+
+    try {
+      const res = await fetch('/api/inventory/tokens/reserve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          serial_number: selectedTokenSerial,
+          partner_id: assigningApp.partner_id,
+          application_id: assigningApp.id,
+          notes: `Token allocated to applicant ${assigningApp.applicant_name} (${assigningApp.application_number})`,
+        }),
+      })
+
+      const data = await res.json()
+      if (!res.ok) {
+        setAssignError(data.error || 'Token reservation conflict.')
+        return
+      }
+
+      setAssigningApp(null)
+      loadData()
+    } catch (err: any) {
+      setAssignError(err.message || 'Failed to allocate token')
+    } finally {
+      setAssigningLoading(false)
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -143,35 +269,22 @@ export default function DscApplicationsPage() {
       })
       if (res.ok) {
         setIsModalOpen(false)
-        setFormData((prev) => ({
-          ...prev,
+        setFormData({
+          partner_id: partners[0]?.id || '',
+          catalog_id: catalog[0]?.id || '',
           applicant_name: '',
           applicant_email: '',
           applicant_phone: '',
           applicant_pan: '',
-        }))
+          documents_submitted: '',
+        })
+        setUploadSuccess(false)
         loadData()
       }
+    } catch (err) {
+      console.error(err)
     } finally {
       setSubmitting(false)
-    }
-  }
-
-  const handleAdvanceStage = async (id: string, currentStage: string) => {
-    const stageKeys = STAGES.map((s) => s.key)
-    const nextIndex = stageKeys.indexOf(currentStage) + 1
-    if (nextIndex < stageKeys.length) {
-      const nextStage = stageKeys[nextIndex]
-      await fetch(`/api/dsc/applications/${id}/stage`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          stage: nextStage,
-          ca_reference_no: nextStage === 'ca_portal_approval' ? `CA-REF-${Date.now().toString().slice(-4)}` : undefined,
-          notes: `Progressed to ${nextStage.replace('_', ' ')} by operations staff`,
-        }),
-      })
-      loadData()
     }
   }
 
@@ -180,140 +293,248 @@ export default function DscApplicationsPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 text-xs text-slate-400 mb-1">
-            <Link href="/dsc/catalog" className="hover:text-white flex items-center gap-1">
-              <ArrowLeft className="w-3.5 h-3.5" /> Products & Prices
-            </Link>
-            <span>/</span>
-            <span className="text-white">Application Progress</span>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold text-white">DSC Application Pipeline</h1>
+            <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+              Master Workflow Engine
+            </span>
           </div>
-          <h1 className="text-xl font-bold text-white">DSC Application Progress</h1>
           <p className="text-xs text-slate-400 mt-1">
-            Track certificate processing from intake to document checks, video verification, and dispatch.
+            Dynamic pipeline stages, transition verification, and cryptographic token allocation.
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {/* View Mode Toggle */}
-          <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5">
+          <div className="flex bg-slate-900 border border-slate-800 rounded-lg p-0.5">
             <button
               onClick={() => setViewMode('board')}
-              className={`px-2.5 py-1 text-xs rounded-md flex items-center gap-1.5 transition ${
-                viewMode === 'board'
-                  ? 'bg-indigo-600 text-white font-medium shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
+              className={`p-1.5 rounded-md text-xs flex items-center gap-1 transition ${
+                viewMode === 'board' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'
               }`}
+              title="Board View"
             >
-              <LayoutGrid className="w-3.5 h-3.5" /> Board
+              <LayoutGrid className="w-4 h-4" />
             </button>
             <button
               onClick={() => setViewMode('list')}
-              className={`px-2.5 py-1 text-xs rounded-md flex items-center gap-1.5 transition ${
-                viewMode === 'list'
-                  ? 'bg-indigo-600 text-white font-medium shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
+              className={`p-1.5 rounded-md text-xs flex items-center gap-1 transition ${
+                viewMode === 'list' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'
               }`}
+              title="List View"
             >
-              <List className="w-3.5 h-3.5" /> Table
+              <List className="w-4 h-4" />
             </button>
           </div>
 
           <button
             onClick={() => setIsModalOpen(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs shadow-md shadow-indigo-600/20 transition cursor-pointer"
+            className="px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs flex items-center gap-1.5 shadow-md shadow-indigo-600/20"
           >
-            <Plus className="w-4 h-4" /> New DSC Application
+            <Plus className="w-4 h-4" /> New Application
           </button>
         </div>
       </div>
 
-      {viewMode === 'list' ? (
-        /* Paginated Table View */
-        <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
-          <div className="p-4 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="text-xs font-semibold text-white">All Applications ({totalCount})</div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400">Filter Stage:</span>
-              <select
-                value={stageFilter}
-                onChange={(e) => handleStageFilterChange(e.target.value)}
-                className="bg-slate-950 border border-slate-800 text-white rounded-md px-2.5 py-1 text-xs"
-              >
-                <option value="">All Stages</option>
-                {STAGES.map((s) => (
-                  <option key={s.key} value={s.key}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+      {/* Filter Bar */}
+      <div className="flex items-center gap-3">
+        <select
+          value={stageFilter}
+          onChange={(e) => {
+            setStageFilter(e.target.value)
+            setCurrentPage(1)
+          }}
+          className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white"
+        >
+          <option value="">All Pipeline Stages</option>
+          {workflowStages.map((st) => (
+            <option key={st.stage_key} value={st.stage_key}>
+              {st.stage_label}
+            </option>
+          ))}
+        </select>
+      </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+      {/* Board View (Dynamic Columns based on PostgreSQL Workflow Stages) */}
+      {viewMode === 'board' ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 items-start">
+          {workflowStages.map((stage) => {
+            const stageApps = apps.filter((a) => (a.stage || 'intake') === stage.stage_key)
+            const page = columnPages[stage.stage_key] || 1
+            const totalColPages = Math.max(1, Math.ceil(stageApps.length / COLUMN_PAGE_SIZE))
+            const paginatedColApps = stageApps.slice((page - 1) * COLUMN_PAGE_SIZE, page * COLUMN_PAGE_SIZE)
+
+            return (
+              <div
+                key={stage.stage_key}
+                className="bg-slate-900/60 border border-slate-800 rounded-xl p-3 flex flex-col gap-3 min-h-[450px]"
+              >
+                {/* Column Header */}
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-indigo-400" />
+                    <span className="font-semibold text-white text-xs">{stage.stage_label}</span>
+                  </div>
+                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] font-mono text-slate-300">
+                    {stageApps.length}
+                  </span>
+                </div>
+
+                {/* Cards Container */}
+                <div className="flex-1 space-y-2 overflow-y-auto no-scrollbar max-h-[600px]">
+                  {paginatedColApps.length === 0 ? (
+                    <div className="p-4 text-center text-slate-500 text-[11px] italic">No applications</div>
+                  ) : (
+                    paginatedColApps.map((app) => (
+                      <div
+                        key={app.id}
+                        className="bg-slate-950/80 border border-slate-800/80 rounded-lg p-3 space-y-2 hover:border-slate-700 transition shadow-sm"
+                      >
+                        <div className="flex items-start justify-between gap-1">
+                          <span className="text-[10px] font-mono font-bold text-indigo-400">
+                            {app.application_number}
+                          </span>
+                          <span className="text-[9px] text-slate-400">
+                            {new Date(app.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+
+                        <div>
+                          <h4 className="font-medium text-white text-xs">{app.applicant_name}</h4>
+                          <p className="text-[10px] text-slate-400">{app.partner_company || 'Direct Partner'}</p>
+                        </div>
+
+                        <div className="text-[10px] text-slate-300 space-y-0.5">
+                          <div>
+                            <span className="text-slate-400">Class: </span>
+                            {app.class_type?.replace(/_/g, ' ') || 'Class 3'}
+                          </div>
+                          <div>
+                            <span className="text-slate-400">Validity: </span>
+                            {app.validity_years?.replace(/_/g, ' ') || '2 Years'}
+                          </div>
+                          {app.ca_reference_no && (
+                            <div>
+                              <span className="text-slate-400">CA Ref: </span>
+                              <span className="font-mono text-cyan-300">{app.ca_reference_no}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Action buttons */}
+                        <div className="pt-2 border-t border-slate-800/60 flex items-center justify-between gap-1">
+                          <button
+                            onClick={() => handleOpenAssignToken(app)}
+                            className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 text-[10px] flex items-center gap-1 transition"
+                            title="Assign Physical USB Token"
+                          >
+                            <Cpu className="w-3 h-3" /> Token
+                          </button>
+
+                          <button
+                            onClick={() => handleOpenTransition(app)}
+                            className="px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] flex items-center gap-1 transition"
+                          >
+                            Transition <ChevronRight className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Column Pagination */}
+                {totalColPages > 1 && (
+                  <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
+                    <span>
+                      {page}/{totalColPages}
+                    </span>
+                    <div className="flex gap-1">
+                      <button
+                        disabled={page <= 1}
+                        onClick={() => setColumnPages({ ...columnPages, [stage.stage_key]: page - 1 })}
+                        className="px-1.5 py-0.5 rounded bg-slate-800 disabled:opacity-40 text-slate-300 hover:text-white"
+                      >
+                        Prev
+                      </button>
+                      <button
+                        disabled={page >= totalColPages}
+                        onClick={() => setColumnPages({ ...columnPages, [stage.stage_key]: page + 1 })}
+                        className="px-1.5 py-0.5 rounded bg-slate-800 disabled:opacity-40 text-slate-300 hover:text-white"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      ) : (
+        /* List View */
+        <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
+          <div className="overflow-x-auto no-scrollbar">
+            <table className="w-full text-left text-xs whitespace-nowrap">
               <thead>
                 <tr className="text-slate-400 bg-slate-900/80 border-b border-slate-800">
-                  <th className="p-3">Application #</th>
-                  <th className="p-3">Applicant Name</th>
-                  <th className="p-3">Partner</th>
-                  <th className="p-3">Certificate Type</th>
-                  <th className="p-3">Current Stage</th>
-                  <th className="p-3">CA Reference</th>
-                  <th className="p-3 text-right">Action</th>
+                  <th className="p-3 font-semibold">App Number</th>
+                  <th className="p-3 font-semibold">Applicant Name</th>
+                  <th className="p-3 font-semibold">Partner</th>
+                  <th className="p-3 font-semibold">Certificate</th>
+                  <th className="p-3 font-semibold">Current Stage</th>
+                  <th className="p-3 font-semibold">CA Ref No</th>
+                  <th className="p-3 font-semibold">Created</th>
+                  <th className="p-3 text-right font-semibold">Action</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60">
-                {loading && apps.length === 0 ? (
+              <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                {loading ? (
                   <tr>
-                    <td colSpan={7} className="p-6 text-center text-slate-500">
-                      Loading applications...
+                    <td colSpan={8} className="p-6 text-center text-slate-400 font-sans">
+                      Loading DSC applications...
                     </td>
                   </tr>
                 ) : apps.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="p-6 text-center text-slate-500">
+                    <td colSpan={8} className="p-6 text-center text-slate-500 font-sans">
                       No applications found.
                     </td>
                   </tr>
                 ) : (
-                  apps.map((a: any) => {
-                    const st = STAGES.find((s) => s.key === a.stage)
-                    return (
-                      <tr key={a.id} className="hover:bg-slate-800/40">
-                        <td className="p-3 font-mono text-cyan-400 font-semibold">{a.application_number}</td>
-                        <td className="p-3">
-                          <div className="font-semibold text-white">{a.applicant_name}</div>
-                          <div className="text-[11px] text-slate-400">{a.applicant_email} &bull; {a.applicant_phone}</div>
-                        </td>
-                        <td className="p-3 text-slate-300">{a.partner_company || 'Direct'}</td>
-                        <td className="p-3">
-                          <span className="capitalize text-slate-200">
-                            {a.class_type?.replace(/_/g, ' ') || 'Class 3'} &bull; {a.certificate_type?.replace(/_/g, ' ') || 'Combo'}
-                          </span>
-                        </td>
-                        <td className="p-3">
-                          <span className={`px-2 py-0.5 rounded text-[11px] font-medium border bg-slate-950 ${st?.color || 'text-slate-400'}`}>
-                            {st?.label || a.stage}
-                          </span>
-                        </td>
-                        <td className="p-3 font-mono text-slate-400">{a.ca_reference_no || '—'}</td>
-                        <td className="p-3 text-right">
-                          {a.stage !== 'issued_dispatched' ? (
-                            <button
-                              onClick={() => handleAdvanceStage(a.id, a.stage)}
-                              className="px-2 py-1 rounded bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 text-[10px] font-medium inline-flex items-center gap-1 transition cursor-pointer"
-                            >
-                              Advance <ChevronRight className="w-3 h-3" />
-                            </button>
-                          ) : (
-                            <span className="text-emerald-400 text-[11px] inline-flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3" /> Dispatched
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  })
+                  apps.map((app) => (
+                    <tr key={app.id} className="hover:bg-slate-800/30 transition">
+                      <td className="p-3 font-bold text-indigo-400">{app.application_number}</td>
+                      <td className="p-3 font-sans font-medium text-white">{app.applicant_name}</td>
+                      <td className="p-3 font-sans text-slate-300">{app.partner_company || 'Direct'}</td>
+                      <td className="p-3 font-sans text-slate-300">
+                        {app.class_type?.replace(/_/g, ' ')} - {app.validity_years?.replace(/_/g, ' ')}
+                      </td>
+                      <td className="p-3">
+                        <span className="px-2 py-0.5 rounded bg-slate-800 text-indigo-300 font-mono text-[10px] border border-slate-700">
+                          {workflowStages.find((s) => s.stage_key === app.stage)?.stage_label || app.stage}
+                        </span>
+                      </td>
+                      <td className="p-3 text-cyan-300">{app.ca_reference_no || '-'}</td>
+                      <td className="p-3 text-slate-400">{new Date(app.created_at).toLocaleDateString()}</td>
+                      <td className="p-3 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            onClick={() => handleOpenAssignToken(app)}
+                            className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 text-[10px] inline-flex items-center gap-1"
+                          >
+                            <Cpu className="w-3 h-3" /> Token
+                          </button>
+                          <button
+                            onClick={() => handleOpenTransition(app)}
+                            className="px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] inline-flex items-center gap-1"
+                          >
+                            Transition <ChevronRight className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
                 )}
               </tbody>
             </table>
@@ -329,99 +550,180 @@ export default function DscApplicationsPage() {
             isLoading={loading}
           />
         </div>
-      ) : (
-        /* Kanban Pipeline Columns */
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-            {STAGES.map((st) => {
-              const stageApps = apps.filter((a: any) => a.stage === st.key)
-              const page = columnPages[st.key] || 1
-              const totalColPages = Math.max(1, Math.ceil(stageApps.length / COLUMN_PAGE_SIZE))
-              const paginatedStageApps = stageApps.slice((page - 1) * COLUMN_PAGE_SIZE, page * COLUMN_PAGE_SIZE)
+      )}
 
-              return (
-                <div key={st.key} className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 space-y-3 flex flex-col justify-between">
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                      <span className={`text-xs font-semibold ${st.color}`}>{st.label}</span>
-                      <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
-                        {stageApps.length}
-                      </span>
-                    </div>
+      {/* Dynamic Workflow Transition Modal */}
+      {transitioningApp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-md rounded-2xl bg-slate-900 border border-slate-800 p-6 shadow-2xl text-xs space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div>
+                <h3 className="font-semibold text-white text-sm">Advance Workflow Stage</h3>
+                <p className="text-[11px] text-slate-400">
+                  {transitioningApp.applicant_name} ({transitioningApp.application_number})
+                </p>
+              </div>
+              <button
+                onClick={() => setTransitioningApp(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
-                    <div className="space-y-2 min-h-[320px]">
-                      {loading && apps.length === 0 ? (
-                        <div className="p-4 text-center text-[11px] text-slate-600">Loading...</div>
-                      ) : stageApps.length === 0 ? (
-                        <div className="p-4 text-center text-[11px] text-slate-600 italic">No applications</div>
-                      ) : (
-                        paginatedStageApps.map((a: any) => (
-                          <div key={a.id} className="p-3 rounded-lg bg-slate-950 border border-slate-800/80 space-y-1.5 shadow-sm group">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-mono text-cyan-400 font-semibold">{a.application_number}</span>
-                              <span className="text-[9px] uppercase px-1 rounded bg-slate-800 text-slate-400">Class 3</span>
-                            </div>
-                            <div className="text-xs font-semibold text-white truncate">{a.applicant_name}</div>
-                            <div className="text-[10px] text-slate-400 truncate">{a.applicant_email}</div>
-                            <div className="text-[10px] text-slate-400 truncate">{a.applicant_phone}</div>
-                            {a.ca_reference_no && (
-                              <div className="text-[9px] text-cyan-300 font-mono">Ref: {a.ca_reference_no}</div>
-                            )}
+            {transitionError && (
+              <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                {transitionError}
+              </div>
+            )}
 
-                            {st.key !== 'issued_dispatched' && (
-                              <div className="pt-2 border-t border-slate-800/60 flex justify-end">
-                                <button
-                                  onClick={() => handleAdvanceStage(a.id, a.stage)}
-                                  className="px-2 py-0.5 rounded bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 text-[10px] font-medium flex items-center gap-1 transition cursor-pointer"
-                                >
-                                  Advance <ChevronRight className="w-3 h-3" />
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Per-column compact pagination if records exceed column page size */}
-                  {totalColPages > 1 && (
-                    <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
-                      <span>Pg {page}/{totalColPages}</span>
-                      <div className="flex gap-1">
-                        <button
-                          disabled={page <= 1}
-                          onClick={() => setColumnPages({ ...columnPages, [st.key]: page - 1 })}
-                          className="px-1.5 py-0.5 rounded bg-slate-800 disabled:opacity-40 text-slate-300 hover:text-white"
-                        >
-                          Prev
-                        </button>
-                        <button
-                          disabled={page >= totalColPages}
-                          onClick={() => setColumnPages({ ...columnPages, [st.key]: page + 1 })}
-                          className="px-1.5 py-0.5 rounded bg-slate-800 disabled:opacity-40 text-slate-300 hover:text-white"
-                        >
-                          Next
-                        </button>
-                      </div>
-                    </div>
-                  )}
+            <form onSubmit={handleExecuteTransition} className="space-y-3">
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Current Stage</label>
+                <div className="p-2 rounded-lg bg-slate-950 border border-slate-800 text-slate-300 font-mono">
+                  {workflowStages.find((s) => s.stage_key === (transitioningApp.stage || 'intake'))?.stage_label ||
+                    transitioningApp.stage}
                 </div>
-              )
-            })}
-          </div>
+              </div>
 
-          {/* Database Pagination for current fetch */}
-          <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
-            <Pagination
-              currentPage={currentPage}
-              pageSize={pageSize}
-              totalCount={totalCount}
-              totalPages={totalPages}
-              onPageChange={setCurrentPage}
-              onPageSizeChange={handlePageSizeChange}
-              isLoading={loading}
-            />
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Allowed Target Stage *</label>
+                <select
+                  required
+                  value={targetStage}
+                  onChange={(e) => setTargetStage(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
+                >
+                  {(() => {
+                    const cur = workflowStages.find((s) => s.stage_key === (transitioningApp.stage || 'intake'))
+                    const allowedKeys = cur?.allowed_transitions || []
+                    const allowedConfigs = workflowStages.filter((s) => allowedKeys.includes(s.stage_key))
+
+                    if (allowedConfigs.length === 0) {
+                      return <option value="">No transitions configured (Terminal stage)</option>
+                    }
+                    return allowedConfigs.map((s) => (
+                      <option key={s.stage_key} value={s.stage_key}>
+                        {s.stage_label} ({s.role_responsible || 'Staff'})
+                      </option>
+                    ))
+                  })()}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Certifying Authority Reference No</label>
+                <input
+                  type="text"
+                  placeholder="e.g. CA-2026-998811"
+                  value={caRefNo}
+                  onChange={(e) => setCaRefNo(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white font-mono uppercase"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Audit Notes / Decision Rationale</label>
+                <textarea
+                  rows={2}
+                  placeholder="Enter audit remarks for this workflow stage transition..."
+                  value={transitionNotes}
+                  onChange={(e) => setTransitionNotes(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white resize-none"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-slate-800 flex justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setTransitioningApp(null)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={transitionLoading || !targetStage}
+                  className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium shadow-md transition disabled:opacity-50"
+                >
+                  {transitionLoading ? 'Advancing...' : 'Advance Stage'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Token Reservation / Allocation Modal */}
+      {assigningApp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-md rounded-2xl bg-slate-900 border border-slate-800 p-6 shadow-2xl text-xs space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Cpu className="w-4 h-4 text-cyan-400" />
+                <h3 className="font-semibold text-white text-sm">Assign USB Cryptotoken</h3>
+              </div>
+              <button
+                onClick={() => setAssigningApp(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {assignError && (
+              <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                {assignError}
+              </div>
+            )}
+
+            <form onSubmit={handleExecuteTokenReservation} className="space-y-3">
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Applicant</label>
+                <div className="p-2 rounded-lg bg-slate-950 border border-slate-800 text-white font-medium">
+                  {assigningApp.applicant_name} ({assigningApp.application_number})
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Select Available Token Serial *</label>
+                {availableTokens.length === 0 ? (
+                  <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs">
+                    No AVAILABLE tokens in stock. Please record inward token serials in Token Inventory first.
+                  </div>
+                ) : (
+                  <select
+                    required
+                    value={selectedTokenSerial}
+                    onChange={(e) => setSelectedTokenSerial(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white font-mono"
+                  >
+                    {availableTokens.map((t) => (
+                      <option key={t.id || t.serial_number} value={t.serial_number}>
+                        {t.serial_number} ({t.token_model})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div className="pt-3 border-t border-slate-800 flex justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setAssigningApp(null)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={assigningLoading || availableTokens.length === 0}
+                  className="px-4 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-medium shadow-md transition disabled:opacity-50"
+                >
+                  {assigningLoading ? 'Allocating...' : 'Reserve Token'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

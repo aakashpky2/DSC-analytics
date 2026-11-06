@@ -1,4 +1,4 @@
-// DSC Products & Pricing (/dsc/catalog)
+// DSC Products & Pricing (/dsc/catalog) - Fully Master-Driven & Database-Backed
 'use client'
 
 import React, { useState, useEffect, useCallback } from 'react'
@@ -11,6 +11,11 @@ export default function DscCatalogPage() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingItem, setEditingItem] = useState<any | null>(null)
 
+  // Master options dynamically fetched from PostgreSQL
+  const [applicantCategories, setApplicantCategories] = useState<any[]>([])
+  const [certificateTypes, setCertificateTypes] = useState<any[]>([])
+  const [validities, setValidities] = useState<any[]>([])
+
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(5)
@@ -18,14 +23,37 @@ export default function DscCatalogPage() {
   const [totalPages, setTotalPages] = useState(1)
 
   const [formData, setFormData] = useState({
-    class_type: 'class_3_individual',
-    certificate_type: 'combo_signing_encryption',
-    validity_years: '2_years',
+    class_type: '',
+    certificate_type: '',
+    validity_years: '',
     vendor_base_price: '',
     partner_price: '',
     mrp: '',
   })
   const [submitting, setSubmitting] = useState(false)
+
+  // 1. Fetch masters from central DB
+  useEffect(() => {
+    fetch('/api/dsc/masters/all')
+      .then((r) => r.json())
+      .then((d) => {
+        const cats = (d.applicantCategories || []).filter((c: any) => c.is_active !== 0)
+        const types = (d.certificateTypes || []).filter((t: any) => t.is_active !== 0)
+        const vals = (d.validities || []).filter((v: any) => v.is_active !== 0)
+
+        setApplicantCategories(cats)
+        setCertificateTypes(types)
+        setValidities(vals)
+
+        setFormData((prev) => ({
+          ...prev,
+          class_type: prev.class_type || cats[0]?.code || 'class_3_individual',
+          certificate_type: prev.certificate_type || types[0]?.code || 'combo_signing_encryption',
+          validity_years: prev.validity_years || vals[0]?.code || '2_years',
+        }))
+      })
+      .catch((err) => console.error('Failed to load masters:', err))
+  }, [])
 
   const loadCatalog = useCallback(() => {
     setLoading(true)
@@ -57,9 +85,9 @@ export default function DscCatalogPage() {
   const handleOpenAdd = () => {
     setEditingItem(null)
     setFormData({
-      class_type: 'class_3_individual',
-      certificate_type: 'combo_signing_encryption',
-      validity_years: '2_years',
+      class_type: applicantCategories[0]?.code || 'class_3_individual',
+      certificate_type: certificateTypes[0]?.code || 'combo_signing_encryption',
+      validity_years: validities[0]?.code || '2_years',
       vendor_base_price: '800',
       partner_price: '1200',
       mrp: '2000',
@@ -100,7 +128,7 @@ export default function DscCatalogPage() {
           loadCatalog()
         }
       } else {
-        // Create new DSC product
+        // Add new product
         const res = await fetch('/api/dsc/catalog', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -111,9 +139,26 @@ export default function DscCatalogPage() {
           loadCatalog()
         }
       }
+    } catch (err) {
+      console.error(err)
     } finally {
       setSubmitting(false)
     }
+  }
+
+  const getCategoryLabel = (code: string) => {
+    const found = applicantCategories.find((c) => c.code === code)
+    return found ? found.display_name : code.replace(/_/g, ' ')
+  }
+
+  const getTypeLabel = (code: string) => {
+    const found = certificateTypes.find((t) => t.code === code)
+    return found ? found.display_name : code.replace(/_/g, ' ')
+  }
+
+  const getValidityLabel = (code: string) => {
+    const found = validities.find((v) => v.code === code)
+    return found ? found.display_name : code.replace(/_/g, ' ')
   }
 
   return (
@@ -121,66 +166,69 @@ export default function DscCatalogPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-white">DSC Products & Pricing</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold text-white">DSC Products & Pricing</h1>
+            <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+              Database Masters
+            </span>
+          </div>
           <p className="text-xs text-slate-400 mt-1">
-            Price list for Class 3, DGFT, and Foreign National certificates (1, 2, and 3 Years).
+            Dynamic catalog of digital signature classes, certificate types, and validities managed in central PostgreSQL.
           </p>
         </div>
+
         <button
           onClick={handleOpenAdd}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs shadow-md shadow-indigo-600/20 transition cursor-pointer"
+          className="px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs flex items-center gap-1.5 shadow-md shadow-indigo-600/20"
         >
-          <Plus className="w-4 h-4" /> Add Certificate Product
+          <Plus className="w-4 h-4" /> Add DSC Product
         </button>
       </div>
 
       {/* Catalog Table */}
       <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-          <div className="text-xs font-semibold text-white">Active Product Prices ({catalog.length})</div>
-        </div>
-
         <div className="overflow-x-auto no-scrollbar">
           <table className="w-full text-left text-xs whitespace-nowrap">
             <thead>
               <tr className="text-slate-400 bg-slate-900/80 border-b border-slate-800">
-                <th className="p-3 font-semibold whitespace-nowrap">Class Type</th>
+                <th className="p-3 font-semibold whitespace-nowrap">Class & Applicant Category</th>
                 <th className="p-3 font-semibold whitespace-nowrap">Certificate Type</th>
                 <th className="p-3 font-semibold whitespace-nowrap">Validity</th>
-                <th className="p-3 text-right font-semibold whitespace-nowrap">Base Cost</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Vendor Base Cost</th>
                 <th className="p-3 text-right font-semibold whitespace-nowrap">Partner Price</th>
                 <th className="p-3 text-right font-semibold whitespace-nowrap">Retail MRP</th>
-                <th className="p-3 text-right font-semibold whitespace-nowrap">Profit / Unit</th>
-                <th className="p-3 text-right font-semibold whitespace-nowrap">Actions</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Partner Margin</th>
+                <th className="p-3 text-right font-semibold whitespace-nowrap">Action</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60">
+            <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="p-6 text-center text-slate-500 whitespace-nowrap">
-                    Loading pricing catalog...
+                  <td colSpan={8} className="p-6 text-center text-slate-400 font-sans">
+                    Loading DSC products from database...
                   </td>
                 </tr>
               ) : catalog.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-6 text-center text-slate-500 whitespace-nowrap">
-                    No products found in catalog.
+                  <td colSpan={8} className="p-6 text-center text-slate-500 font-sans">
+                    No products configured yet.
                   </td>
                 </tr>
               ) : (
-                catalog.map((c: any) => {
-                  const margin = c.partner_price - c.vendor_base_price
+                catalog.map((c) => {
+                  const margin = Math.max(0, (c.mrp || 0) - (c.partner_price || 0))
                   return (
-                    <tr key={c.id} className="hover:bg-slate-800/40 h-12">
-                      <td className="p-3 font-semibold text-white capitalize whitespace-nowrap">
-                        {c.class_type.replace(/_/g, ' ')}
+                    <tr key={c.id} className="hover:bg-slate-800/30 transition">
+                      <td className="p-3 font-sans font-medium text-white flex items-center gap-2 whitespace-nowrap">
+                        <FileCheck2 className="w-4 h-4 text-indigo-400 shrink-0" />
+                        {getCategoryLabel(c.class_type)}
                       </td>
-                      <td className="p-3 text-slate-300 capitalize whitespace-nowrap">
-                        {c.certificate_type.replace(/_/g, ' ')}
+                      <td className="p-3 font-sans text-slate-300 whitespace-nowrap">
+                        {getTypeLabel(c.certificate_type)}
                       </td>
                       <td className="p-3 whitespace-nowrap">
                         <span className="px-2 py-0.5 rounded bg-slate-800 text-cyan-300 font-mono text-[11px] border border-slate-700 whitespace-nowrap">
-                          {c.validity_years.replace('_', ' ')}
+                          {getValidityLabel(c.validity_years)}
                         </span>
                       </td>
                       <td className="p-3 text-right text-slate-400 whitespace-nowrap">₹{c.vendor_base_price?.toFixed(2)}</td>
@@ -237,42 +285,47 @@ export default function DscCatalogPage() {
               {!editingItem && (
                 <>
                   <div>
-                    <label className="block text-slate-300 font-medium mb-1">Class Type</label>
+                    <label className="block text-slate-300 font-medium mb-1">Class Type / Category (Database-Driven)</label>
                     <select
                       value={formData.class_type}
                       onChange={(e) => setFormData({ ...formData, class_type: e.target.value })}
                       className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
                     >
-                      <option value="class_3_individual">Class 3 Individual</option>
-                      <option value="class_3_organization">Class 3 Organization</option>
-                      <option value="dgft">DGFT Certificate</option>
-                      <option value="foreign_national">Foreign National</option>
-                      <option value="document_signer">Document Signer</option>
+                      {applicantCategories.map((c) => (
+                        <option key={c.id || c.code} value={c.code}>
+                          {c.display_name}
+                        </option>
+                      ))}
                     </select>
                   </div>
 
                   <div>
-                    <label className="block text-slate-300 font-medium mb-1">Certificate Type</label>
+                    <label className="block text-slate-300 font-medium mb-1">Certificate Type (Database-Driven)</label>
                     <select
                       value={formData.certificate_type}
                       onChange={(e) => setFormData({ ...formData, certificate_type: e.target.value })}
                       className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
                     >
-                      <option value="signing_only">Signing Only</option>
-                      <option value="combo_signing_encryption">Combo (Signing + Encryption)</option>
+                      {certificateTypes.map((t) => (
+                        <option key={t.id || t.code} value={t.code}>
+                          {t.display_name}
+                        </option>
+                      ))}
                     </select>
                   </div>
 
                   <div>
-                    <label className="block text-slate-300 font-medium mb-1">Validity</label>
+                    <label className="block text-slate-300 font-medium mb-1">Validity (Database-Driven)</label>
                     <select
                       value={formData.validity_years}
                       onChange={(e) => setFormData({ ...formData, validity_years: e.target.value })}
                       className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
                     >
-                      <option value="1_year">1 Year</option>
-                      <option value="2_years">2 Years</option>
-                      <option value="3_years">3 Years</option>
+                      {validities.map((v) => (
+                        <option key={v.id || v.code} value={v.code}>
+                          {v.display_name}
+                        </option>
+                      ))}
                     </select>
                   </div>
                 </>
@@ -324,7 +377,7 @@ export default function DscCatalogPage() {
                   disabled={submitting}
                   className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium shadow-md transition disabled:opacity-50"
                 >
-                  {submitting ? 'Saving...' : 'Save Product'}
+                  {submitting ? 'Saving...' : editingItem ? 'Update Slab' : 'Create Product'}
                 </button>
               </div>
             </form>

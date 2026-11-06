@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Plus, X, Calculator } from 'lucide-react'
 
 interface ModalProps {
@@ -10,8 +10,11 @@ interface ModalProps {
 }
 
 export function AddTokenBatchModal({ isOpen, onClose, onSuccess }: ModalProps) {
+  const [tokenModels, setTokenModels] = useState<any[]>([])
+  const [hardwareVendors, setHardwareVendors] = useState<any[]>([])
+
   const [formData, setFormData] = useState({
-    token_model: 'epass2003_auto',
+    token_model: '',
     vendor_name: '',
     quantity_purchased: 500,
     base_unit_price: 340,
@@ -21,6 +24,26 @@ export function AddTokenBatchModal({ isOpen, onClose, onSuccess }: ModalProps) {
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  // Load active token models and hardware vendors dynamically from DB
+  useEffect(() => {
+    fetch('/api/dsc/masters/all')
+      .then((r) => r.json())
+      .then((d) => {
+        const activeModels = (d.tokenModels || []).filter((m: any) => m.is_active !== 0)
+        const activeVendors = (d.hardwareVendors || []).filter((v: any) => v.is_active !== 0)
+
+        setTokenModels(activeModels)
+        setHardwareVendors(activeVendors)
+
+        setFormData((prev) => ({
+          ...prev,
+          token_model: prev.token_model || activeModels[0]?.model_name || '',
+          vendor_name: prev.vendor_name || activeVendors[0]?.vendor_name || '',
+        }))
+      })
+      .catch((err) => console.error(err))
+  }, [])
 
   if (!isOpen) return null
 
@@ -77,51 +100,58 @@ export function AddTokenBatchModal({ isOpen, onClose, onSuccess }: ModalProps) {
         <form onSubmit={handleSubmit} className="space-y-3.5 text-xs">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-slate-300 font-medium mb-1">Token Model</label>
+              <label className="block text-slate-300 font-medium mb-1">Token Model (Database Master)</label>
               <select
+                required
                 value={formData.token_model}
                 onChange={(e) => setFormData({ ...formData, token_model: e.target.value })}
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
               >
-                <option value="epass2003_auto">ePass2003 Auto</option>
-                <option value="watchdata_proxkey">Watchdata ProxKey</option>
-                <option value="mtoken_crypto">mToken Crypto</option>
-                <option value="trustkey">TrustKey</option>
+                {tokenModels.map((m) => (
+                  <option key={m.id || m.model_name} value={m.model_name}>
+                    {m.model_name} ({m.manufacturer})
+                  </option>
+                ))}
               </select>
             </div>
             <div>
-              <label className="block text-slate-300 font-medium mb-1">Vendor Name *</label>
-              <input
+              <label className="block text-slate-300 font-medium mb-1">Vendor Name (Database Master) *</label>
+              <select
                 required
-                type="text"
-                placeholder="e.g. Feitian Tech"
                 value={formData.vendor_name}
                 onChange={(e) => setFormData({ ...formData, vendor_name: e.target.value })}
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
-              />
+              >
+                {hardwareVendors.map((v) => (
+                  <option key={v.id || v.vendor_name} value={v.vendor_name}>
+                    {v.vendor_name}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-slate-300 font-medium mb-1">Quantity Purchased *</label>
+              <label className="block text-slate-300 font-medium mb-1">Quantity Purchased (Units) *</label>
               <input
                 required
                 type="number"
                 min="1"
                 value={formData.quantity_purchased}
-                onChange={(e) => setFormData({ ...formData, quantity_purchased: Number(e.target.value) })}
+                onChange={(e) => setFormData({ ...formData, quantity_purchased: parseInt(e.target.value, 10) || 0 })}
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
               />
             </div>
             <div>
-              <label className="block text-slate-300 font-medium mb-1">Base Price per Unit (₹) *</label>
+              <label className="block text-slate-300 font-medium mb-1">Base Unit Price (₹ / token) *</label>
               <input
                 required
                 type="number"
-                step="0.5"
+                min="0"
+                step="0.01"
                 value={formData.base_unit_price}
-                onChange={(e) => setFormData({ ...formData, base_unit_price: Number(e.target.value) })}
+                onChange={(e) => setFormData({ ...formData, base_unit_price: parseFloat(e.target.value) || 0 })}
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
               />
             </div>
@@ -129,60 +159,62 @@ export function AddTokenBatchModal({ isOpen, onClose, onSuccess }: ModalProps) {
 
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="block text-slate-300 font-medium mb-1">Freight (₹)</label>
+              <label className="block text-slate-300 font-medium mb-1">Inward Freight (₹)</label>
               <input
                 type="number"
+                min="0"
                 value={formData.inward_shipping_cost}
-                onChange={(e) => setFormData({ ...formData, inward_shipping_cost: Number(e.target.value) })}
+                onChange={(e) => setFormData({ ...formData, inward_shipping_cost: parseFloat(e.target.value) || 0 })}
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
               />
             </div>
             <div>
-              <label className="block text-slate-300 font-medium mb-1">Customs/Tax (₹)</label>
+              <label className="block text-slate-300 font-medium mb-1">Customs / GST (₹)</label>
               <input
                 type="number"
+                min="0"
                 value={formData.customs_or_taxes}
-                onChange={(e) => setFormData({ ...formData, customs_or_taxes: Number(e.target.value) })}
+                onChange={(e) => setFormData({ ...formData, customs_or_taxes: parseFloat(e.target.value) || 0 })}
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
               />
             </div>
             <div>
-              <label className="block text-slate-300 font-medium mb-1">Handling (₹)</label>
+              <label className="block text-slate-300 font-medium mb-1">Handling Fees (₹)</label>
               <input
                 type="number"
+                min="0"
                 value={formData.handling_charges}
-                onChange={(e) => setFormData({ ...formData, handling_charges: Number(e.target.value) })}
+                onChange={(e) => setFormData({ ...formData, handling_charges: parseFloat(e.target.value) || 0 })}
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
               />
             </div>
           </div>
 
-          {/* Real-time Total Calculation Box */}
-          <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5 text-xs">
-            <div className="flex justify-between text-slate-400">
-              <span>Total Purchase Cost:</span>
-              <span className="font-bold text-white">₹{totalCost.toLocaleString('en-IN')}</span>
+          <div className="p-3 bg-slate-950/80 border border-cyan-500/20 rounded-xl space-y-1">
+            <div className="flex justify-between items-center text-slate-400">
+              <span>Total Landed Inward Cost:</span>
+              <span className="font-mono text-cyan-400 font-bold text-sm">₹{totalCost.toLocaleString('en-IN')}</span>
             </div>
-            <div className="flex justify-between text-slate-400">
-              <span>True Cost per Token:</span>
-              <span className="font-bold text-cyan-400">₹{costPerToken} / unit</span>
+            <div className="flex justify-between items-center text-slate-400">
+              <span>Calculated Cost Per Token:</span>
+              <span className="font-mono text-emerald-400 font-bold text-sm">₹{costPerToken}</span>
             </div>
           </div>
 
-          <div className="pt-2 flex justify-end gap-2">
+          <div className="flex justify-end gap-2.5 pt-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700"
+              className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
             >
               Cancel
             </button>
             <button
               type="submit"
-              disabled={loading}
-              className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold disabled:opacity-50"
+              disabled={loading || formData.quantity_purchased <= 0}
+              className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold transition disabled:opacity-50"
             >
-              {loading ? 'Saving...' : 'Save Token Purchase'}
+              {loading ? 'Recording...' : 'Save Inward Batch'}
             </button>
           </div>
         </form>
@@ -190,4 +222,3 @@ export function AddTokenBatchModal({ isOpen, onClose, onSuccess }: ModalProps) {
     </div>
   )
 }
-

@@ -13,7 +13,7 @@ exports.getUserProfileByEmail = getUserProfileByEmail;
 exports.validateSessionToken = validateSessionToken;
 exports.verifyUserPassword = verifyUserPassword;
 exports.hashPassword = hashPassword;
-const localDb_1 = require("./localDb");
+const supabase_1 = require("./supabase");
 const crypto_1 = __importDefault(require("crypto"));
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 exports.SESSION_COOKIE_NAME = 'signsync_session';
@@ -26,7 +26,7 @@ async function createSession(userId, durationDays = 7) {
     const token = generateToken(32);
     const expiresAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
     const sessionId = `sess-${Date.now()}-${generateToken(4)}`;
-    const { error } = await localDb_1.supabase.from('sessions').insert({
+    const { error } = await supabase_1.supabase.from('sessions').insert({
         id: sessionId,
         user_id: userId,
         token: token,
@@ -41,20 +41,20 @@ async function createSession(userId, durationDays = 7) {
 async function invalidateSession(token) {
     if (!token)
         return;
-    await localDb_1.supabase.from('sessions').delete().eq('token', token);
+    await supabase_1.supabase.from('sessions').delete().eq('token', token);
 }
 // Invalidate all sessions for a user (e.g. on password reset, account freeze, or logout everywhere)
 async function invalidateAllUserSessions(userId) {
     if (!userId)
         return;
-    await localDb_1.supabase.from('sessions').delete().eq('user_id', userId);
+    await supabase_1.supabase.from('sessions').delete().eq('user_id', userId);
 }
 // Direct, parameterized user profile lookup by ID with relations
 async function getUserProfileById(userId) {
     var _a, _b, _c, _d, _e, _f;
     if (!userId)
         return null;
-    const { data, error } = await localDb_1.supabase
+    const { data, error } = await supabase_1.supabase
         .from('user_profiles')
         .select('*, roles(name), hierarchy_levels(level_order, level_name), branches(branch_name)')
         .eq('id', userId)
@@ -86,7 +86,7 @@ async function getUserProfileByEmail(email) {
     if (!email || typeof email !== 'string')
         return null;
     const cleanEmail = email.trim().toLowerCase();
-    const { data, error } = await localDb_1.supabase
+    const { data, error } = await supabase_1.supabase
         .from('user_profiles')
         .select('*, roles(name), hierarchy_levels(level_order, level_name), branches(branch_name)')
         .ilike('email', cleanEmail)
@@ -118,7 +118,7 @@ async function validateSessionToken(token) {
     if (!token)
         return null;
     const nowIso = new Date().toISOString();
-    const { data: session, error } = await localDb_1.supabase
+    const { data: session, error } = await supabase_1.supabase
         .from('sessions')
         .select('user_id, expires_at')
         .eq('token', token)
@@ -144,7 +144,7 @@ async function verifyUserPassword(user, plainPassword) {
     // Plain text fallback (for initial seed data), upgrade to bcrypt on success
     if (user.password_hash === plainPassword) {
         const hashed = await bcryptjs_1.default.hash(plainPassword, 10);
-        await (0, localDb_1.run)(`UPDATE user_profiles SET password_hash = ? WHERE id = ?`, [hashed, user.id]);
+        await (0, supabase_1.run)(`UPDATE user_profiles SET password_hash = ? WHERE id = ?`, [hashed, user.id]);
         return true;
     }
     return false;

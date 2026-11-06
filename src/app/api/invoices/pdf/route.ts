@@ -1,6 +1,6 @@
 // Server-Side Dynamic PDF Invoice Compilation (/api/invoices/pdf)
 import { NextRequest, NextResponse } from 'next/server'
-import { queryOne, queryAll } from '@/server/localDb'
+import { queryOne, queryAll } from '@/server/supabase'
 import PDFDocument from 'pdfkit'
 import QRCode from 'qrcode'
 

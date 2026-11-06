@@ -184,7 +184,7 @@ export async function runAllTests() {
   let testPaymentId = ''
   await runTest('Payments & Accounts', 'Record and Verify Payment Posting to Ledger', async () => {
     // 1. Submit payment
-    const db = require('./localDb')
+    const db = require('./supabase')
     testPaymentId = `pay-${Date.now()}`
     await db.run(`
       INSERT INTO payments_received (id, invoice_id, partner_id, amount_paid, payment_mode, transaction_reference_utr, verified_status)

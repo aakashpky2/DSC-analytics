@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.parsePaginationParams = parsePaginationParams;
 exports.executePaginatedQuery = executePaginatedQuery;
-const localDb_1 = require("./localDb");
+const supabase_1 = require("./supabase");
 /**
  * Parses page & limit from request query params with default limit = 5
  * Allowed limit options: 5, 10, 25, 50, 100
@@ -30,12 +30,12 @@ function parsePaginationParams(query, defaultLimit = 5) {
 async function executePaginatedQuery(baseSelectQuery, baseCountQuery, params = [], pagination) {
     const { page, limit, offset } = pagination;
     // 1. Fetch total count
-    const countRow = await (0, localDb_1.queryOne)(baseCountQuery, params);
+    const countRow = await (0, supabase_1.queryOne)(baseCountQuery, params);
     const totalCount = countRow ? Number(countRow.count) : 0;
     const totalPages = Math.max(1, Math.ceil(totalCount / limit));
     // 2. Fetch paginated data with LIMIT and OFFSET
     const paginatedSql = `${baseSelectQuery} LIMIT ? OFFSET ?`;
-    const data = await (0, localDb_1.queryAll)(paginatedSql, [...params, limit, offset]);
+    const data = await (0, supabase_1.queryAll)(paginatedSql, [...params, limit, offset]);
     return {
         data,
         page,

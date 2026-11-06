@@ -34,13 +34,22 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.apiRouter = void 0;
+exports.requireAuth = requireAuth;
+exports.requirePermission = requirePermission;
+exports.logAuditEvent = logAuditEvent;
+exports.allocateNextReferenceNumber = allocateNextReferenceNumber;
 const express_1 = require("express");
-const localDb_1 = require("../localDb");
+const supabase_1 = require("../supabase");
 const businessLogic_1 = require("../../lib/businessLogic");
 const numberingEngine_1 = require("../../lib/numberingEngine");
 const masking_1 = require("../../lib/masking");
 const pagination_1 = require("../pagination");
 const auth_1 = require("../auth");
+const leadManagement_1 = require("./leadManagement");
+const dscMaster_1 = require("./dscMaster");
+const courierModule_1 = require("./courierModule");
+const leadStore_1 = require("../leadStore");
+const partnerMatchEngine_1 = require("../partnerMatchEngine");
 exports.apiRouter = (0, express_1.Router)();
 // ==========================================
 // RBAC & Session Security Middleware
@@ -70,6 +79,10 @@ async function resolveUserContext(req, _res, next) {
     }
 }
 exports.apiRouter.use(resolveUserContext);
+// Mount Lead Management Sub-router (Masters, Queues, Clubbing, Interactions, Tracking)
+exports.apiRouter.use(leadManagement_1.leadManagementRouter);
+exports.apiRouter.use(dscMaster_1.dscMasterRouter);
+exports.apiRouter.use(courierModule_1.courierModuleRouter);
 function requireAuth(req, res, next) {
     const user = req.user;
     if (!user) {
@@ -131,7 +144,7 @@ function requirePermission(moduleKey, actionKey) {
         }
         try {
             // 1. Check user direct override
-            const override = await (0, localDb_1.queryOne)('SELECT * FROM user_permission_overrides WHERE user_id = ? AND module_id = (SELECT id FROM app_modules WHERE module_key = ?)', [user.id, moduleKey]);
+            const override = await (0, supabase_1.queryOne)('SELECT * FROM user_permission_overrides WHERE user_id = ? AND module_id = (SELECT id FROM app_modules WHERE module_key = ?)', [user.id, moduleKey]);
             if (override && override[actionKey] !== null && override[actionKey] !== undefined) {
                 if (override[actionKey] === 1 || override[actionKey] === true) {
                     return next();
@@ -141,13 +154,13 @@ function requirePermission(moduleKey, actionKey) {
                 }
             }
             // 2. Check role matrix permission
-            const rolePerm = await (0, localDb_1.queryOne)('SELECT * FROM role_module_permissions WHERE role_id = ? AND module_id = (SELECT id FROM app_modules WHERE module_key = ?)', [user.role_id, moduleKey]);
+            const rolePerm = await (0, supabase_1.queryOne)('SELECT * FROM role_module_permissions WHERE role_id = ? AND module_id = (SELECT id FROM app_modules WHERE module_key = ?)', [user.role_id, moduleKey]);
             if (rolePerm && (rolePerm[actionKey] === 1 || rolePerm[actionKey] === true)) {
                 return next();
             }
             // 3. Check active temporary delegations with full ancestor validation
             const nowIso = new Date().toISOString();
-            const delegation = await (0, localDb_1.queryOne)(`
+            const delegation = await (0, supabase_1.queryOne)(`
         SELECT d.*, g.permissions_frozen as grantor_frozen, g.status as grantor_status
         FROM temporary_delegations d
         JOIN user_profiles g ON d.grantor_user_id = g.id
@@ -167,7 +180,7 @@ function requirePermission(moduleKey, actionKey) {
                     let currentParentId = delegation.parent_delegation_id;
                     let chainValid = true;
                     while (currentParentId) {
-                        const parentRecord = await (0, localDb_1.queryOne)('SELECT * FROM temporary_delegations WHERE id = ?', [currentParentId]);
+                        const parentRecord = await (0, supabase_1.queryOne)('SELECT * FROM temporary_delegations WHERE id = ?', [currentParentId]);
                         if (!parentRecord || parentRecord.status !== 'active' || parentRecord.valid_until < nowIso) {
                             chainValid = false;
                             break;
@@ -198,7 +211,7 @@ function requirePermission(moduleKey, actionKey) {
 async function logAuditEvent(params) {
     try {
         const id = `aud-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO audit_logs (id, user_id, action_type, module_key, table_affected, record_id, old_value_json, new_value_json, reason, delegation_id, ip_address)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
@@ -224,7 +237,7 @@ async function logAuditEvent(params) {
  * Atomically increments counter using optimistic concurrency locking loop and formats business reference string.
  */
 async function allocateNextReferenceNumber(documentType, options) {
-    const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+    const { supabase } = await Promise.resolve().then(() => __importStar(require('../supabase')));
     // Attempt optimistic concurrency lock up to 25 retries
     for (let attempt = 0; attempt < 25; attempt++) {
         const { data: config, error: fetchErr } = await supabase
@@ -366,12 +379,12 @@ exports.apiRouter.post('/auth/forgot-password', async (req, res) => {
             return res.status(400).json({ error: 'Please enter your email address.' });
         }
         const cleanEmail = email.trim().toLowerCase();
-        const user = await (0, localDb_1.queryOne)('SELECT id, email, full_name FROM user_profiles WHERE LOWER(email) = ?', [cleanEmail]);
+        const user = await (0, supabase_1.queryOne)('SELECT id, email, full_name FROM user_profiles WHERE LOWER(email) = ?', [cleanEmail]);
         if (user) {
             const resetToken = (0, auth_1.generateToken)(32);
             const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
             const resetId = `rst-${Date.now()}`;
-            await (0, localDb_1.run)(`INSERT INTO password_resets (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)`, [resetId, user.id, resetToken, expiresAt]);
+            await (0, supabase_1.run)(`INSERT INTO password_resets (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)`, [resetId, user.id, resetToken, expiresAt]);
         }
         return res.json({
             success: true,
@@ -396,13 +409,13 @@ exports.apiRouter.post('/auth/reset-password', async (req, res) => {
             return res.status(400).json({ error: 'Passwords do not match.' });
         }
         const nowIso = new Date().toISOString();
-        const resetRecord = await (0, localDb_1.queryOne)(`SELECT * FROM password_resets WHERE token = ? AND used = 0 AND expires_at > ?`, [token, nowIso]);
+        const resetRecord = await (0, supabase_1.queryOne)(`SELECT * FROM password_resets WHERE token = ? AND used = 0 AND expires_at > ?`, [token, nowIso]);
         if (!resetRecord) {
             return res.status(400).json({ error: 'This password reset link is invalid or has expired.' });
         }
         const hashedPassword = await (0, auth_1.hashPassword)(newPassword);
-        await (0, localDb_1.run)(`UPDATE user_profiles SET password_hash = ? WHERE id = ?`, [hashedPassword, resetRecord.user_id]);
-        await (0, localDb_1.run)(`UPDATE password_resets SET used = 1 WHERE id = ?`, [resetRecord.id]);
+        await (0, supabase_1.run)(`UPDATE user_profiles SET password_hash = ? WHERE id = ?`, [hashedPassword, resetRecord.user_id]);
+        await (0, supabase_1.run)(`UPDATE password_resets SET used = 1 WHERE id = ?`, [resetRecord.id]);
         await (0, auth_1.invalidateAllUserSessions)(resetRecord.user_id);
         return res.json({
             success: true,
@@ -418,7 +431,7 @@ exports.apiRouter.post('/auth/reset-password', async (req, res) => {
 // ==========================================
 exports.apiRouter.get('/health', async (_req, res) => {
     try {
-        const user = await (0, localDb_1.queryOne)('SELECT * FROM user_profiles WHERE id = ?', ['usr-admin-root']);
+        const user = await (0, supabase_1.queryOne)('SELECT * FROM user_profiles WHERE id = ?', ['usr-admin-root']);
         return res.json({
             status: 'ok',
             platform: 'SignSync B2B Enterprise v2.4',
@@ -437,7 +450,7 @@ exports.apiRouter.get('/health', async (_req, res) => {
 // ==========================================
 exports.apiRouter.get('/admin/roles', requireAdmin, async (_req, res) => {
     try {
-        const roles = await (0, localDb_1.queryAll)(`
+        const roles = await (0, supabase_1.queryAll)(`
       SELECT r.*, h.level_order, h.level_name, COUNT(u.id) as staff_count
       FROM roles r
       JOIN hierarchy_levels h ON r.hierarchy_level_id = h.id
@@ -445,9 +458,9 @@ exports.apiRouter.get('/admin/roles', requireAdmin, async (_req, res) => {
       GROUP BY r.id
       ORDER BY h.level_order ASC
     `);
-        const levels = await (0, localDb_1.queryAll)('SELECT * FROM hierarchy_levels ORDER BY level_order ASC');
-        const modules = await (0, localDb_1.queryAll)('SELECT * FROM app_modules ORDER BY display_name ASC');
-        const rolePermissions = await (0, localDb_1.queryAll)('SELECT * FROM role_module_permissions');
+        const levels = await (0, supabase_1.queryAll)('SELECT * FROM hierarchy_levels ORDER BY level_order ASC');
+        const modules = await (0, supabase_1.queryAll)('SELECT * FROM app_modules ORDER BY display_name ASC');
+        const rolePermissions = await (0, supabase_1.queryAll)('SELECT * FROM role_module_permissions');
         return res.json({ roles, levels, modules, rolePermissions });
     }
     catch (err) {
@@ -464,7 +477,7 @@ exports.apiRouter.put('/admin/roles/:id/permissions', requireAdmin, async (req, 
         const roleId = req.params.id;
         const { permissions = [] } = req.body; // Array of { module_id, can_view, can_create, can_edit, can_delete, can_export, mask_pii_fields }
         for (const p of permissions) {
-            const { error } = await localDb_1.supabase
+            const { error } = await supabase_1.supabase
                 .from('role_module_permissions')
                 .upsert({
                 id: `rmp-${roleId}-${p.module_id}`,
@@ -535,7 +548,7 @@ exports.apiRouter.get('/admin/users', requireAdmin, async (req, res) => {
                 totalPages: result.totalPages,
             });
         }
-        const users = await (0, localDb_1.queryAll)(selectSql, params);
+        const users = await (0, supabase_1.queryAll)(selectSql, params);
         const sanitized = users.map((u) => (0, masking_1.applyPiiMasking)(u, mask));
         return res.json({
             users: sanitized,
@@ -556,14 +569,14 @@ exports.apiRouter.post('/admin/users', requireAdmin, async (req, res) => {
             return res.status(400).json({ error: 'Email and full name are required.' });
         }
         const cleanEmail = email.trim().toLowerCase();
-        const existing = await (0, localDb_1.queryOne)('SELECT id FROM user_profiles WHERE LOWER(email) = ?', [cleanEmail]);
+        const existing = await (0, supabase_1.queryOne)('SELECT id FROM user_profiles WHERE LOWER(email) = ?', [cleanEmail]);
         if (existing) {
             return res.status(400).json({ error: 'A staff member with this email address already exists.' });
         }
         const id = `usr-${Date.now()}`;
         const passwordPlain = initial_password && initial_password.length >= 8 ? initial_password : 'ChangeMe@123';
         const password_hash = await (0, auth_1.hashPassword)(passwordPlain);
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO user_profiles (id, email, password_hash, full_name, phone_number, role_id, hierarchy_level_id, branch_id, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
     `, [id, cleanEmail, password_hash, full_name.trim(), phone_number || null, role_id || 'role-field-staff', hierarchy_level_id || 'tier-4', branch_id || null]);
@@ -584,7 +597,7 @@ exports.apiRouter.patch('/admin/users/:id/freeze', requireAuth, async (req, res)
         if (userId === 'usr-admin-root') {
             return res.status(400).json({ error: 'The Master Super Admin account cannot be frozen.' });
         }
-        await (0, localDb_1.run)(`UPDATE user_profiles SET permissions_frozen = ? WHERE id = ?`, [frozen ? 1 : 0, userId]);
+        await (0, supabase_1.run)(`UPDATE user_profiles SET permissions_frozen = ? WHERE id = ?`, [frozen ? 1 : 0, userId]);
         await logAuditEvent({
             userId: currentUser.id,
             actionType: frozen ? 'FREEZE_USER_PERMISSIONS' : 'UNFREEZE_USER_PERMISSIONS',
@@ -629,7 +642,7 @@ exports.apiRouter.get('/partners', requirePermission('partners', 'can_view'), as
                 totalPages: result.totalPages,
             });
         }
-        const partners = await (0, localDb_1.queryAll)(selectSql, params);
+        const partners = await (0, supabase_1.queryAll)(selectSql, params);
         const sanitized = partners.map((p) => (0, masking_1.applyPiiMasking)(p, mask));
         return res.json({
             partners: sanitized,
@@ -646,12 +659,12 @@ exports.apiRouter.get('/partners', requirePermission('partners', 'can_view'), as
 exports.apiRouter.get('/partners/:id', requirePermission('partners', 'can_view'), async (req, res) => {
     try {
         const mask = shouldMaskPii(req);
-        const partner = await (0, localDb_1.queryOne)('SELECT * FROM partners WHERE id = ?', [req.params.id]);
+        const partner = await (0, supabase_1.queryOne)('SELECT * FROM partners WHERE id = ?', [req.params.id]);
         if (!partner)
             return res.status(404).json({ error: 'Partner not found' });
-        const orders = await (0, localDb_1.queryAll)('SELECT * FROM dsc_applications WHERE partner_id = ? ORDER BY created_at DESC', [req.params.id]);
-        const invoices = await (0, localDb_1.queryAll)('SELECT * FROM invoices WHERE partner_id = ? ORDER BY invoice_date DESC', [req.params.id]);
-        const ledger = await (0, localDb_1.queryAll)('SELECT * FROM financial_ledger WHERE partner_id = ? ORDER BY entry_date DESC', [req.params.id]);
+        const orders = await (0, supabase_1.queryAll)('SELECT * FROM dsc_applications WHERE partner_id = ? ORDER BY created_at DESC', [req.params.id]);
+        const invoices = await (0, supabase_1.queryAll)('SELECT * FROM invoices WHERE partner_id = ? ORDER BY invoice_date DESC', [req.params.id]);
+        const ledger = await (0, supabase_1.queryAll)('SELECT * FROM financial_ledger WHERE partner_id = ? ORDER BY entry_date DESC', [req.params.id]);
         return res.json({
             partner: (0, masking_1.applyPiiMasking)(partner, mask),
             orders,
@@ -677,7 +690,7 @@ exports.apiRouter.post('/partners', requirePermission('partners', 'can_create'),
         }
         const id = `part-${Date.now()}`;
         const partner_code = await allocateNextReferenceNumber('partner');
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO partners (id, partner_code, type, company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit, credit_period_days, kyc_document_url, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
     `, [id, partner_code, type, company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit, credit_period_days, kyc_document_url || null]);
@@ -705,7 +718,7 @@ exports.apiRouter.get('/dsc/catalog', requireAuth, async (req, res) => {
                 totalPages: result.totalPages,
             });
         }
-        const items = await (0, localDb_1.queryAll)(selectSql);
+        const items = await (0, supabase_1.queryAll)(selectSql);
         return res.json({
             catalog: items,
             page: 1,
@@ -725,7 +738,7 @@ exports.apiRouter.post('/dsc/catalog', requireAdmin, async (req, res) => {
             return res.status(400).json({ error: 'Class type, certificate type, and validity are required.' });
         }
         const id = `cat-${Date.now()}`;
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO dsc_catalog (id, class_type, certificate_type, validity_years, vendor_base_price, partner_price, mrp, is_active)
       VALUES (?, ?, ?, ?, ?, ?, ?, 1)
     `, [id, class_type, certificate_type, validity_years, parseFloat(vendor_base_price) || 0, parseFloat(partner_price) || 0, parseFloat(mrp) || 0]);
@@ -738,7 +751,7 @@ exports.apiRouter.post('/dsc/catalog', requireAdmin, async (req, res) => {
 exports.apiRouter.put('/dsc/catalog/:id', requireAdmin, async (req, res) => {
     try {
         const { vendor_base_price, partner_price, mrp, is_active } = req.body;
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       UPDATE dsc_catalog
       SET vendor_base_price = COALESCE(?, vendor_base_price),
           partner_price = COALESCE(?, partner_price),
@@ -756,7 +769,7 @@ exports.apiRouter.patch('/dsc/catalog/:id/deactivate', requireAdmin, async (req,
     try {
         const { is_active } = req.body;
         const newStatus = is_active !== undefined ? (is_active ? 1 : 0) : 0;
-        await (0, localDb_1.run)('UPDATE dsc_catalog SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
+        await (0, supabase_1.run)('UPDATE dsc_catalog SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
         return res.json({ success: true, is_active: Boolean(newStatus), message: `Product ${newStatus ? 'activated' : 'deactivated'}.` });
     }
     catch (err) {
@@ -806,7 +819,7 @@ exports.apiRouter.get('/dsc/applications', requirePermission('dsc', 'can_view'),
                 totalPages: result.totalPages,
             });
         }
-        const apps = await (0, localDb_1.queryAll)(selectSql, params);
+        const apps = await (0, supabase_1.queryAll)(selectSql, params);
         const sanitized = apps.map((app) => (0, masking_1.applyPiiMasking)(app, mask));
         return res.json({
             applications: sanitized,
@@ -828,7 +841,7 @@ exports.apiRouter.post('/dsc/applications', requirePermission('dsc', 'can_create
         }
         const id = `app-${Date.now()}`;
         const application_number = await allocateNextReferenceNumber('dsc_application');
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO dsc_applications (id, application_number, partner_id, catalog_id, applicant_name, applicant_email, applicant_phone, applicant_pan, stage)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'intake')
     `, [id, application_number, partner_id, catalog_id, applicant_name.trim(), applicant_email || null, applicant_phone || null, applicant_pan || null]);
@@ -841,7 +854,7 @@ exports.apiRouter.post('/dsc/applications', requirePermission('dsc', 'can_create
 exports.apiRouter.patch('/dsc/applications/:id/stage', requirePermission('dsc', 'can_edit'), async (req, res) => {
     try {
         const { stage, ca_reference_no, notes } = req.body;
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       UPDATE dsc_applications
       SET stage = COALESCE(?, stage),
           ca_reference_no = COALESCE(?, ca_reference_no),
@@ -881,7 +894,7 @@ exports.apiRouter.get('/inventory/batches', requirePermission('inventory', 'can_
                 totalPages: result.totalPages,
             });
         }
-        const batches = await (0, localDb_1.queryAll)(selectSql, params);
+        const batches = await (0, supabase_1.queryAll)(selectSql, params);
         return res.json({
             batches,
             page: 1,
@@ -913,7 +926,7 @@ exports.apiRouter.post('/inventory/batches', requirePermission('inventory', 'can
         });
         const id = `batch-${Date.now()}`;
         const batch_number = await allocateNextReferenceNumber('token_batch');
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO token_purchase_batches (
         id, batch_number, token_model, vendor_name, quantity_purchased,
         base_unit_price, inward_shipping_cost, customs_or_taxes, handling_charges,
@@ -933,14 +946,14 @@ exports.apiRouter.post('/inventory/batches', requirePermission('inventory', 'can
             calc.unitLandedCost,
         ]);
         // Update headquarters stock
-        const hqBranch = await (0, localDb_1.queryOne)('SELECT id FROM branches WHERE branch_code = ? LIMIT 1', ['HQ-MUM']);
+        const hqBranch = await (0, supabase_1.queryOne)('SELECT id FROM branches WHERE branch_code = ? LIMIT 1', ['HQ-MUM']);
         const branchId = hqBranch ? hqBranch.id : 'branch-hq';
-        const existingStock = await (0, localDb_1.queryOne)('SELECT id, quantity_on_hand FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?', [branchId, token_model]);
+        const existingStock = await (0, supabase_1.queryOne)('SELECT id, quantity_on_hand FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?', [branchId, token_model]);
         if (existingStock) {
-            await (0, localDb_1.run)('UPDATE branch_token_stocks SET quantity_on_hand = quantity_on_hand + ? WHERE id = ?', [qty, existingStock.id]);
+            await (0, supabase_1.run)('UPDATE branch_token_stocks SET quantity_on_hand = quantity_on_hand + ? WHERE id = ?', [qty, existingStock.id]);
         }
         else {
-            await (0, localDb_1.run)(`
+            await (0, supabase_1.run)(`
         INSERT INTO branch_token_stocks (id, branch_id, token_model, quantity_on_hand, quarantine_damaged, min_threshold)
         VALUES (?, ?, ?, ?, 0, 25)
       `, [`stk-${Date.now()}`, branchId, token_model, qty]);
@@ -985,7 +998,7 @@ exports.apiRouter.get('/inventory/branches', requirePermission('inventory', 'can
       JOIN branches b ON s.branch_id = b.id
       ${whereClause}
     `;
-        const branches = await (0, localDb_1.queryAll)('SELECT id, branch_name, branch_code, city, state_code FROM branches ORDER BY branch_name ASC');
+        const branches = await (0, supabase_1.queryAll)('SELECT id, branch_name, branch_code, city, state_code FROM branches ORDER BY branch_name ASC');
         if (isPaginated) {
             const result = await (0, pagination_1.executePaginatedQuery)(selectSql, countSql, params, { page, limit, offset });
             return res.json({
@@ -997,7 +1010,7 @@ exports.apiRouter.get('/inventory/branches', requirePermission('inventory', 'can
                 totalPages: result.totalPages,
             });
         }
-        const stock = await (0, localDb_1.queryAll)(selectSql, params);
+        const stock = await (0, supabase_1.queryAll)(selectSql, params);
         return res.json({
             stock,
             branches,
@@ -1019,7 +1032,7 @@ exports.apiRouter.post('/admin/branches', requireAdmin, async (req, res) => {
             return res.status(400).json({ error: 'Branch name, code, city, and state code are required.' });
         }
         const id = `br-${Date.now()}`;
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO branches (id, branch_name, branch_code, address, city, state_code, is_active)
       VALUES (?, ?, ?, ?, ?, ?, 1)
     `, [id, branch_name.trim(), branch_code.trim().toUpperCase(), address || '', city.trim(), state_code.trim()]);
@@ -1032,7 +1045,7 @@ exports.apiRouter.post('/admin/branches', requireAdmin, async (req, res) => {
 exports.apiRouter.put('/admin/branches/:id', requireAdmin, async (req, res) => {
     try {
         const { branch_name, branch_code, address, city, state_code, is_active } = req.body;
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       UPDATE branches
       SET branch_name = COALESCE(?, branch_name),
           branch_code = COALESCE(?, branch_code),
@@ -1052,7 +1065,7 @@ exports.apiRouter.patch('/admin/branches/:id/deactivate', requireAdmin, async (r
     try {
         const { is_active } = req.body;
         const newStatus = is_active !== undefined ? (is_active ? 1 : 0) : 0;
-        await (0, localDb_1.run)('UPDATE branches SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
+        await (0, supabase_1.run)('UPDATE branches SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
         return res.json({ success: true, is_active: Boolean(newStatus), message: `Branch ${newStatus ? 'activated' : 'deactivated'}.` });
     }
     catch (err) {
@@ -1100,7 +1113,7 @@ exports.apiRouter.get('/inventory/transfers', requirePermission('inventory', 'ca
                 totalPages: result.totalPages,
             });
         }
-        const challans = await (0, localDb_1.queryAll)(selectSql, params);
+        const challans = await (0, supabase_1.queryAll)(selectSql, params);
         return res.json({
             challans,
             page: 1,
@@ -1119,7 +1132,7 @@ exports.apiRouter.post('/inventory/transfers', requirePermission('inventory', 'c
         const { source_branch_id, destination_branch_id, token_model, quantity, remarks, transfer_date, serial_numbers } = req.body;
         const currentUser = req.user;
         const delegation = req.delegation;
-        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../supabase')));
         if (!source_branch_id || !destination_branch_id || !token_model) {
             return res.status(400).json({ error: 'Source branch, destination branch, and token model are required.' });
         }
@@ -1131,7 +1144,7 @@ exports.apiRouter.post('/inventory/transfers', requirePermission('inventory', 'c
             return res.status(400).json({ error: 'Quantity must be a positive whole number.' });
         }
         // Step 5: Concurrency-Safe Atomic Stock Deduction using Conditional Row Update
-        const sourceStock = await (0, localDb_1.queryOne)('SELECT * FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?', [source_branch_id, token_model]);
+        const sourceStock = await (0, supabase_1.queryOne)('SELECT * FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?', [source_branch_id, token_model]);
         if (!sourceStock || Number(sourceStock.quantity_on_hand || 0) < parsedQty) {
             const available = sourceStock ? sourceStock.quantity_on_hand : 0;
             return res.status(400).json({
@@ -1179,7 +1192,7 @@ exports.apiRouter.post('/inventory/transfers', requirePermission('inventory', 'c
             }
         }
         // Snapshot company legal data at challan issue time
-        const company = await (0, localDb_1.queryOne)('SELECT * FROM company_profile LIMIT 1');
+        const company = await (0, supabase_1.queryOne)('SELECT * FROM company_profile LIMIT 1');
         const challanId = `dc-${Date.now()}`;
         const challanNumber = await allocateNextReferenceNumber('delivery_challan');
         const effectiveDate = transfer_date || new Date().toISOString().split('T')[0];
@@ -1213,7 +1226,7 @@ exports.apiRouter.post('/inventory/transfers', requirePermission('inventory', 'c
                 .in('serial_number', serial_numbers);
         }
         // Ensure destination branch stock row exists (initial 0 on hand if not present)
-        const destStock = await (0, localDb_1.queryOne)('SELECT * FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?', [destination_branch_id, token_model]);
+        const destStock = await (0, supabase_1.queryOne)('SELECT * FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?', [destination_branch_id, token_model]);
         if (!destStock) {
             const newStockId = `stock-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
             await supabase.from('branch_token_stocks').insert({
@@ -1250,8 +1263,8 @@ exports.apiRouter.post('/inventory/transfers', requirePermission('inventory', 'c
 exports.apiRouter.patch('/inventory/transfers/:id/receive', requireAuth, async (req, res) => {
     try {
         const challanId = req.params.id;
-        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
-        const challan = await (0, localDb_1.queryOne)('SELECT * FROM delivery_challans WHERE id = ?', [challanId]);
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../supabase')));
+        const challan = await (0, supabase_1.queryOne)('SELECT * FROM delivery_challans WHERE id = ?', [challanId]);
         if (!challan)
             return res.status(404).json({ error: 'Delivery Challan not found.' });
         if (challan.status === 'received') {
@@ -1274,7 +1287,7 @@ exports.apiRouter.patch('/inventory/transfers/:id/receive', requireAuth, async (
             return res.status(409).json({ error: 'Challan has already been received or modified concurrently.' });
         }
         // Atomically increment destination branch stock
-        const destStock = await (0, localDb_1.queryOne)('SELECT * FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?', [challan.destination_branch_id, challan.token_model]);
+        const destStock = await (0, supabase_1.queryOne)('SELECT * FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?', [challan.destination_branch_id, challan.token_model]);
         if (destStock) {
             await supabase
                 .from('branch_token_stocks')
@@ -1312,7 +1325,7 @@ exports.apiRouter.post('/inventory/adjust', requireAdmin, async (req, res) => {
     try {
         const { branch_id, token_model, adjustment_type, quantity, reason } = req.body;
         const currentUser = req.user;
-        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../supabase')));
         if (!branch_id || !token_model || !adjustment_type || quantity === undefined) {
             return res.status(400).json({ error: 'Branch, token model, adjustment type, and quantity are required.' });
         }
@@ -1321,7 +1334,7 @@ exports.apiRouter.post('/inventory/adjust', requireAdmin, async (req, res) => {
             return res.status(400).json({ error: 'Quantity must be a positive integer.' });
         }
         // Ensure branch stock row exists
-        let stock = await (0, localDb_1.queryOne)('SELECT * FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?', [branch_id, token_model]);
+        let stock = await (0, supabase_1.queryOne)('SELECT * FROM branch_token_stocks WHERE branch_id = ? AND token_model = ?', [branch_id, token_model]);
         if (!stock) {
             const newStockId = `stock-${Date.now()}`;
             await supabase.from('branch_token_stocks').insert({
@@ -1402,15 +1415,26 @@ exports.apiRouter.post('/inventory/adjust', requireAdmin, async (req, res) => {
 // ==========================================
 exports.apiRouter.get('/crm/leads', requirePermission('crm', 'can_view'), async (req, res) => {
     try {
+        const user = req.user;
         const mask = shouldMaskPii(req);
         const search = req.query.search ? String(req.query.search).trim() : '';
+        const { category_id, status } = req.query;
         const { page, limit, offset, isPaginated } = (0, pagination_1.parsePaginationParams)(req.query);
+        const store = (0, leadStore_1.loadLeadStore)();
+        const isSupervisor = user.hierarchy_level_order <= 1;
+        const userCatIds = (store.user_category_access || [])
+            .filter((a) => a.user_id === user.id)
+            .map((a) => a.category_id);
         let whereClause = 'WHERE l.is_merged = 0';
         const params = [];
         if (search) {
             whereClause += ' AND (l.company_name LIKE ? OR l.contact_person LIKE ? OR l.lead_code LIKE ? OR l.email LIKE ? OR l.phone LIKE ?)';
             const s = `%${search}%`;
             params.push(s, s, s, s, s);
+        }
+        if (status) {
+            whereClause += ' AND l.status = ?';
+            params.push(String(status));
         }
         const selectSql = `
       SELECT l.*, u.full_name as assigned_agent_name
@@ -1419,24 +1443,40 @@ exports.apiRouter.get('/crm/leads', requirePermission('crm', 'can_view'), async 
       ${whereClause}
       ORDER BY l.created_at DESC
     `;
-        const countSql = `
-      SELECT COUNT(*) as count
-      FROM crm_leads l
-      ${whereClause}
-    `;
+        const rawLeads = await (0, supabase_1.queryAll)(selectSql, params);
+        // Merge extended metadata (category, source, service_intent, match_status, geography)
+        const enriched = rawLeads.map((l) => {
+            const ext = store.extended_leads[l.id] || {};
+            return Object.assign(Object.assign({}, l), { alternate_name: ext.alternate_name || null, state: ext.state || null, district: ext.district || null, address: ext.address || null, pin_code: ext.pin_code || null, source_id: ext.source_id || null, category_id: ext.category_id || null, service_intent: ext.service_intent || 'Undecided', match_status: ext.match_status || 'NO_MATCH', linked_partner_id: ext.linked_partner_id || null, partner_match_score: ext.partner_match_score || 0, partner_match_factors: ext.partner_match_factors || null, city: ext.city || null, pipeline_status: ext.pipeline_status || (l.status === 'merged' ? 'WON' : l.status.toUpperCase()), applied_tat_days: ext.applied_tat_days || null, first_contact_due_at: ext.first_contact_due_at || null, assignment_history: ext.assignment_history || [] });
+        });
+        // LM-16: Strict Backend Category-Level Data Isolation
+        const scopedLeads = enriched.filter((l) => {
+            if (isSupervisor) {
+                if (category_id && l.category_id !== category_id)
+                    return false;
+                return true;
+            }
+            // Unassigned staff cannot see uncategorized leads (LM-17)
+            if (!l.category_id)
+                return false;
+            // Only view assigned categories
+            if (!userCatIds.includes(l.category_id))
+                return false;
+            if (category_id && l.category_id !== category_id)
+                return false;
+            return true;
+        });
+        const sanitized = scopedLeads.map((l) => (0, masking_1.applyPiiMasking)(l, mask));
         if (isPaginated) {
-            const result = await (0, pagination_1.executePaginatedQuery)(selectSql, countSql, params, { page, limit, offset });
-            const sanitized = result.data.map((l) => (0, masking_1.applyPiiMasking)(l, mask));
+            const paginatedSlice = sanitized.slice(offset, offset + limit);
             return res.json({
-                leads: sanitized,
-                page: result.page,
-                limit: result.limit,
-                totalCount: result.totalCount,
-                totalPages: result.totalPages,
+                leads: paginatedSlice,
+                page,
+                limit,
+                totalCount: sanitized.length,
+                totalPages: Math.ceil(sanitized.length / limit),
             });
         }
-        const leads = await (0, localDb_1.queryAll)(selectSql, params);
-        const sanitized = leads.map((l) => (0, masking_1.applyPiiMasking)(l, mask));
         return res.json({
             leads: sanitized,
             page: 1,
@@ -1452,7 +1492,7 @@ exports.apiRouter.get('/crm/leads', requirePermission('crm', 'can_view'), async 
 exports.apiRouter.post('/crm/leads/check-duplicate', requirePermission('crm', 'can_view'), async (req, res) => {
     try {
         const { gstin, phone, email, pan, company_name } = req.body;
-        const existing = await (0, localDb_1.queryAll)('SELECT id, lead_code, company_name, email, phone, gstin, pan FROM crm_leads WHERE is_merged = 0');
+        const existing = await (0, supabase_1.queryAll)('SELECT id, lead_code, company_name, email, phone, gstin, pan FROM crm_leads WHERE is_merged = 0');
         const matches = (0, businessLogic_1.evaluateLeadDuplicates)({ gstin, phone, email, pan, companyName: company_name }, existing.map((e) => ({
             id: e.id,
             leadCode: e.lead_code,
@@ -1472,15 +1512,156 @@ exports.apiRouter.post('/crm/leads/check-duplicate', requirePermission('crm', 'c
     }
 });
 exports.apiRouter.post('/crm/leads', requirePermission('crm', 'can_create'), async (req, res) => {
+    var _a, _b, _c, _d, _e;
     try {
-        const { company_name, contact_person, email, phone, gstin, pan, requirement_summary } = req.body;
+        const user = req.user;
+        const { company_name, alternate_name, contact_person, email, phone, state, district, address, pin_code, source_id, category_id, service_intent, city, pan, requirement_summary, pipeline_status } = req.body;
+        // LM-06: All lead fields optional. No personal/contact field may block saving.
+        // If not supplied, provide clean empty string for legacy not-null columns while keeping extendedStore unpolluted
+        const cleanCompany = company_name ? company_name.trim() : '';
+        const cleanContact = contact_person ? contact_person.trim() : '';
+        const cleanEmail = email ? email.trim().toLowerCase() : '';
+        const cleanPhone = phone ? phone.trim() : '';
+        const cleanPan = pan ? pan.trim().toUpperCase() : null;
+        const cleanReq = requirement_summary ? requirement_summary.trim() : '';
         const id = `lead-${Date.now()}`;
         const lead_code = await allocateNextReferenceNumber('lead');
-        await (0, localDb_1.run)(`
+        // LM-08 to LM-11: Evaluate partner matching immediately on creation
+        const partnerMatch = await (0, partnerMatchEngine_1.evaluatePartnerMatch)({
+            company_name: cleanCompany,
+            alternate_name: alternate_name ? alternate_name.trim() : null,
+            email: cleanEmail,
+            phone: cleanPhone
+        });
+        // Insert primary record in crm_leads (PostgreSQL / Supabase compatible)
+        await (0, supabase_1.run)(`
       INSERT INTO crm_leads (id, lead_code, company_name, contact_person, email, phone, gstin, pan, requirement_summary, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
-    `, [id, lead_code, company_name, contact_person, email, phone, gstin, pan, requirement_summary]);
-        return res.status(201).json({ success: true, id, lead_code });
+    `, [id, lead_code, cleanCompany, cleanContact, cleanEmail, cleanPhone, cleanPan, cleanReq]);
+        // Save extended specification attributes into leadStore
+        if (id && id !== 'undefined' && String(id).trim().length > 0) {
+            const store = (0, leadStore_1.loadLeadStore)();
+            // DEF-04: Resolve active TAT setting for snapshot
+            let appliedTatDays = 2;
+            try {
+                const { data: tatData } = await supabase_1.supabase
+                    .from('crm_tat_settings')
+                    .select('first_contact_tat_days')
+                    .eq('is_active', 1)
+                    .order('effective_from', { ascending: false })
+                    .limit(1);
+                if (tatData && tatData.length > 0 && tatData[0].first_contact_tat_days) {
+                    appliedTatDays = Number(tatData[0].first_contact_tat_days);
+                }
+                else if ((_b = (_a = store.tat_settings) === null || _a === void 0 ? void 0 : _a[0]) === null || _b === void 0 ? void 0 : _b.first_contact_tat_days) {
+                    appliedTatDays = Number(store.tat_settings[0].first_contact_tat_days);
+                }
+            }
+            catch (e) {
+                if ((_d = (_c = store.tat_settings) === null || _c === void 0 ? void 0 : _c[0]) === null || _d === void 0 ? void 0 : _d.first_contact_tat_days) {
+                    appliedTatDays = Number(store.tat_settings[0].first_contact_tat_days);
+                }
+            }
+            const firstContactDueAt = new Date(Date.now() + appliedTatDays * 24 * 60 * 60 * 1000).toISOString();
+            store.extended_leads[id] = {
+                alternate_name: alternate_name ? alternate_name.trim() : null,
+                city: city ? city.trim() : null,
+                state: state ? state.trim() : null,
+                district: district ? district.trim() : null,
+                address: address ? address.trim() : null,
+                pin_code: pin_code ? pin_code.trim() : null,
+                source_id: source_id || null,
+                category_id: category_id || null,
+                service_intent: service_intent || 'Undecided',
+                pipeline_status: pipeline_status || 'NEW',
+                match_status: partnerMatch.matchStatus,
+                linked_partner_id: ((_e = partnerMatch.matchedPartner) === null || _e === void 0 ? void 0 : _e.id) || null,
+                partner_match_score: partnerMatch.matchScore,
+                partner_match_factors: partnerMatch.matchFactors.join(' | '),
+                applied_tat_days: appliedTatDays,
+                first_contact_due_at: firstContactDueAt
+            };
+            // Initialize service activation tracking (LM-26, LM-27)
+            const lstId = `lst-${Date.now()}`;
+            const lstNowIso = new Date().toISOString();
+            const tokenReq = (service_intent === 'Token' || service_intent === 'Both') ? 1 : 0;
+            const dscReq = (service_intent === 'DSC' || service_intent === 'Both') ? 1 : 0;
+            store.service_tracking[id] = {
+                id: lstId,
+                lead_id: id,
+                service_intent: service_intent || 'Undecided',
+                token_requested: tokenReq,
+                token_fulfilled: 0,
+                dsc_requested: dscReq,
+                dsc_fulfilled: 0,
+                tracking_status: 'PENDING_QUALIFICATION',
+                last_updated_by: user === null || user === void 0 ? void 0 : user.id,
+                updated_at: lstNowIso
+            };
+            // Direct Relational Persistence into crm_lead_service_tracking (DEF-01)
+            try {
+                await supabase_1.supabase.from('crm_lead_service_tracking').upsert({
+                    id: lstId,
+                    lead_id: id,
+                    service_intent: service_intent || 'Undecided',
+                    token_requested: tokenReq,
+                    token_fulfilled: 0,
+                    token_fulfilled_at: null,
+                    token_batch_id: null,
+                    dsc_requested: dscReq,
+                    dsc_fulfilled: 0,
+                    dsc_fulfilled_at: null,
+                    dsc_application_id: null,
+                    tracking_status: 'PENDING_QUALIFICATION',
+                    last_updated_by: user === null || user === void 0 ? void 0 : user.id,
+                    updated_at: lstNowIso
+                });
+            }
+            catch (e) {
+                console.error('Direct persist POST /crm/leads service_tracking error:', e.message);
+            }
+            // Record review item if match detected
+            if (partnerMatch.hasMatch && partnerMatch.matchedPartner) {
+                const pmrId = `pmr-${Date.now()}`;
+                const pmrNowIso = new Date().toISOString();
+                const matchTypeVal = partnerMatch.matchType || 'PHONE_SIMILARITY';
+                const matchDetailsVal = {
+                    factors: partnerMatch.matchFactors,
+                    partner_code: partnerMatch.matchedPartner.partner_code
+                };
+                store.match_reviews.push({
+                    id: pmrId,
+                    lead_id: id,
+                    partner_id: partnerMatch.matchedPartner.id,
+                    match_type: matchTypeVal,
+                    match_details: matchDetailsVal,
+                    resolution_status: 'PENDING_REVIEW',
+                    created_at: pmrNowIso
+                });
+                // Direct Relational Persistence into crm_partner_match_reviews (DEF-01)
+                try {
+                    await supabase_1.supabase.from('crm_partner_match_reviews').upsert({
+                        id: pmrId,
+                        lead_id: id,
+                        partner_id: partnerMatch.matchedPartner.id,
+                        match_type: matchTypeVal,
+                        match_details: matchDetailsVal,
+                        resolution_status: 'PENDING_REVIEW',
+                        created_at: pmrNowIso
+                    });
+                }
+                catch (e) {
+                    console.error('Direct persist POST /crm/leads match_reviews error:', e.message);
+                }
+            }
+            (0, leadStore_1.saveLeadStore)(store);
+        }
+        return res.status(201).json({
+            success: true,
+            id,
+            lead_code,
+            partnerMatch
+        });
     }
     catch (err) {
         return res.status(500).json({ error: err.message });
@@ -1491,7 +1672,7 @@ exports.apiRouter.post('/crm/leads/merge', requirePermission('crm', 'can_edit'),
         const currentUser = req.user;
         const delegation = req.delegation;
         const { primary_lead_id, secondary_lead_id } = req.body;
-        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../supabase')));
         if (!primary_lead_id || !secondary_lead_id) {
             return res.status(400).json({ error: 'Primary lead ID and secondary lead ID are required.' });
         }
@@ -1543,8 +1724,21 @@ exports.apiRouter.post('/crm/leads/merge', requirePermission('crm', 'can_edit'),
 // Lead Edit, Assignment & Status Update (Item 5)
 exports.apiRouter.put('/crm/leads/:id', requirePermission('crm', 'can_edit'), async (req, res) => {
     try {
-        const { company_name, contact_person, email, phone, gstin, pan, requirement_summary, status, assigned_to } = req.body;
-        await (0, localDb_1.run)(`
+        const user = req.user;
+        const leadId = String(req.params.id);
+        const store = (0, leadStore_1.loadLeadStore)();
+        const ext = store.extended_leads[leadId] || {};
+        // LM-16: Category isolation check
+        const isSupervisor = user.hierarchy_level_order <= 1;
+        const userCatIds = (store.user_category_access || [])
+            .filter((a) => a.user_id === user.id)
+            .map((a) => a.category_id);
+        if (!isSupervisor && ext.category_id && !userCatIds.includes(ext.category_id)) {
+            return res.status(403).json({ error: 'You do not have permission to edit leads in this category.' });
+        }
+        const { company_name, alternate_name, contact_person, email, phone, state, district, address, pin_code, source_id, category_id, service_intent, gstin, pan, requirement_summary, status, assigned_to } = req.body;
+        // Update core table
+        await (0, supabase_1.run)(`
       UPDATE crm_leads
       SET company_name = COALESCE(?, company_name),
           contact_person = COALESCE(?, contact_person),
@@ -1557,7 +1751,43 @@ exports.apiRouter.put('/crm/leads/:id', requirePermission('crm', 'can_edit'), as
           assigned_to = COALESCE(?, assigned_to),
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `, [company_name, contact_person, email, phone, gstin, pan, requirement_summary, status, assigned_to, req.params.id]);
+    `, [company_name, contact_person, email, phone, gstin, pan, requirement_summary, status, assigned_to, leadId]);
+        // Update extended specification attributes
+        if (alternate_name !== undefined)
+            ext.alternate_name = alternate_name;
+        if (state !== undefined)
+            ext.state = state;
+        if (district !== undefined)
+            ext.district = district;
+        if (address !== undefined)
+            ext.address = address;
+        if (pin_code !== undefined)
+            ext.pin_code = pin_code;
+        if (source_id !== undefined)
+            ext.source_id = source_id;
+        if (category_id !== undefined)
+            ext.category_id = category_id;
+        if (service_intent !== undefined)
+            ext.service_intent = service_intent;
+        // LM-13: Re-evaluate partner match on update of identifying fields
+        if (phone !== undefined || email !== undefined || company_name !== undefined || alternate_name !== undefined) {
+            const match = await (0, partnerMatchEngine_1.evaluatePartnerMatch)({
+                company_name: company_name || ext.alternate_name,
+                alternate_name: ext.alternate_name,
+                email: email,
+                phone: phone
+            });
+            ext.match_status = match.matchStatus;
+            ext.partner_match_score = match.matchScore;
+            ext.partner_match_factors = match.matchFactors.join(' | ');
+            if (match.matchedPartner) {
+                ext.linked_partner_id = match.matchedPartner.id;
+            }
+        }
+        if (leadId && leadId !== 'undefined' && leadId.trim().length > 0) {
+            store.extended_leads[leadId] = ext;
+            (0, leadStore_1.saveLeadStore)(store);
+        }
         return res.json({ success: true, message: 'Lead updated successfully.' });
     }
     catch (err) {
@@ -1603,7 +1833,7 @@ exports.apiRouter.get('/crm/follow-ups', requirePermission('crm', 'can_view'), a
                 totalPages: result.totalPages,
             });
         }
-        const followUps = await (0, localDb_1.queryAll)(selectSql, params);
+        const followUps = await (0, supabase_1.queryAll)(selectSql, params);
         const sanitized = followUps.map((f) => (0, masking_1.applyPiiMasking)(f, mask));
         return res.json({
             followUps: sanitized,
@@ -1626,7 +1856,7 @@ exports.apiRouter.post('/crm/follow-ups', requireAuth, async (req, res) => {
         if (!notes || !notes.trim())
             return res.status(400).json({ error: 'Follow-up notes/comments are required.' });
         const id = `fu-${Date.now()}`;
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO crm_follow_ups (id, lead_id, channel, scheduled_at, notes, disposition, conducted_by, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
     `, [id, lead_id, contact_mode || 'phone_call', follow_up_date || new Date().toISOString(), notes || null, disposition || null, currentUser.id]);
@@ -1639,7 +1869,7 @@ exports.apiRouter.post('/crm/follow-ups', requireAuth, async (req, res) => {
 exports.apiRouter.patch('/crm/follow-ups/:id/complete', requireAuth, async (req, res) => {
     try {
         const { disposition, notes } = req.body;
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       UPDATE crm_follow_ups
       SET status = 'completed', disposition = COALESCE(?, disposition), notes = COALESCE(?, notes)
       WHERE id = ?
@@ -1656,7 +1886,7 @@ exports.apiRouter.patch('/crm/follow-ups/:id/reschedule', requireAuth, async (re
         if (!scheduled_at) {
             return res.status(400).json({ error: 'New scheduled date/time is required.' });
         }
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       UPDATE crm_follow_ups
       SET scheduled_at = ?,
           notes = COALESCE(?, notes),
@@ -1694,7 +1924,7 @@ exports.apiRouter.get('/services', requirePermission('services', 'can_view'), as
                 totalPages: result.totalPages,
             });
         }
-        const services = await (0, localDb_1.queryAll)(selectSql);
+        const services = await (0, supabase_1.queryAll)(selectSql);
         return res.json({
             services,
             orders: services,
@@ -1728,7 +1958,7 @@ exports.apiRouter.get('/services/orders', requirePermission('services', 'can_vie
                 totalPages: result.totalPages,
             });
         }
-        const orders = await (0, localDb_1.queryAll)(selectSql);
+        const orders = await (0, supabase_1.queryAll)(selectSql);
         return res.json({
             orders,
             page: 1,
@@ -1746,7 +1976,7 @@ exports.apiRouter.post('/services/orders', requirePermission('services', 'can_cr
         const { service_type, partner_id, client_name, client_contact, government_fees = 0, professional_fees = 0, notes } = req.body;
         const id = `srv-${Date.now()}`;
         const order_number = await allocateNextReferenceNumber('service_order');
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO service_orders (id, order_number, service_type, partner_id, client_name, client_contact, government_fees, professional_fees, notes, stage)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft_review')
     `, [id, order_number, service_type, partner_id, client_name, client_contact, government_fees, professional_fees, notes]);
@@ -1762,7 +1992,7 @@ exports.apiRouter.patch('/services/orders/:id/stage', requirePermission('service
         if (!stage) {
             return res.status(400).json({ error: 'stage is required' });
         }
-        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../supabase')));
         const updatePayload = { stage };
         if (notes)
             updatePayload.notes = notes;
@@ -1809,7 +2039,7 @@ exports.apiRouter.get('/billing/accounts', requirePermission('billing', 'can_vie
                 totalPages: result.totalPages,
             });
         }
-        const accounts = await (0, localDb_1.queryAll)(selectSql, params);
+        const accounts = await (0, supabase_1.queryAll)(selectSql, params);
         return res.json({
             accounts,
             page: 1,
@@ -1829,7 +2059,7 @@ exports.apiRouter.post('/billing/accounts', requireAdmin, async (req, res) => {
             return res.status(400).json({ error: 'Account nickname, bank name, account number, and IFSC are required.' });
         }
         const id = `bank-${Date.now()}`;
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO bank_accounts (id, account_nickname, bank_name, account_number, ifsc_code, branch_name, account_holder_name, upi_id, is_active)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
     `, [id, account_nickname, bank_name, account_number, ifsc_code, branch_name || 'Main Branch', account_holder_name || account_nickname, upi_id || null]);
@@ -1841,7 +2071,7 @@ exports.apiRouter.post('/billing/accounts', requireAdmin, async (req, res) => {
 });
 exports.apiRouter.patch('/billing/accounts/:id/deactivate', requireAdmin, async (req, res) => {
     try {
-        await (0, localDb_1.run)('UPDATE bank_accounts SET is_active = 0 WHERE id = ?', [req.params.id]);
+        await (0, supabase_1.run)('UPDATE bank_accounts SET is_active = 0 WHERE id = ?', [req.params.id]);
         return res.json({ success: true, message: 'Bank account deactivated.' });
     }
     catch (err) {
@@ -1850,7 +2080,7 @@ exports.apiRouter.patch('/billing/accounts/:id/deactivate', requireAdmin, async 
 });
 exports.apiRouter.get('/billing/series', requirePermission('billing', 'can_view'), async (_req, res) => {
     try {
-        const series = await (0, localDb_1.queryAll)(`
+        const series = await (0, supabase_1.queryAll)(`
       SELECT s.*, b.bank_name, b.account_number, b.upi_id
       FROM invoice_series_configs s
       JOIN bank_accounts b ON s.mapped_bank_account_id = b.id
@@ -1868,7 +2098,7 @@ exports.apiRouter.post('/billing/series', requireAdmin, async (req, res) => {
             return res.status(400).json({ error: 'Series name, prefix, and mapped bank account are required.' });
         }
         const id = `ser-${Date.now()}`;
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO invoice_series_configs (id, series_name, prefix, suffix, current_counter, is_gst_compliant, mapped_bank_account_id, is_active)
       VALUES (?, ?, ?, ?, ?, ?, ?, 1)
     `, [id, series_name.trim(), prefix.trim().toUpperCase(), suffix ? suffix.trim() : null, current_counter || 1000, is_gst_compliant ? 1 : 0, mapped_bank_account_id]);
@@ -1881,7 +2111,7 @@ exports.apiRouter.post('/billing/series', requireAdmin, async (req, res) => {
 exports.apiRouter.put('/billing/series/:id', requireAdmin, async (req, res) => {
     try {
         const { series_name, prefix, suffix, current_counter, is_gst_compliant, mapped_bank_account_id, is_active } = req.body;
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       UPDATE invoice_series_configs
       SET series_name = COALESCE(?, series_name),
           prefix = COALESCE(?, prefix),
@@ -1941,7 +2171,7 @@ exports.apiRouter.get('/billing/invoices', requirePermission('billing', 'can_vie
                 totalPages: result.totalPages,
             });
         }
-        const invoices = await (0, localDb_1.queryAll)(selectSql, params);
+        const invoices = await (0, supabase_1.queryAll)(selectSql, params);
         const sanitized = (invoices || []).map((inv) => (0, masking_1.applyPiiMasking)(inv, mask));
         return res.json({
             invoices: sanitized,
@@ -1961,7 +2191,7 @@ exports.apiRouter.post('/billing/invoices', requirePermission('billing', 'can_cr
         const currentUser = req.user;
         const delegation = req.delegation;
         const { series_id, partner_id, due_days = 30, line_items = [] } = req.body;
-        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../supabase')));
         if (!Array.isArray(line_items) || line_items.length === 0) {
             return res.status(400).json({ error: 'Invoice must contain at least one line item.' });
         }
@@ -1974,14 +2204,14 @@ exports.apiRouter.post('/billing/invoices', requirePermission('billing', 'can_cr
         }
         let series = null;
         if (series_id) {
-            series = await (0, localDb_1.queryOne)('SELECT * FROM invoice_series_configs WHERE id = ?', [series_id]);
+            series = await (0, supabase_1.queryOne)('SELECT * FROM invoice_series_configs WHERE id = ?', [series_id]);
         }
         else {
-            series = await (0, localDb_1.queryOne)('SELECT * FROM invoice_series_configs WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1');
+            series = await (0, supabase_1.queryOne)('SELECT * FROM invoice_series_configs WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1');
         }
         if (!series)
             return res.status(404).json({ error: 'Invoice series config not found' });
-        const partner = await (0, localDb_1.queryOne)('SELECT * FROM partners WHERE id = ?', [partner_id]);
+        const partner = await (0, supabase_1.queryOne)('SELECT * FROM partners WHERE id = ?', [partner_id]);
         if (!partner)
             return res.status(404).json({ error: 'Partner not found' });
         const subtotal = line_items.reduce((sum, item) => {
@@ -2041,7 +2271,7 @@ exports.apiRouter.post('/billing/invoices', requirePermission('billing', 'can_cr
         const invoice_number = `${prefix}${allocatedCounter}${suffix}`;
         const id = `inv-${Date.now()}`;
         // Snapshot company legal data at issue time to prevent historical corruption
-        const company = await (0, localDb_1.queryOne)('SELECT * FROM company_profile LIMIT 1');
+        const company = await (0, supabase_1.queryOne)('SELECT * FROM company_profile LIMIT 1');
         const todayIso = new Date().toISOString().split('T')[0];
         const dueDate = new Date(Date.now() + (due_days * 86400000)).toISOString().split('T')[0];
         // Insert Invoice
@@ -2143,7 +2373,7 @@ exports.apiRouter.get('/billing/payments/queue', requirePermission('billing', 'c
                 totalPages: result.totalPages,
             });
         }
-        const queue = await (0, localDb_1.queryAll)(selectSql, params);
+        const queue = await (0, supabase_1.queryAll)(selectSql, params);
         const sanitized = (queue || []).map((p) => (0, masking_1.applyPiiMasking)(p, mask));
         return res.json({
             queue: sanitized,
@@ -2165,7 +2395,7 @@ exports.apiRouter.post('/billing/payments/record', requirePermission('billing', 
         if (!invoice_id || amount <= 0) {
             return res.status(400).json({ error: 'Invoice and a positive payment amount are required.' });
         }
-        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../supabase')));
         // If partner_id is not explicitly provided, resolve from the invoice
         let resolvedPartnerId = partner_id;
         if (!resolvedPartnerId) {
@@ -2202,8 +2432,8 @@ exports.apiRouter.post('/billing/payments/verify', requirePermission('billing', 
         const currentUser = req.user;
         const delegation = req.delegation;
         const { payment_id, action = 'verified', rejection_remarks } = req.body; // action: 'verified' | 'rejected'
-        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
-        const payment = await (0, localDb_1.queryOne)('SELECT * FROM payments_received WHERE id = ?', [payment_id]);
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../supabase')));
+        const payment = await (0, supabase_1.queryOne)('SELECT * FROM payments_received WHERE id = ?', [payment_id]);
         if (!payment)
             return res.status(404).json({ error: 'Payment record not found' });
         if (payment.verified_status !== 'pending_verification') {
@@ -2229,7 +2459,7 @@ exports.apiRouter.post('/billing/payments/verify', requirePermission('billing', 
                 });
             }
             // Lock associated invoice and validate balances
-            const invoice = await (0, localDb_1.queryOne)('SELECT * FROM invoices WHERE id = ?', [payment.invoice_id]);
+            const invoice = await (0, supabase_1.queryOne)('SELECT * FROM invoices WHERE id = ?', [payment.invoice_id]);
             if (!invoice) {
                 // Rollback verification claim if invoice does not exist
                 await supabase.from('payments_received').update({ verified_status: 'pending_verification', verified_by: null, verified_at: null }).eq('id', payment_id);
@@ -2345,12 +2575,12 @@ exports.apiRouter.get('/billing/reminders/preview', requirePermission('billing',
         if (!partnerId) {
             return res.status(400).json({ error: 'partner_id is required' });
         }
-        const partner = await (0, localDb_1.queryOne)('SELECT * FROM partners WHERE id = ?', [partnerId]);
+        const partner = await (0, supabase_1.queryOne)('SELECT * FROM partners WHERE id = ?', [partnerId]);
         if (!partner) {
             return res.status(404).json({ error: 'Partner not found' });
         }
         // Fetch active unpaid / partially_paid invoices (exclude paid, rejected, cancelled)
-        const allInvoices = await (0, localDb_1.queryAll)('SELECT id, invoice_number, total_amount, outstanding_balance, due_date, status, invoice_date FROM invoices WHERE partner_id = ? AND status IN (?, ?) AND outstanding_balance > 0 ORDER BY due_date ASC', [partnerId, 'unpaid', 'partially_paid']);
+        const allInvoices = await (0, supabase_1.queryAll)('SELECT id, invoice_number, total_amount, outstanding_balance, due_date, status, invoice_date FROM invoices WHERE partner_id = ? AND status IN (?, ?) AND outstanding_balance > 0 ORDER BY due_date ASC', [partnerId, 'unpaid', 'partially_paid']);
         const totalOutstanding = allInvoices.reduce((sum, inv) => sum + Number(inv.outstanding_balance || 0), 0);
         // Calculate earliest due date and overdue days
         let earliestDueDate = null;
@@ -2369,7 +2599,7 @@ exports.apiRouter.get('/billing/reminders/preview', requirePermission('billing',
             });
         }
         // Fetch primary active bank account for payment details
-        const bankAccount = await (0, localDb_1.queryOne)('SELECT bank_name, account_number, ifsc_code, upi_id, account_holder_name FROM bank_accounts WHERE is_active = 1 LIMIT 1');
+        const bankAccount = await (0, supabase_1.queryOne)('SELECT bank_name, account_number, ifsc_code, upi_id, account_holder_name FROM bank_accounts WHERE is_active = 1 LIMIT 1');
         const mask = shouldMaskPii(req);
         const sanitizedPartner = (0, masking_1.applyPiiMasking)(partner, mask);
         // Construct default suggested message
@@ -2434,13 +2664,13 @@ exports.apiRouter.post('/billing/reminders/log', requirePermission('billing', 'c
             return res.status(400).json({ error: 'Invalid reminder status' });
         }
         // Verify partner exists
-        const partner = await (0, localDb_1.queryOne)('SELECT id, company_name FROM partners WHERE id = ?', [partner_id]);
+        const partner = await (0, supabase_1.queryOne)('SELECT id, company_name FROM partners WHERE id = ?', [partner_id]);
         if (!partner) {
             return res.status(404).json({ error: 'Partner not found' });
         }
         // Double-click idempotency guard: check for identical reminder logged by same user in last 10 seconds
         const tenSecondsAgo = new Date(Date.now() - 10000).toISOString();
-        const { data: recentLogs } = await localDb_1.supabase
+        const { data: recentLogs } = await supabase_1.supabase
             .from('audit_logs')
             .select('id, created_at, new_value_json')
             .eq('action_type', 'PAYMENT_REMINDER_LOGGED')
@@ -2511,7 +2741,7 @@ exports.apiRouter.get('/billing/reminders/history', requirePermission('billing',
     try {
         const partnerId = String(req.query.partner_id || '').trim();
         const { page, limit, offset, isPaginated } = (0, pagination_1.parsePaginationParams)(req.query);
-        let query = localDb_1.supabase
+        let query = supabase_1.supabase
             .from('audit_logs')
             .select('id, user_id, action_type, new_value_json, created_at', { count: 'exact' })
             .eq('action_type', 'PAYMENT_REMINDER_LOGGED');
@@ -2533,7 +2763,7 @@ exports.apiRouter.get('/billing/reminders/history', requirePermission('billing',
         const userIds = Array.from(new Set((data || []).map((d) => d.user_id).filter(Boolean)));
         let userMap = {};
         if (userIds.length > 0) {
-            const { data: users } = await localDb_1.supabase.from('user_profiles').select('id, full_name').in('id', userIds);
+            const { data: users } = await supabase_1.supabase.from('user_profiles').select('id, full_name').in('id', userIds);
             users === null || users === void 0 ? void 0 : users.forEach((u) => { userMap[u.id] = u.full_name; });
         }
         const history = (data || []).map((row) => {
@@ -2601,7 +2831,7 @@ exports.apiRouter.get('/courier/dispatches', requirePermission('courier', 'can_v
                 totalPages: result.totalPages,
             });
         }
-        const dispatches = await (0, localDb_1.queryAll)(selectSql, params);
+        const dispatches = await (0, supabase_1.queryAll)(selectSql, params);
         const sanitized = (dispatches || []).map((d) => (0, masking_1.applyPiiMasking)(d, mask));
         return res.json({
             dispatches: sanitized,
@@ -2623,7 +2853,7 @@ exports.apiRouter.post('/courier/dispatches', requirePermission('courier', 'can_
         }
         const id = `disp-${Date.now()}`;
         const dispatch_number = await allocateNextReferenceNumber('courier_dispatch');
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO courier_dispatches (id, dispatch_number, carrier_name, awb_number, recipient_name, recipient_phone, shipping_address, package_contents, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manifested')
     `, [id, dispatch_number, carrier_name, awb_number, recipient_name, recipient_phone, shipping_address, package_contents]);
@@ -2639,7 +2869,7 @@ exports.apiRouter.patch('/courier/dispatches/:id/status', requirePermission('cou
         if (!status) {
             return res.status(400).json({ error: 'Status is required.' });
         }
-        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../supabase')));
         const updatePayload = {
             status
         };
@@ -2666,8 +2896,8 @@ exports.apiRouter.patch('/courier/dispatches/:id/status', requirePermission('cou
 exports.apiRouter.get('/inventory/transfers/pdf', requirePermission('inventory', 'can_view'), async (req, res) => {
     try {
         const challanNumber = req.query.challan_number || 'DC-2026-0001';
-        const profile = await (0, localDb_1.queryOne)('SELECT * FROM company_profile LIMIT 1');
-        const challans = await (0, localDb_1.queryAll)(`
+        const profile = await (0, supabase_1.queryOne)('SELECT * FROM company_profile LIMIT 1');
+        const challans = await (0, supabase_1.queryAll)(`
       SELECT dc.*, 
              sb.branch_name as source_branch_name, sb.branch_code as source_branch_code, sb.city as source_city, sb.state_code as source_state,
              db.branch_name as destination_branch_name, db.branch_code as destination_branch_code, db.city as dest_city, db.state_code as dest_state,
@@ -2725,7 +2955,7 @@ exports.apiRouter.get('/inventory/transfers/pdf', requirePermission('inventory',
 // A. Company Profile Settings
 exports.apiRouter.get('/admin/settings/company', requireAuth, async (_req, res) => {
     try {
-        const profile = await (0, localDb_1.queryOne)('SELECT * FROM company_profile LIMIT 1');
+        const profile = await (0, supabase_1.queryOne)('SELECT * FROM company_profile LIMIT 1');
         return res.json({ profile });
     }
     catch (err) {
@@ -2738,7 +2968,7 @@ exports.apiRouter.put('/admin/settings/company', requireAdmin, async (req, res) 
         if (!legal_name || !gstin || !state_code) {
             return res.status(400).json({ error: 'Legal name, GSTIN, and default state are required.' });
         }
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       UPDATE company_profile
       SET legal_name = ?,
           trade_name = ?,
@@ -2761,7 +2991,7 @@ exports.apiRouter.put('/admin/settings/company', requireAdmin, async (req, res) 
 // B. Token Models Master
 exports.apiRouter.get('/admin/settings/tokens', requireAuth, async (_req, res) => {
     try {
-        const models = await (0, localDb_1.queryAll)('SELECT * FROM token_models ORDER BY model_name ASC');
+        const models = await (0, supabase_1.queryAll)('SELECT * FROM token_models ORDER BY model_name ASC');
         return res.json({ models });
     }
     catch (err) {
@@ -2775,7 +3005,7 @@ exports.apiRouter.post('/admin/settings/tokens', requireAdmin, async (req, res) 
             return res.status(400).json({ error: 'Model name and manufacturer are required.' });
         }
         const id = `tm-${Date.now()}`;
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO token_models (id, model_name, manufacturer, vendor_contact, min_threshold, is_active)
       VALUES (?, ?, ?, ?, ?, 1)
     `, [id, model_name.trim().toUpperCase(), manufacturer.trim(), vendor_contact || null, Number(min_threshold) || 10]);
@@ -2788,7 +3018,7 @@ exports.apiRouter.post('/admin/settings/tokens', requireAdmin, async (req, res) 
 // C. Courier Companies Master
 exports.apiRouter.get('/admin/settings/couriers', requireAuth, async (_req, res) => {
     try {
-        const couriers = await (0, localDb_1.queryAll)('SELECT * FROM courier_partners ORDER BY company_name ASC');
+        const couriers = await (0, supabase_1.queryAll)('SELECT * FROM courier_partners ORDER BY company_name ASC');
         return res.json({ couriers });
     }
     catch (err) {
@@ -2801,7 +3031,7 @@ exports.apiRouter.post('/admin/settings/couriers', requireAdmin, async (req, res
         if (!company_name)
             return res.status(400).json({ error: 'Company name is required.' });
         const id = `cp-${Date.now()}`;
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO courier_partners (id, company_name, tracking_url_template, support_phone, is_active)
       VALUES (?, ?, ?, ?, 1)
     `, [id, company_name.trim(), tracking_url_template || null, support_phone || null]);
@@ -2814,7 +3044,7 @@ exports.apiRouter.post('/admin/settings/couriers', requireAdmin, async (req, res
 // D. Business Services Master
 exports.apiRouter.get('/admin/settings/services', requireAuth, async (_req, res) => {
     try {
-        const services = await (0, localDb_1.queryAll)('SELECT * FROM services_catalog ORDER BY category, service_name');
+        const services = await (0, supabase_1.queryAll)('SELECT * FROM services_catalog ORDER BY category, service_name');
         return res.json({ services });
     }
     catch (err) {
@@ -2828,7 +3058,7 @@ exports.apiRouter.post('/admin/settings/services', requireAdmin, async (req, res
             return res.status(400).json({ error: 'Service key, name, and category are required.' });
         }
         const id = `srv-${Date.now()}`;
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO services_catalog (id, service_key, service_name, category, government_fee, professional_fee, is_active)
       VALUES (?, ?, ?, ?, ?, ?, 1)
     `, [id, service_key.trim().toLowerCase(), service_name.trim(), category.trim(), Number(government_fee) || 0, Number(professional_fee) || 0]);
@@ -2842,9 +3072,9 @@ exports.apiRouter.post('/admin/settings/services', requireAdmin, async (req, res
 exports.apiRouter.put('/partners/:id', requireAuth, async (req, res) => {
     try {
         const currentUser = req.user;
-        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../supabase')));
         const { company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, credit_limit, credit_period_days, status, kyc_verified } = req.body;
-        const existing = await (0, localDb_1.queryOne)('SELECT * FROM partners WHERE id = ?', [req.params.id]);
+        const existing = await (0, supabase_1.queryOne)('SELECT * FROM partners WHERE id = ?', [req.params.id]);
         if (!existing)
             return res.status(404).json({ error: 'Partner not found' });
         // Strict Security Guard: Only Super Admin (Level 0) or Partner Admin (Level 1) can modify credit limits or credit periods
@@ -2911,7 +3141,7 @@ exports.apiRouter.put('/partners/:id', requireAuth, async (req, res) => {
 // 1. Certifying Authorities (CA)
 exports.apiRouter.get('/admin/masters/ca', requireAuth, async (_req, res) => {
     try {
-        const authorities = await (0, localDb_1.queryAll)('SELECT * FROM certifying_authorities ORDER BY ca_name ASC');
+        const authorities = await (0, supabase_1.queryAll)('SELECT * FROM certifying_authorities ORDER BY ca_name ASC');
         return res.json({ authorities });
     }
     catch (err) {
@@ -2925,7 +3155,7 @@ exports.apiRouter.post('/admin/masters/ca', requireAdmin, async (req, res) => {
             return res.status(400).json({ error: 'CA Name and CA Code are required.' });
         }
         const id = `ca-${Date.now()}`;
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO certifying_authorities (id, ca_name, ca_code, api_endpoint, support_contact, is_active)
       VALUES (?, ?, ?, ?, ?, 1)
     `, [id, ca_name.trim(), ca_code.trim().toUpperCase(), api_endpoint || null, support_contact || null]);
@@ -2949,7 +3179,7 @@ exports.apiRouter.patch('/admin/masters/ca/:id/deactivate', requireAdmin, async 
     try {
         const { is_active } = req.body;
         const newStatus = is_active !== undefined ? (is_active ? 1 : 0) : 0;
-        await (0, localDb_1.run)('UPDATE certifying_authorities SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
+        await (0, supabase_1.run)('UPDATE certifying_authorities SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
         return res.json({ success: true, is_active: Boolean(newStatus) });
     }
     catch (err) {
@@ -2959,7 +3189,7 @@ exports.apiRouter.patch('/admin/masters/ca/:id/deactivate', requireAdmin, async 
 // 2. Hardware Vendors
 exports.apiRouter.get('/admin/masters/vendors', requireAuth, async (_req, res) => {
     try {
-        const vendors = await (0, localDb_1.queryAll)('SELECT * FROM hardware_vendors ORDER BY vendor_name ASC');
+        const vendors = await (0, supabase_1.queryAll)('SELECT * FROM hardware_vendors ORDER BY vendor_name ASC');
         return res.json({ vendors });
     }
     catch (err) {
@@ -2972,7 +3202,7 @@ exports.apiRouter.post('/admin/masters/vendors', requireAdmin, async (req, res) 
         if (!vendor_name)
             return res.status(400).json({ error: 'Vendor name is required.' });
         const id = `ven-${Date.now()}`;
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO hardware_vendors (id, vendor_name, contact_person, email, phone, gstin, address, is_active)
       VALUES (?, ?, ?, ?, ?, ?, ?, 1)
     `, [id, vendor_name.trim(), contact_person || null, email || null, phone || null, gstin || null, address || null]);
@@ -2994,7 +3224,7 @@ exports.apiRouter.post('/admin/masters/vendors', requireAdmin, async (req, res) 
 });
 // 2b. Partner Types Master (Supabase-backed via company_profile metadata)
 async function getPartnerTypesFromDb() {
-    const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+    const { supabase } = await Promise.resolve().then(() => __importStar(require('../supabase')));
     const { data } = await supabase.from('company_profile').select('logo_url').single();
     const raw = (data === null || data === void 0 ? void 0 : data.logo_url) || '';
     if (raw.includes('#PARTNER_TYPES:')) {
@@ -3014,7 +3244,7 @@ async function getPartnerTypesFromDb() {
     ];
 }
 async function savePartnerTypesToDb(types) {
-    const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+    const { supabase } = await Promise.resolve().then(() => __importStar(require('../supabase')));
     const baseLogo = '/signsync-logo.png';
     const newMeta = `${baseLogo}#PARTNER_TYPES:${JSON.stringify(types)}`;
     await supabase.from('company_profile').update({ logo_url: newMeta }).eq('id', 'comp-default');
@@ -3115,7 +3345,7 @@ exports.apiRouter.post('/storage/upload', requireAuth, async (req, res) => {
         if (fileBuffer.length > config.maxBytes) {
             return res.status(400).json({ error: `File size exceeds the limit of ${config.maxBytes / (1024 * 1024)}MB.` });
         }
-        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../supabase')));
         const sanitizedName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
         const storagePath = `${Date.now()}_${sanitizedName}`;
         const { data: uploadData, error: uploadErr } = await supabase.storage
@@ -3153,7 +3383,7 @@ exports.apiRouter.post('/storage/signed-url', requireAuth, async (req, res) => {
         if (!config) {
             return res.status(400).json({ error: 'Invalid storage category.' });
         }
-        const { supabase } = await Promise.resolve().then(() => __importStar(require('../localDb')));
+        const { supabase } = await Promise.resolve().then(() => __importStar(require('../supabase')));
         const { data, error } = await supabase.storage
             .from(config.bucket)
             .createSignedUrl(path, 86400);
@@ -3169,7 +3399,7 @@ exports.apiRouter.post('/storage/signed-url', requireAuth, async (req, res) => {
 // 3. Stock Adjustment Reasons
 exports.apiRouter.get('/admin/masters/reasons', requireAuth, async (_req, res) => {
     try {
-        const reasons = await (0, localDb_1.queryAll)('SELECT * FROM stock_adjustment_reasons ORDER BY reason_label ASC');
+        const reasons = await (0, supabase_1.queryAll)('SELECT * FROM stock_adjustment_reasons ORDER BY reason_label ASC');
         return res.json({ reasons });
     }
     catch (err) {
@@ -3182,7 +3412,7 @@ exports.apiRouter.post('/admin/masters/reasons', requireAdmin, async (req, res) 
         if (!reason_code || !reason_label)
             return res.status(400).json({ error: 'Reason code and label are required.' });
         const id = `rsn-${Date.now()}`;
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO stock_adjustment_reasons (id, reason_code, reason_label, adjustment_type, is_active)
       VALUES (?, ?, ?, ?, 1)
     `, [id, reason_code.trim().toUpperCase(), reason_label.trim(), adjustment_type || 'DAMAGE']);
@@ -3196,7 +3426,7 @@ exports.apiRouter.patch('/admin/masters/reasons/:id/deactivate', requireAdmin, a
     try {
         const { is_active } = req.body;
         const newStatus = is_active !== undefined ? (is_active ? 1 : 0) : 0;
-        await (0, localDb_1.run)('UPDATE stock_adjustment_reasons SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
+        await (0, supabase_1.run)('UPDATE stock_adjustment_reasons SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
         return res.json({ success: true, is_active: Boolean(newStatus) });
     }
     catch (err) {
@@ -3206,7 +3436,7 @@ exports.apiRouter.patch('/admin/masters/reasons/:id/deactivate', requireAdmin, a
 // 3b. CRM Lead Sources Master
 exports.apiRouter.get('/crm/lead-sources', requireAuth, async (_req, res) => {
     try {
-        const sources = await (0, localDb_1.queryAll)('SELECT * FROM crm_lead_sources ORDER BY source_name ASC');
+        const sources = await (0, supabase_1.queryAll)('SELECT * FROM crm_lead_sources ORDER BY source_name ASC');
         return res.json({ sources });
     }
     catch (err) {
@@ -3219,7 +3449,7 @@ exports.apiRouter.post('/crm/lead-sources', requireAdmin, async (req, res) => {
         if (!source_name)
             return res.status(400).json({ error: 'Lead source name is required.' });
         const id = `src-${Date.now()}`;
-        await (0, localDb_1.run)('INSERT INTO crm_lead_sources (id, source_name, is_active) VALUES (?, ?, 1)', [id, source_name.trim()]);
+        await (0, supabase_1.run)('INSERT INTO crm_lead_sources (id, source_name, is_active) VALUES (?, ?, 1)', [id, source_name.trim()]);
         return res.status(201).json({ success: true, id, message: 'Lead source added.' });
     }
     catch (err) {
@@ -3230,7 +3460,7 @@ exports.apiRouter.patch('/crm/lead-sources/:id/deactivate', requireAdmin, async 
     try {
         const { is_active } = req.body;
         const newStatus = is_active !== undefined ? (is_active ? 1 : 0) : 0;
-        await (0, localDb_1.run)('UPDATE crm_lead_sources SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
+        await (0, supabase_1.run)('UPDATE crm_lead_sources SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
         return res.json({ success: true, is_active: Boolean(newStatus) });
     }
     catch (err) {
@@ -3242,7 +3472,7 @@ exports.apiRouter.patch('/admin/masters/vendors/:id/deactivate', requireAdmin, a
     try {
         const { is_active } = req.body;
         const newStatus = is_active !== undefined ? (is_active ? 1 : 0) : 0;
-        await (0, localDb_1.run)('UPDATE hardware_vendors SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
+        await (0, supabase_1.run)('UPDATE hardware_vendors SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
         return res.json({ success: true, is_active: Boolean(newStatus) });
     }
     catch (err) {
@@ -3253,7 +3483,7 @@ exports.apiRouter.patch('/admin/settings/tokens/:id/deactivate', requireAdmin, a
     try {
         const { is_active } = req.body;
         const newStatus = is_active !== undefined ? (is_active ? 1 : 0) : 0;
-        await (0, localDb_1.run)('UPDATE token_models SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
+        await (0, supabase_1.run)('UPDATE token_models SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
         return res.json({ success: true, is_active: Boolean(newStatus) });
     }
     catch (err) {
@@ -3264,7 +3494,7 @@ exports.apiRouter.patch('/admin/settings/couriers/:id/deactivate', requireAdmin,
     try {
         const { is_active } = req.body;
         const newStatus = is_active !== undefined ? (is_active ? 1 : 0) : 0;
-        await (0, localDb_1.run)('UPDATE courier_partners SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
+        await (0, supabase_1.run)('UPDATE courier_partners SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
         return res.json({ success: true, is_active: Boolean(newStatus) });
     }
     catch (err) {
@@ -3275,7 +3505,7 @@ exports.apiRouter.patch('/admin/settings/services/:id/deactivate', requireAdmin,
     try {
         const { is_active } = req.body;
         const newStatus = is_active !== undefined ? (is_active ? 1 : 0) : 0;
-        await (0, localDb_1.run)('UPDATE services_catalog SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
+        await (0, supabase_1.run)('UPDATE services_catalog SET is_active = ? WHERE id = ?', [newStatus, req.params.id]);
         return res.json({ success: true, is_active: Boolean(newStatus) });
     }
     catch (err) {
@@ -3285,7 +3515,7 @@ exports.apiRouter.patch('/admin/settings/services/:id/deactivate', requireAdmin,
 // Branches List Endpoint
 exports.apiRouter.get('/admin/branches', requireAuth, async (_req, res) => {
     try {
-        const branches = await (0, localDb_1.queryAll)('SELECT * FROM branches ORDER BY branch_name ASC');
+        const branches = await (0, supabase_1.queryAll)('SELECT * FROM branches ORDER BY branch_name ASC');
         return res.json({ branches });
     }
     catch (err) {
@@ -3295,7 +3525,7 @@ exports.apiRouter.get('/admin/branches', requireAuth, async (_req, res) => {
 // 4. Central Numbering Series Configuration Master
 exports.apiRouter.get('/admin/numbering', requireAdmin, async (_req, res) => {
     try {
-        const configs = await (0, localDb_1.queryAll)('SELECT * FROM numbering_series_configs ORDER BY document_type ASC');
+        const configs = await (0, supabase_1.queryAll)('SELECT * FROM numbering_series_configs ORDER BY document_type ASC');
         return res.json({ configs });
     }
     catch (err) {
@@ -3310,7 +3540,7 @@ exports.apiRouter.post('/admin/numbering', requireAdmin, async (req, res) => {
             return res.status(400).json({ error: 'Series name and document type are required.' });
         }
         const id = `num-${document_type}`;
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO numbering_series_configs (
         id, series_name, document_type, prefix, suffix, separator, parts_order, fy_format,
         company_code, branch_code, counter_padding, starting_counter, current_counter, is_active
@@ -3401,13 +3631,13 @@ exports.apiRouter.post('/inventory/tokens/serials', requirePermission('inventory
             const serial = String(rawSerial).trim().toUpperCase();
             if (!serial)
                 continue;
-            const exists = await (0, localDb_1.queryOne)('SELECT id FROM token_serials WHERE serial_number = ?', [serial]);
+            const exists = await (0, supabase_1.queryOne)('SELECT id FROM token_serials WHERE serial_number = ?', [serial]);
             if (exists) {
                 duplicates.push(serial);
             }
             else {
                 const id = `ser-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-                await (0, localDb_1.run)(`
+                await (0, supabase_1.run)(`
           INSERT INTO token_serials (id, serial_number, token_model, batch_id, branch_id, status)
           VALUES (?, ?, ?, ?, ?, 'in_stock')
         `, [id, serial, token_model, batch_id || null, branch_id]);
@@ -3426,6 +3656,7 @@ exports.apiRouter.post('/inventory/tokens/serials', requirePermission('inventory
         return res.status(201).json({
             success: true,
             insertedCount: inserted.length,
+            inserted,
             duplicateCount: duplicates.length,
             duplicates,
             message: `Imported ${inserted.length} token serials successfully.`,
@@ -3482,7 +3713,7 @@ exports.apiRouter.get('/admin/delegations', requireAdmin, async (req, res) => {
                 totalPages: result.totalPages,
             });
         }
-        const delegations = await (0, localDb_1.queryAll)(selectSql, params);
+        const delegations = await (0, supabase_1.queryAll)(selectSql, params);
         return res.json({
             delegations,
             page: 1,
@@ -3507,7 +3738,7 @@ exports.apiRouter.post('/admin/delegations', requireAuth, async (req, res) => {
             return res.status(400).json({ error: 'Recipient, module, action, validity window, and reason are required.' });
         }
         // Verify recipient existence and status
-        const recipient = await (0, localDb_1.queryOne)(`
+        const recipient = await (0, supabase_1.queryOne)(`
       SELECT u.*, h.level_order as hierarchy_level_order
       FROM user_profiles u
       JOIN hierarchy_levels h ON u.hierarchy_level_id = h.id
@@ -3531,9 +3762,9 @@ exports.apiRouter.post('/admin/delegations', requireAuth, async (req, res) => {
         // Sub-Permission Cap Rule: Non-root grantor cannot grant any action they do not effectively possess
         if (currentUser.hierarchy_level_order > 0) {
             // 1. Check user override for grantor
-            const grantorOverride = await (0, localDb_1.queryOne)('SELECT * FROM user_permission_overrides WHERE user_id = ? AND module_id = (SELECT id FROM app_modules WHERE module_key = ?)', [currentUser.id, module_key]);
+            const grantorOverride = await (0, supabase_1.queryOne)('SELECT * FROM user_permission_overrides WHERE user_id = ? AND module_id = (SELECT id FROM app_modules WHERE module_key = ?)', [currentUser.id, module_key]);
             // 2. Check role permissions for grantor
-            const grantorRolePerm = await (0, localDb_1.queryOne)('SELECT * FROM role_module_permissions WHERE role_id = ? AND module_id = (SELECT id FROM app_modules WHERE module_key = ?)', [currentUser.role_id, module_key]);
+            const grantorRolePerm = await (0, supabase_1.queryOne)('SELECT * FROM role_module_permissions WHERE role_id = ? AND module_id = (SELECT id FROM app_modules WHERE module_key = ?)', [currentUser.role_id, module_key]);
             const actionsToCheck = action_key === 'all' ? ['can_view', 'can_create', 'can_edit', 'can_delete', 'can_export'] : [action_key];
             for (const act of actionsToCheck) {
                 let hasAct = false;
@@ -3545,7 +3776,7 @@ exports.apiRouter.post('/admin/delegations', requireAuth, async (req, res) => {
                 }
                 // Also check if grantor holds this action through a valid delegatable parent delegation
                 if (!hasAct && parent_delegation_id) {
-                    const parentDel = await (0, localDb_1.queryOne)('SELECT * FROM temporary_delegations WHERE id = ?', [parent_delegation_id]);
+                    const parentDel = await (0, supabase_1.queryOne)('SELECT * FROM temporary_delegations WHERE id = ?', [parent_delegation_id]);
                     if (parentDel && parentDel.status === 'active' && parentDel.can_delegate_further && (parentDel.action_key === act || parentDel.action_key === 'all')) {
                         hasAct = true;
                     }
@@ -3559,7 +3790,7 @@ exports.apiRouter.post('/admin/delegations', requireAuth, async (req, res) => {
         }
         // Security Rule: If onward delegation, ensure grantor holds a valid parent delegation that allows further delegation
         if (parent_delegation_id) {
-            const parent = await (0, localDb_1.queryOne)('SELECT * FROM temporary_delegations WHERE id = ?', [parent_delegation_id]);
+            const parent = await (0, supabase_1.queryOne)('SELECT * FROM temporary_delegations WHERE id = ?', [parent_delegation_id]);
             if (!parent || parent.status !== 'active') {
                 return res.status(400).json({ error: 'Parent delegation is inactive or revoked.' });
             }
@@ -3571,7 +3802,7 @@ exports.apiRouter.post('/admin/delegations', requireAuth, async (req, res) => {
             }
         }
         const id = `del-${Date.now()}`;
-        await (0, localDb_1.run)(`
+        await (0, supabase_1.run)(`
       INSERT INTO temporary_delegations (
         id, grantor_user_id, recipient_user_id, module_key, action_key, valid_from, valid_until, reason, can_delegate_further, parent_delegation_id, status
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
@@ -3596,26 +3827,26 @@ exports.apiRouter.post('/admin/delegations', requireAuth, async (req, res) => {
 exports.apiRouter.patch('/admin/delegations/:id/revoke', requireAdmin, async (req, res) => {
     try {
         const currentUser = req.user;
-        const delegation = await (0, localDb_1.queryOne)('SELECT * FROM temporary_delegations WHERE id = ?', [req.params.id]);
+        const delegation = await (0, supabase_1.queryOne)('SELECT * FROM temporary_delegations WHERE id = ?', [req.params.id]);
         if (!delegation)
             return res.status(404).json({ error: 'Delegation record not found.' });
         const nowIso = new Date().toISOString();
         // 1. Revoke parent delegation
-        await localDb_1.supabase
+        await supabase_1.supabase
             .from('temporary_delegations')
             .update({ status: 'revoked', revoked_at: nowIso, revoked_by: currentUser.id })
             .eq('id', req.params.id);
         // 2. Recursive cascading invalidation of all descendant delegations in chain
         let parentIds = [req.params.id];
         while (parentIds.length > 0) {
-            const { data: children } = await localDb_1.supabase
+            const { data: children } = await supabase_1.supabase
                 .from('temporary_delegations')
                 .select('id')
                 .in('parent_delegation_id', parentIds)
                 .neq('status', 'revoked');
             if (children && children.length > 0) {
                 const childIds = children.map((c) => c.id);
-                await localDb_1.supabase
+                await supabase_1.supabase
                     .from('temporary_delegations')
                     .update({ status: 'revoked', revoked_at: nowIso, revoked_by: currentUser.id })
                     .in('id', childIds);
@@ -3684,7 +3915,7 @@ exports.apiRouter.get('/admin/audit-logs', requireAdmin, async (req, res) => {
                 totalPages: result.totalPages,
             });
         }
-        const logs = await (0, localDb_1.queryAll)(selectSql, params);
+        const logs = await (0, supabase_1.queryAll)(selectSql, params);
         return res.json({ logs, totalCount: logs.length });
     }
     catch (err) {

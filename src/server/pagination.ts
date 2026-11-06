@@ -1,4 +1,4 @@
-import { queryAll, queryOne } from './localDb'
+import { queryAll, queryOne } from './supabase'
 
 export interface PaginationParams {
   page?: string | number

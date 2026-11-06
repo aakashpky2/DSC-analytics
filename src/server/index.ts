@@ -8,7 +8,7 @@ import cookieParser from 'cookie-parser'
 import next from 'next'
 import { apiRouter } from './routes/api'
 import { SESSION_COOKIE_NAME, validateSessionToken } from './auth'
-import { run } from './localDb'
+import { run } from './supabase'
 
 const dev = process.env.NODE_ENV !== 'production'
 const hostname = process.env.HOSTNAME || '0.0.0.0'

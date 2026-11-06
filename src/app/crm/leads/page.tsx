@@ -4,6 +4,8 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Layers, ShieldAlert, GitMerge, UserCheck, Plus, Search } from 'lucide-react'
 import { AddLeadModal } from '@/components/AddLeadModal'
+import { BulkImportModal } from '@/components/BulkImportModal'
+import { LeadDetailModal } from '@/components/LeadDetailModal'
 import { Pagination } from '@/components/Pagination'
 import { CrmLeadRecord } from '@/types/models'
 import { UI_TERMS } from '@/lib/terms'
@@ -12,6 +14,8 @@ export default function CrmLeadsPage() {
   const [leads, setLeads] = useState<CrmLeadRecord[]>([])
   const [search, setSearch] = useState('')
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false)
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   // Pagination states
@@ -69,12 +73,20 @@ export default function CrmLeadsPage() {
           </p>
         </div>
 
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="px-3.5 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-medium text-xs flex items-center gap-1.5 shadow-md shadow-purple-600/20"
-        >
-          <Plus className="w-4 h-4" /> Add Customer Lead
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setIsImportModalOpen(true)}
+            className="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-medium text-xs flex items-center gap-1.5 transition"
+          >
+            <Layers className="w-4 h-4 text-indigo-400" /> Bulk Import (Excel/CSV)
+          </button>
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="px-3.5 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-medium text-xs flex items-center gap-1.5 shadow-md shadow-purple-600/20"
+          >
+            <Plus className="w-4 h-4" /> Add Customer Lead
+          </button>
+        </div>
       </div>
 
       {/* Duplicate Check Notice Banner */}
@@ -134,7 +146,11 @@ export default function CrmLeadsPage() {
                 </tr>
               ) : (
                 leads.map((l) => (
-                  <tr key={l.id} className="hover:bg-slate-800/40 h-12">
+                  <tr
+                    key={l.id}
+                    onClick={() => setSelectedLeadId(l.id)}
+                    className="hover:bg-slate-800/40 h-12 cursor-pointer transition"
+                  >
                     <td className="p-3 font-mono text-purple-300 font-semibold whitespace-nowrap">{l.lead_code}</td>
                     <td className="p-3 font-medium text-white whitespace-nowrap">{l.company_name}</td>
                     <td className="p-3 whitespace-nowrap">
@@ -176,6 +192,19 @@ export default function CrmLeadsPage() {
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         onSuccess={loadLeads}
+      />
+
+      <BulkImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onSuccess={loadLeads}
+      />
+
+      <LeadDetailModal
+        leadId={selectedLeadId}
+        isOpen={!!selectedLeadId}
+        onClose={() => setSelectedLeadId(null)}
+        onUpdate={loadLeads}
       />
     </div>
   )

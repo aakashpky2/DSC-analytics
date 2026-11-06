@@ -135,10 +135,16 @@ async function queryAll(sql, params = []) {
         // 5. CRM Leads with assigned agent
         if (table === 'crm_leads' && sql.includes('JOIN')) {
             const { data: leads } = await exports.supabase.from('crm_leads').select('*, user_profiles(full_name)');
-            const res = (leads === null || leads === void 0 ? void 0 : leads.map(l => {
+            let res = (leads === null || leads === void 0 ? void 0 : leads.map(l => {
                 var _a;
                 return (Object.assign(Object.assign({}, l), { assigned_agent_name: (_a = l.user_profiles) === null || _a === void 0 ? void 0 : _a.full_name }));
             })) || [];
+            if (sql.includes('is_merged = 0')) {
+                res = res.filter(l => Number(l.is_merged) === 0);
+            }
+            else if (sql.includes('is_merged = 1')) {
+                res = res.filter(l => Number(l.is_merged) === 1);
+            }
             return applySqlFilteringAndPagination(res, sql, params);
         }
         // 6. Service orders with partner relations
@@ -233,6 +239,12 @@ async function queryAll(sql, params = []) {
                 }
                 else if (trimmedCond.includes('is_active = 0')) {
                     query = query.eq('is_active', 0);
+                }
+                else if (trimmedCond.includes('is_merged = 0')) {
+                    query = query.eq('is_merged', 0);
+                }
+                else if (trimmedCond.includes('is_merged = 1')) {
+                    query = query.eq('is_merged', 1);
                 }
                 else if (trimmedCond.includes(' OR ') || trimmedCond.includes(' or ')) {
                     // Compound OR search condition, e.g. (col1 LIKE ? OR col2 LIKE ?)
@@ -423,6 +435,12 @@ async function queryOne(sql, params = []) {
                 }
                 else if (trimmedCond.includes('is_active = 0')) {
                     query = query.eq('is_active', 0);
+                }
+                else if (trimmedCond.includes('is_merged = 0')) {
+                    query = query.eq('is_merged', 0);
+                }
+                else if (trimmedCond.includes('is_merged = 1')) {
+                    query = query.eq('is_merged', 1);
                 }
                 else if (trimmedCond.includes('used = 0')) {
                     query = query.eq('used', 0);

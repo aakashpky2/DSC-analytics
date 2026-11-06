@@ -1,6 +1,7 @@
 // Business Overview Dashboard & KPI Cards
 import React from 'react'
 import { cookies } from 'next/headers'
+import { redirect } from 'next/navigation'
 import {
   Users2,
   FileCheck2,
@@ -12,11 +13,24 @@ import {
 } from 'lucide-react'
 import AnalyticsDashboard from '@/components/AnalyticsDashboard'
 import { PartnerRecord, TokenPurchaseBatchRecord, CrmLeadRecord, InvoiceRecord } from '@/types/models'
+import { validateSessionToken, SESSION_COOKIE_NAME } from '@/server/auth'
 
 async function getDashboardData() {
+  const cookieStore = await cookies()
+  const token = cookieStore.get(SESSION_COOKIE_NAME)?.value
+
+  // Server-side auth check: immediately redirect unauthenticated requests to /login
+  if (!token) {
+    redirect('/login')
+  }
+
+  const sessionUser = await validateSessionToken(token)
+  if (!sessionUser) {
+    redirect('/login')
+  }
+
   const port = process.env.PORT || '3000'
   try {
-    const cookieStore = await cookies()
     const cookieHeader = cookieStore.toString()
     const headers: Record<string, string> = {}
     if (cookieHeader) {

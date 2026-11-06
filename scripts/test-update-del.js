@@ -1,4 +1,4 @@
-const { run } = require('./dist-server/server/localDb');
+const { run } = require('./dist-server/server/supabase');
 
 async function test() {
   try {
