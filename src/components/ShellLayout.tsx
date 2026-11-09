@@ -73,7 +73,8 @@ const navigationGroups: NavGroup[] = [
     basePath: '/inventory',
     items: [
       { name: 'Stock Register', href: '/inventory/tokens' },
-      { name: 'Branch Hubs', href: '/inventory/branches' }
+      { name: 'Branch Hubs', href: '/inventory/branches' },
+      { name: 'Token Procurement & PO', href: '/inventory/procurement', badge: 'New' }
     ]
   },
   {

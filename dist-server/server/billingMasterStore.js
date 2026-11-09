@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DEFAULT_AGEING_BUCKETS = exports.DEFAULT_COMMISSION_RULES = exports.DEFAULT_CANCELLATION_REASONS = exports.DEFAULT_DEBIT_NOTE_REASONS = exports.DEFAULT_CREDIT_NOTE_REASONS = exports.DEFAULT_PAYMENT_MODES = exports.DEFAULT_INVOICE_STATUSES = exports.DEFAULT_INVOICE_TYPES = exports.DEFAULT_HSN_SAC = exports.DEFAULT_TAX_RATES = exports.DEFAULT_STATES_MASTER = void 0;
+exports.saveBillingRelationalStore = saveBillingRelationalStore;
 exports.getStatesMaster = getStatesMaster;
 exports.getTaxRatesMaster = getTaxRatesMaster;
 exports.getHsnSacMaster = getHsnSacMaster;
@@ -18,6 +19,7 @@ exports.getDebitNotes = getDebitNotes;
 exports.saveDebitNotes = saveDebitNotes;
 exports.getPaymentReceipts = getPaymentReceipts;
 exports.savePaymentReceipts = savePaymentReceipts;
+const supabase_1 = require("./supabase");
 const dscMasterStore_1 = require("./dscMasterStore");
 /**
  * DBIZ ERP — Central Billing Master Store & Engine
@@ -142,13 +144,36 @@ exports.DEFAULT_AGEING_BUCKETS = [
     { id: 'age-90-plus', bucket_name: 'Critical Overdue (90+ Days)', min_days: 91, max_days: 99999, color: 'rose', is_active: 1 }
 ];
 // --- Helper Functions to Fetch or Initialize Master Stores ---
+async function saveBillingRelationalStore(storeId, items) {
+    const payload = JSON.stringify(items);
+    const { error } = await supabase_1.supabase
+        .from('company_profile')
+        .upsert({
+        id: storeId,
+        legal_name: `Billing Store ${storeId}`,
+        trade_name: `Billing Relational Store`,
+        gstin: 'NA',
+        pan: 'NA',
+        email: 'admin@signsync.io',
+        phone: 'NA',
+        registered_address: payload,
+        state_code: 'NA',
+        state_name: 'NA',
+        updated_at: new Date().toISOString()
+    });
+    if (error) {
+        console.error(`Error saving billing store ${storeId}:`, error);
+        return false;
+    }
+    return true;
+}
 async function getOrInitStore(storeKey, defaultData) {
     const existing = await (0, dscMasterStore_1.getRelationalStore)(storeKey);
     if (Array.isArray(existing) && existing.length > 0) {
         return existing;
     }
     // Initialize in central Supabase relational store
-    await (0, dscMasterStore_1.saveRelationalStore)(storeKey, defaultData);
+    await saveBillingRelationalStore(storeKey, defaultData);
     return defaultData;
 }
 async function getStatesMaster() {
@@ -189,17 +214,17 @@ async function getCreditNotes() {
     return await (0, dscMasterStore_1.getRelationalStore)('billing_rel_credit_notes');
 }
 async function saveCreditNotes(notes) {
-    return await (0, dscMasterStore_1.saveRelationalStore)('billing_rel_credit_notes', notes);
+    return await saveBillingRelationalStore('billing_rel_credit_notes', notes);
 }
 async function getDebitNotes() {
     return await (0, dscMasterStore_1.getRelationalStore)('billing_rel_debit_notes');
 }
 async function saveDebitNotes(notes) {
-    return await (0, dscMasterStore_1.saveRelationalStore)('billing_rel_debit_notes', notes);
+    return await saveBillingRelationalStore('billing_rel_debit_notes', notes);
 }
 async function getPaymentReceipts() {
     return await (0, dscMasterStore_1.getRelationalStore)('billing_rel_payment_receipts');
 }
 async function savePaymentReceipts(receipts) {
-    return await (0, dscMasterStore_1.saveRelationalStore)('billing_rel_payment_receipts', receipts);
+    return await saveBillingRelationalStore('billing_rel_payment_receipts', receipts);
 }

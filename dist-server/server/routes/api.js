@@ -49,6 +49,9 @@ const leadManagement_1 = require("./leadManagement");
 const dscMaster_1 = require("./dscMaster");
 const courierModule_1 = require("./courierModule");
 const billingModule_1 = require("./billingModule");
+const tokenProcurement_1 = require("./tokenProcurement");
+const tokenSales_1 = require("./tokenSales");
+const partyLedgers_1 = require("./partyLedgers");
 const leadStore_1 = require("../leadStore");
 const partnerMatchEngine_1 = require("../partnerMatchEngine");
 exports.apiRouter = (0, express_1.Router)();
@@ -85,6 +88,9 @@ exports.apiRouter.use(leadManagement_1.leadManagementRouter);
 exports.apiRouter.use(dscMaster_1.dscMasterRouter);
 exports.apiRouter.use(courierModule_1.courierModuleRouter);
 exports.apiRouter.use(billingModule_1.billingRouter);
+exports.apiRouter.use(tokenProcurement_1.procurementRouter);
+exports.apiRouter.use(tokenSales_1.tokenSalesRouter);
+exports.apiRouter.use(partyLedgers_1.reportsAndLedgersRouter);
 function requireAuth(req, res, next) {
     const user = req.user;
     if (!user) {

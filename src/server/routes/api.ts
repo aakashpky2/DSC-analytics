@@ -21,6 +21,9 @@ import { leadManagementRouter } from './leadManagement'
 import { dscMasterRouter } from './dscMaster'
 import { courierModuleRouter } from './courierModule'
 import { billingRouter } from './billingModule'
+import { procurementRouter } from './tokenProcurement'
+import { tokenSalesRouter } from './tokenSales'
+import { reportsAndLedgersRouter } from './partyLedgers'
 import { loadLeadStore, saveLeadStore } from '../leadStore'
 import { evaluatePartnerMatch } from '../partnerMatchEngine'
 
@@ -57,6 +60,9 @@ apiRouter.use(leadManagementRouter)
 apiRouter.use(dscMasterRouter)
 apiRouter.use(courierModuleRouter)
 apiRouter.use(billingRouter)
+apiRouter.use(procurementRouter)
+apiRouter.use(tokenSalesRouter)
+apiRouter.use(reportsAndLedgersRouter)
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const user = (req as any).user

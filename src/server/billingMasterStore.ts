@@ -137,13 +137,39 @@ export const DEFAULT_AGEING_BUCKETS = [
 
 // --- Helper Functions to Fetch or Initialize Master Stores ---
 
+export async function saveBillingRelationalStore(storeId: string, items: any[]): Promise<boolean> {
+  const payload = JSON.stringify(items)
+  const { error } = await supabase
+    .from('company_profile')
+    .upsert({
+      id: storeId,
+      legal_name: `Billing Store ${storeId}`,
+      trade_name: `Billing Relational Store`,
+      gstin: 'NA',
+      pan: 'NA',
+      email: 'admin@signsync.io',
+      phone: 'NA',
+      registered_address: payload,
+      state_code: 'NA',
+      state_name: 'NA',
+      updated_at: new Date().toISOString()
+    })
+
+  if (error) {
+    console.error(`Error saving billing store ${storeId}:`, error)
+    return false
+  }
+
+  return true
+}
+
 async function getOrInitStore(storeKey: string, defaultData: any[]): Promise<any[]> {
   const existing = await getRelationalStore(storeKey)
   if (Array.isArray(existing) && existing.length > 0) {
     return existing
   }
   // Initialize in central Supabase relational store
-  await saveRelationalStore(storeKey, defaultData)
+  await saveBillingRelationalStore(storeKey, defaultData)
   return defaultData
 }
 
@@ -197,7 +223,7 @@ export async function getCreditNotes(): Promise<any[]> {
 }
 
 export async function saveCreditNotes(notes: any[]): Promise<boolean> {
-  return await saveRelationalStore('billing_rel_credit_notes', notes)
+  return await saveBillingRelationalStore('billing_rel_credit_notes', notes)
 }
 
 export async function getDebitNotes(): Promise<any[]> {
@@ -205,7 +231,7 @@ export async function getDebitNotes(): Promise<any[]> {
 }
 
 export async function saveDebitNotes(notes: any[]): Promise<boolean> {
-  return await saveRelationalStore('billing_rel_debit_notes', notes)
+  return await saveBillingRelationalStore('billing_rel_debit_notes', notes)
 }
 
 export async function getPaymentReceipts(): Promise<any[]> {
@@ -213,5 +239,6 @@ export async function getPaymentReceipts(): Promise<any[]> {
 }
 
 export async function savePaymentReceipts(receipts: any[]): Promise<boolean> {
-  return await saveRelationalStore('billing_rel_payment_receipts', receipts)
+  return await saveBillingRelationalStore('billing_rel_payment_receipts', receipts)
 }
+

@@ -74,6 +74,7 @@ async function getUserProfileById(userId) {
         level_name: ((_d = data.hierarchy_levels) === null || _d === void 0 ? void 0 : _d.level_name) || '',
         branch_id: data.branch_id,
         branch_name: (_e = data.branches) === null || _e === void 0 ? void 0 : _e.branch_name,
+        organization_id: data.organization_id || (data.branch_id ? `org-${data.branch_id}` : 'org-default'),
         status: data.status,
         permissions_frozen: Number(data.permissions_frozen || 0),
         can_grant_permissions: Number(data.can_grant_permissions || 0),

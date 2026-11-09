@@ -16,6 +16,7 @@ export interface SessionUser {
   level_name: string
   branch_id?: string
   branch_name?: string
+  organization_id?: string
   status: string
   permissions_frozen: number
   can_grant_permissions: number
@@ -85,6 +86,7 @@ export async function getUserProfileById(userId: string): Promise<SessionUser | 
     level_name: data.hierarchy_levels?.level_name || '',
     branch_id: data.branch_id,
     branch_name: data.branches?.branch_name,
+    organization_id: data.organization_id || (data.branch_id ? `org-${data.branch_id}` : 'org-default'),
     status: data.status,
     permissions_frozen: Number(data.permissions_frozen || 0),
     can_grant_permissions: Number(data.can_grant_permissions || 0),
