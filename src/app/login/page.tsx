@@ -49,6 +49,12 @@ export default function LoginPage() {
         return
       }
 
+      // Check if employee must change temporary password first
+      if (data.password_change_required) {
+        window.location.href = '/change-password'
+        return
+      }
+
       // Successful login - redirect to business overview dashboard
       window.location.href = '/'
     } catch {

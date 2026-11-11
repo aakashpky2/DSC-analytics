@@ -29,6 +29,11 @@ function getSessionUser(req: Request) {
   return (req as any).user
 }
 
+function getAuthOrg(req: Request): string {
+  const user = getSessionUser(req)
+  return user?.organization_id || 'comp-default'
+}
+
 function requireAuth(req: Request, res: Response, next: NextFunction) {
   const user = getSessionUser(req)
   if (!user) {
@@ -689,8 +694,10 @@ billingRouter.post('/billing/invoices/extended', requirePermission('can_create')
       }
     })
 
+    const orgId = getAuthOrg(req)
     const { error: insertErr } = await supabase.from('invoices').insert({
       id: invoiceId,
+      organization_id: orgId,
       invoice_number: invoiceNumber,
       series_id: targetSeriesId,
       partner_id: partner.id,
@@ -719,6 +726,7 @@ billingRouter.post('/billing/invoices/extended', requirePermission('can_create')
       const runningBal = (Number(partner.wallet_balance) || 0) + calc.grandTotal
       await supabase.from('financial_ledger').insert({
         id: `led-${Date.now()}`,
+        organization_id: orgId,
         partner_id: partner.id,
         entry_date: today,
         transaction_type: 'invoice_raised',
@@ -855,6 +863,7 @@ billingRouter.post('/billing/invoices/:id/issue', requirePermission('can_edit'),
     // Ledger posting
     await supabase.from('financial_ledger').insert({
       id: `led-${Date.now()}`,
+      organization_id: invoice.organization_id || getAuthOrg(req),
       partner_id: invoice.partner_id,
       entry_date: new Date().toISOString().slice(0, 10),
       transaction_type: 'invoice_raised',
@@ -917,6 +926,7 @@ billingRouter.post('/billing/invoices/:id/cancel', requirePermission('can_delete
     if (prevStatus !== 'draft') {
       await supabase.from('financial_ledger').insert({
         id: `led-${Date.now()}`,
+        organization_id: invoice.organization_id || getAuthOrg(req),
         partner_id: invoice.partner_id,
         entry_date: cancelledAt.slice(0, 10),
         transaction_type: 'invoice_cancelled',
@@ -1033,6 +1043,7 @@ billingRouter.post('/billing/payments/record', requirePermission('can_create'), 
     // Insert payment record
     const { error: payErr } = await supabase.from('payments_received').insert({
       id: paymentId,
+      organization_id: invoice.organization_id || getAuthOrg(req),
       invoice_id: invoice.id,
       partner_id: invoice.partner_id,
       amount_paid: payAmount,
@@ -1089,6 +1100,7 @@ billingRouter.post('/billing/payments/record', requirePermission('can_create'), 
     // Post to financial ledger (credit)
     await supabase.from('financial_ledger').insert({
       id: `led-${Date.now()}`,
+      organization_id: invoice.organization_id || getAuthOrg(req),
       partner_id: invoice.partner_id,
       entry_date: today.slice(0, 10),
       transaction_type: 'payment_received',
@@ -1177,6 +1189,7 @@ billingRouter.post('/billing/credit-notes', requirePermission('can_create'), asy
     // Post to ledger as credit adjustment
     await supabase.from('financial_ledger').insert({
       id: `led-${Date.now()}`,
+      organization_id: invoice.organization_id || getAuthOrg(req),
       partner_id: invoice.partner_id,
       entry_date: today.slice(0, 10),
       transaction_type: 'credit_note',
@@ -1254,6 +1267,7 @@ billingRouter.post('/billing/debit-notes', requirePermission('can_create'), asyn
     // Post to ledger as supplementary debit
     await supabase.from('financial_ledger').insert({
       id: `led-${Date.now()}`,
+      organization_id: invoice.organization_id || getAuthOrg(req),
       partner_id: invoice.partner_id,
       entry_date: today.slice(0, 10),
       transaction_type: 'debit_note',

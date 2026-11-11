@@ -3,18 +3,14 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-const dotenv_1 = __importDefault(require("dotenv"));
-dotenv_1.default.config({ path: '.env.local' });
-dotenv_1.default.config();
 const express_1 = __importDefault(require("express"));
-const cors_1 = __importDefault(require("cors"));
 const cookie_parser_1 = __importDefault(require("cookie-parser"));
 const next_1 = __importDefault(require("next"));
 const api_1 = require("./routes/api");
 const auth_1 = require("./auth");
 const supabase_1 = require("./supabase");
 const dev = process.env.NODE_ENV !== 'production';
-const hostname = process.env.HOSTNAME || '0.0.0.0';
+const hostname = '0.0.0.0';
 const port = parseInt(process.env.PORT || '3000', 10);
 // Initialize Next.js app with SSR
 const nextApp = (0, next_1.default)({ dev, hostname, port });
@@ -57,10 +53,9 @@ async function startServer() {
     )
   `);
     const server = (0, express_1.default)();
-    server.use((0, cors_1.default)());
     server.use((0, cookie_parser_1.default)());
-    server.use(express_1.default.json());
-    server.use(express_1.default.urlencoded({ extended: true }));
+    server.use(express_1.default.json({ limit: '25mb' }));
+    server.use(express_1.default.urlencoded({ extended: true, limit: '25mb' }));
     // Backend API endpoints mounted on /api
     server.use('/api', api_1.apiRouter);
     // SSR Page Level Authentication Guard:
@@ -77,6 +72,9 @@ async function startServer() {
                 if (token) {
                     const user = await (0, auth_1.validateSessionToken)(token);
                     if (user) {
+                        if (user.password_change_required) {
+                            return res.redirect('/change-password');
+                        }
                         return res.redirect('/');
                     }
                 }
@@ -93,6 +91,15 @@ async function startServer() {
             // Invalidate expired/bad cookie and redirect to login
             res.clearCookie(auth_1.SESSION_COOKIE_NAME);
             return res.redirect('/login');
+        }
+        // Mandatory first-login password change check
+        if (user.password_change_required) {
+            if (urlPath !== '/change-password') {
+                return res.redirect('/change-password');
+            }
+        }
+        else if (urlPath === '/change-password') {
+            return res.redirect('/');
         }
         // Set cache prevention headers on protected responses
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
@@ -112,6 +119,6 @@ async function startServer() {
     });
 }
 startServer().catch((err) => {
-    console.error('Server failed to start:', err);
+    console.error('Failed to start server:', err);
     process.exit(1);
 });

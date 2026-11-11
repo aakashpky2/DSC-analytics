@@ -19,12 +19,18 @@ import {
   Printer,
   FileCode2,
   Eye,
-  Edit2
+  Edit2,
+  Search,
+  ChevronDown,
+  MoreHorizontal
 } from 'lucide-react'
 
 export default function TokenProcurementPage() {
+  const [selectedModule, setSelectedModule] = useState<{ id: string; name: string } | null>(null)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const [moreSearch, setMoreSearch] = useState('')
   const [activeTab, setActiveTab] = useState<
-    'calculator' | 'quotes' | 'orders' | 'bills' | 'opening-stock' | 'profile-stocks' | 'sales-estimates' | 'sales-invoices' | 'sales-payments' | 'customer-analytics' | 'vendor-analytics' | 'party-ledgers' | 'outstanding-ageing' | 'sales-monthly' | 'sales-annual' | 'purchase-overall' | 'estimate-pipeline' | 'templates' | 'receipts' | 'inwards' | 'couriers' | 'analytics' | 'vendors' | 'estimates' | 'profiles' | 'locations'
+    'calculator' | 'quotes' | 'orders' | 'bills' | 'opening-stock' | 'profile-stocks' | 'sales-estimates' | 'sales-invoices' | 'sales-payments' | 'customer-analytics' | 'vendor-analytics' | 'party-ledgers' | 'outstanding-ageing' | 'sales-monthly' | 'sales-annual' | 'purchase-overall' | 'estimate-pipeline' | 'templates' | 'numbering' | 'rules' | 'sales-rates' | 'pricing-categories' | 'customer-levels' | 'token-register' | 'receipts' | 'inwards' | 'couriers' | 'analytics' | 'vendors' | 'estimates' | 'profiles' | 'locations'
   >('calculator')
 
   // Master States
@@ -242,10 +248,116 @@ export default function TokenProcurementPage() {
   const [cancelReason, setCancelReason] = useState('Vendor price changed')
   const [cancelOtherDesc, setCancelOtherDesc] = useState('')
 
+  // Numbering Master, Rules & Register Reports
+  const [numberingSeries, setNumberingSeries] = useState<any[]>([])
+  const [numberingRules, setNumberingRules] = useState<any[]>([])
+  const [tokenRegisterReport, setTokenRegisterReport] = useState<any | null>(null)
+  const [registerFilterProfile, setRegisterFilterProfile] = useState<string>('')
+  const [registerFilterModel, setRegisterFilterModel] = useState<string>('')
+  const [registerFromDate, setRegisterFromDate] = useState<string>('2026-04-01')
+  const [registerToDate, setRegisterToDate] = useState<string>(new Date().toISOString().slice(0, 10))
+  const [selectedDrillDownToken, setSelectedDrillDownToken] = useState<any | null>(null)
+  const [drillDownData, setDrillDownData] = useState<any | null>(null)
+  const [monthlyFYData, setMonthlyFYData] = useState<any[]>([])
+
+  // Numbering Modals State
+  const [showSeriesModal, setShowSeriesModal] = useState(false)
+  const [seriesForm, setSeriesForm] = useState<any>({
+    id: '',
+    company_profile_id: '',
+    document_type: 'SALES_INVOICE',
+    series_name: '',
+    prefix: '',
+    suffix: '',
+    starting_number: 1001,
+    current_counter: 1000,
+    padding_length: 4,
+    effective_from: '2026-04-01',
+    effective_to: '',
+    is_active: true,
+    is_default: false,
+    allow_reuse_on_cancellation: false
+  })
+
+  const [showRuleModal, setShowRuleModal] = useState(false)
+  const [ruleForm, setRuleForm] = useState<any>({
+    id: '',
+    company_profile_id: '',
+    document_type: 'SALES_INVOICE',
+    series_id: '',
+    rule_name: '',
+    priority: 10,
+    field: 'customer.gst_registered',
+    operator: 'EQUALS',
+    value: 'true',
+    is_active: true
+  })
+
+  // Sales Rates, Pricing Categories & Customer Levels State
+  const [salesRatesList, setSalesRatesList] = useState<any[]>([])
+  const [pricingCategoriesList, setPricingCategoriesList] = useState<any[]>([])
+  const [customerAssignmentsList, setCustomerAssignmentsList] = useState<any[]>([])
+  const [customerLevelsList, setCustomerLevelsList] = useState<any[]>([])
+  const [customerLevelRulesList, setCustomerLevelRulesList] = useState<any[]>([])
+  const [showSalesRateModal, setShowSalesRateModal] = useState(false)
+  const [salesRateForm, setSalesRateForm] = useState<any>({
+    id: '',
+    company_profile_id: '',
+    token_model_id: 'tm-1',
+    customer_category_id: '',
+    customer_id: '',
+    rate_type: 'FIXED',
+    rate: 100,
+    quantity_slabs: [{ min_quantity: 1, max_quantity: 50, unit_rate: 100 }],
+    effective_from: new Date().toISOString().slice(0, 10),
+    effective_to: '',
+    priority: 10,
+    is_active: true
+  })
+  const [showCategoryModal, setShowCategoryModal] = useState(false)
+  const [categoryForm, setCategoryForm] = useState<any>({
+    id: '',
+    company_profile_id: '',
+    category_name: '',
+    category_code: '',
+    description: '',
+    priority: 50,
+    is_active: true
+  })
+  const [showLevelModal, setShowLevelModal] = useState(false)
+  const [levelForm, setLevelForm] = useState<any>({
+    id: '',
+    level_name: '',
+    level_code: '',
+    description: '',
+    priority: 10,
+    assignment_mode: 'AUTOMATIC',
+    is_active: true
+  })
+  const [showAssignCategoryModal, setShowAssignCategoryModal] = useState(false)
+  const [assignCategoryForm, setAssignCategoryForm] = useState<any>({
+    customer_id: '',
+    customer_category_id: '',
+    assignment_type: 'PERMANENT',
+    effective_from: new Date().toISOString().slice(0, 10),
+    effective_to: '',
+    is_active: true
+  })
+  const [ratePreviewInput, setRatePreviewInput] = useState<any>({
+    customer_id: '',
+    token_model_id: 'tm-1',
+    quantity: 100,
+    date: new Date().toISOString().slice(0, 10)
+  })
+  const [ratePreviewResult, setRatePreviewResult] = useState<any | null>(null)
+  const [ratePreviewLoading, setRatePreviewLoading] = useState(false)
+
   // Template Master Modal & Editor
   const [showTemplateModal, setShowTemplateModal] = useState(false)
   const [templateForm, setTemplateForm] = useState({
     id: '',
+    company_profile_id: '',
+    document_type: 'PURCHASE_ORDER',
     template_name: '',
     template_code: '',
     description: '',
@@ -317,9 +429,18 @@ export default function TokenProcurementPage() {
       fetch('/api/token-sales/estimates').then(r => r.json()).then(d => setSalesEstimates(d.estimates || [])).catch(() => {})
       fetch('/api/token-sales/invoices').then(r => r.json()).then(d => setSalesInvoices(d.invoices || [])).catch(() => {})
       fetch('/api/token-sales/payments').then(r => r.json()).then(d => setSalesPayments(d.payments || [])).catch(() => {})
-      fetch('/api/token-sales/analytics/customer-history').then(r => r.json()).then(d => setCustomerAnalytics(d)).catch(() => {})
+      fetch('/api/token-templates').then(r => r.json()).then(d => setTemplates(d.templates || [])).catch(() => {})
+      fetch('/api/token-numbering/series').then(r => r.json()).then(d => setNumberingSeries(d.series || [])).catch(() => {})
+      fetch('/api/token-numbering/rules').then(r => r.json()).then(d => setNumberingRules(d.rules || [])).catch(() => {})
+      fetch('/api/token-register/report?from_date=2026-04-01').then(r => r.json()).then(d => setTokenRegisterReport(d)).catch(() => {})
       fetch('/api/token-sales/analytics/vendor-comparison').then(r => r.json()).then(d => setVendorComparison(d)).catch(() => {})
       fetch('/api/partners').then(r => r.json()).then(d => setPartnersList(d.partners || [])).catch(() => {})
+
+      fetch('/api/token-sales-rates').then(r => r.json()).then(d => setSalesRatesList(d.rates || [])).catch(() => {})
+      fetch('/api/pricing-categories').then(r => r.json()).then(d => setPricingCategoriesList(d.categories || [])).catch(() => {})
+      fetch('/api/customer-category-assignments').then(r => r.json()).then(d => setCustomerAssignmentsList(d.assignments || [])).catch(() => {})
+      fetch('/api/customer-levels').then(r => r.json()).then(d => setCustomerLevelsList(d.levels || [])).catch(() => {})
+      fetch('/api/customer-level-rules').then(r => r.json()).then(d => setCustomerLevelRulesList(d.rules || [])).catch(() => {})
 
       // Fetch reports & dashboard totals
       fetch('/api/reports/dashboard-totals').then(r => r.json()).then(d => setDashboardTotals(d)).catch(() => {})
@@ -524,13 +645,9 @@ export default function TokenProcurementPage() {
     e.preventDefault()
     setTemplateErrors([])
     try {
-      const url = templateForm.id
-        ? `/api/token-procurement/templates/${templateForm.id}`
-        : '/api/token-procurement/templates'
-      const method = templateForm.id ? 'PUT' : 'POST'
-
+      const url = '/api/token-templates'
       const res = await fetch(url, {
-        method,
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(templateForm)
       })
@@ -570,6 +687,8 @@ export default function TokenProcurementPage() {
             onClick={() => {
               setTemplateForm({
                 id: '',
+                company_profile_id: '',
+                document_type: 'PURCHASE_ORDER',
                 template_name: '',
                 template_code: '',
                 description: '',
@@ -589,58 +708,350 @@ export default function TokenProcurementPage() {
         </div>
       </div>
 
-      {/* Navigation Tabs */}
-      <div className="flex border-b border-slate-800 mb-6 gap-2 overflow-x-auto pb-1">
-        {[
-          { id: 'calculator', label: 'Estimate Calculator', icon: Calculator },
-          { id: 'quotes', label: 'Vendor Quotes', icon: FileSpreadsheet, badge: quotes.length },
-          { id: 'orders', label: 'Purchase Orders', icon: FileText, badge: purchaseOrders.length },
-          { id: 'bills', label: 'Purchase Bills', icon: ShoppingBag, badge: purchaseBills.length },
-          { id: 'opening-stock', label: 'Opening Stock', icon: CheckCircle2, badge: openingStockList.length },
-          { id: 'profile-stocks', label: 'Profile Stock Ledger', icon: ShieldCheck, badge: profileStockList.length },
-          { id: 'sales-estimates', label: 'Sales Estimates', icon: FileText },
-          { id: 'sales-invoices', label: 'Sales Invoices', icon: ShoppingBag },
-          { id: 'sales-payments', label: 'Customer Payments', icon: CheckCircle2 },
-          { id: 'party-ledgers', label: 'Party Ledgers', icon: FileText },
-          { id: 'outstanding-ageing', label: 'Outstanding & Ageing', icon: AlertCircle },
-          { id: 'sales-monthly', label: 'Monthly Sales (FY)', icon: FileSpreadsheet },
-          { id: 'sales-annual', label: 'Annual Sales (FY)', icon: ShieldCheck },
-          { id: 'purchase-overall', label: 'Procurement Report', icon: ShoppingBag },
-          { id: 'estimate-pipeline', label: 'Estimate Pipeline', icon: Calculator },
-          { id: 'customer-analytics', label: 'Customer Profit Analytics', icon: ShieldCheck },
-          { id: 'vendor-analytics', label: 'Vendor Landed Cost Comparison', icon: Calculator },
-          { id: 'receipts', label: 'Purchase Entries', icon: ShoppingBag, badge: purchaseReceipts.length },
-          { id: 'inwards', label: 'Freight / Courier Inward', icon: Truck, badge: courierInwards.length },
-          { id: 'couriers', label: 'Courier Masters', icon: Building2, badge: couriers.length },
-          { id: 'analytics', label: 'Courier Performance', icon: CheckCircle2 },
-          { id: 'templates', label: 'PO HTML Templates', icon: FileCode2, badge: templates.length },
-          { id: 'vendors', label: 'Vendors / Suppliers', icon: Building2, badge: parties.length },
-          { id: 'estimates', label: 'Saved Estimates', icon: CheckCircle2, badge: estimates.length },
-          { id: 'profiles', label: 'Our Internal Profiles', icon: ShieldCheck, badge: profiles.length },
-          { id: 'locations', label: 'Delivery Hubs', icon: Truck, badge: locations.length },
-        ].map(t => {
-          const Icon = t.icon
-          const isActive = activeTab === t.id
-          return (
+      {/* Two-Level Module Hierarchy Navigation */}
+      <div className="mb-6 space-y-3">
+        {/* LEVEL 1: Primary Procurement Tabs + High-Level "More Modules ▾" Categories */}
+        <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-800 flex-wrap">
+          {/* Main 5 Visible Procurement Tabs */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {[
+              { id: 'calculator', label: 'Estimate Calculator', icon: Calculator },
+              { id: 'quotes', label: 'Vendor Quotes', icon: FileSpreadsheet, badge: quotes.length },
+              { id: 'orders', label: 'Purchase Orders', icon: FileText, badge: purchaseOrders.length },
+              { id: 'bills', label: 'Purchase Bills', icon: ShoppingBag, badge: purchaseBills.length },
+              { id: 'opening-stock', label: 'Opening Stock', icon: CheckCircle2, badge: openingStockList.length },
+            ].map(t => {
+              const Icon = t.icon
+              const isDirectActive = activeTab === t.id && !selectedModule
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => {
+                    setSelectedModule(null)
+                    setActiveTab(t.id as any)
+                    setMoreOpen(false)
+                  }}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
+                    isDirectActive
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-500/25'
+                      : 'text-slate-300 hover:text-white hover:bg-slate-800/80 bg-slate-900/60 border border-slate-800/80'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  <span>{t.label}</span>
+                  {t.badge !== undefined && (
+                    <span className={`px-1.5 py-0.2 rounded text-[10px] font-mono ${
+                      isDirectActive ? 'bg-blue-700 text-white' : 'bg-slate-800 text-slate-400'
+                    }`}>
+                      {t.badge}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+
+          {/* More Modules ▾ Trigger (Only Top-Level Module Categories) */}
+          <div className="relative shrink-0">
             <button
-              key={t.id}
-              onClick={() => setActiveTab(t.id as any)}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition whitespace-nowrap ${
-                isActive
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+              onClick={() => setMoreOpen(!moreOpen)}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition border ${
+                selectedModule
+                  ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-500/20'
+                  : moreOpen
+                  ? 'bg-slate-800 text-white border-blue-500/50'
+                  : 'bg-slate-900/80 text-slate-300 hover:text-white border-slate-700/80 hover:bg-slate-800/80'
               }`}
             >
-              <Icon className="w-4 h-4" />
-              {t.label}
-              {t.badge !== undefined && (
-                <span className={`px-1.5 py-0.5 rounded text-xs ${isActive ? 'bg-blue-700 text-white' : 'bg-slate-800 text-slate-400'}`}>
-                  {t.badge}
-                </span>
-              )}
+              <span>{selectedModule ? selectedModule.name : 'More Modules'}</span>
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${moreOpen ? 'rotate-180 text-blue-300' : 'text-slate-400'}`} />
             </button>
-          )
-        })}
+
+            {/* LEVEL 1 POPUP: Shows ONLY High-Level Module Headings (No Long Function List, No Internal Scrollbar) */}
+            {moreOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setMoreOpen(false)}
+                />
+                <div className="absolute right-0 mt-2 w-72 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl z-50 p-1.5 divide-y divide-slate-800/60">
+                  <div className="py-1">
+                    {[
+                      {
+                        id: 'pricing',
+                        name: 'Pricing Rules & Customer Levels',
+                        icon: Calculator,
+                        defaultTab: 'sales-rates',
+                        desc: 'Rates, Categories & Level Rules'
+                      },
+                      {
+                        id: 'templates',
+                        name: 'Templates & Document Numbering',
+                        icon: FileCode2,
+                        defaultTab: 'templates',
+                        desc: 'HTML Templates & Series Numbering'
+                      },
+                      {
+                        id: 'reports',
+                        name: 'Reports & Business Intelligence',
+                        icon: FileSpreadsheet,
+                        defaultTab: 'sales-monthly',
+                        desc: 'Sales, Profit & Vendor Analysis'
+                      },
+                      {
+                        id: 'masters',
+                        name: 'Master Entities & Directories',
+                        icon: Building2,
+                        defaultTab: 'vendors',
+                        desc: 'Suppliers, Hubs & Profiles'
+                      },
+                      {
+                        id: 'stock',
+                        name: 'Stock & Inventory',
+                        icon: ShieldCheck,
+                        defaultTab: 'profile-stocks',
+                        desc: 'Ledger, Inward & Courier Tracking'
+                      },
+                      {
+                        id: 'sales',
+                        name: 'Sales Operations',
+                        icon: ShoppingBag,
+                        defaultTab: 'sales-estimates',
+                        desc: 'Estimates, Invoices & Ledgers'
+                      }
+                    ].map(mod => {
+                      const Icon = mod.icon
+                      const isCurrentMod = selectedModule?.id === mod.id
+                      return (
+                        <button
+                          key={mod.id}
+                          onClick={() => {
+                            setSelectedModule({ id: mod.id, name: mod.name })
+                            setActiveTab(mod.defaultTab as any)
+                            setMoreOpen(false)
+                          }}
+                          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition ${
+                            isCurrentMod
+                              ? 'bg-blue-600/20 text-blue-300 font-semibold border border-blue-500/30'
+                              : 'text-slate-300 hover:text-white hover:bg-slate-800/90'
+                          }`}
+                        >
+                          <div className={`p-1.5 rounded-md ${isCurrentMod ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400'}`}>
+                            <Icon className="w-4 h-4 shrink-0" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-xs font-semibold leading-tight truncate">{mod.name}</div>
+                            <div className="text-[10px] text-slate-400 truncate mt-0.5">{mod.desc}</div>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* LEVEL 2: Dedicated Module Workspace & Functional Sub-Tabs */}
+        {selectedModule && (
+          <div className="bg-slate-900/70 border border-slate-800/80 rounded-xl p-3 shadow-inner">
+            <div className="flex items-center justify-between gap-3 mb-2.5 pb-2 border-b border-slate-800/60">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                <span className="text-xs font-bold text-white uppercase tracking-wider">
+                  Module Workspace: {selectedModule.name}
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  setSelectedModule(null)
+                  setActiveTab('calculator')
+                }}
+                className="text-[11px] text-slate-400 hover:text-white hover:underline flex items-center gap-1"
+              >
+                &larr; Back to Core Procurement
+              </button>
+            </div>
+
+            {/* Level 2 Sub-Tabs per Module */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {/* Module 1: Pricing Rules & Customer Levels */}
+              {selectedModule.id === 'pricing' && [
+                { id: 'sales-rates', label: 'Sales Rate Master', icon: Calculator },
+                { id: 'pricing-categories', label: 'Pricing Categories', icon: Building2 },
+                { id: 'customer-levels', label: 'Customer Levels & Rules', icon: ShieldCheck },
+              ].map(sub => {
+                const Icon = sub.icon
+                const isSubActive = activeTab === sub.id
+                return (
+                  <button
+                    key={sub.id}
+                    onClick={() => setActiveTab(sub.id as any)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                      isSubActive
+                        ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/30'
+                        : 'text-slate-300 hover:text-white hover:bg-slate-800 bg-slate-950/60 border border-slate-800'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    <span>{sub.label}</span>
+                  </button>
+                )
+              })}
+
+              {/* Module 2: Templates & Document Numbering */}
+              {selectedModule.id === 'templates' && [
+                { id: 'templates', label: 'Document Templates', icon: FileCode2, badge: templates.length },
+                { id: 'numbering', label: 'Document Numbering', icon: FileText },
+                { id: 'rules', label: 'Numbering Rules', icon: ShieldCheck },
+              ].map(sub => {
+                const Icon = sub.icon
+                const isSubActive = activeTab === sub.id
+                return (
+                  <button
+                    key={sub.id}
+                    onClick={() => setActiveTab(sub.id as any)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                      isSubActive
+                        ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/30'
+                        : 'text-slate-300 hover:text-white hover:bg-slate-800 bg-slate-950/60 border border-slate-800'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    <span>{sub.label}</span>
+                    {sub.badge !== undefined && (
+                      <span className={`px-1.5 py-0.2 rounded text-[10px] font-mono ${
+                        isSubActive ? 'bg-blue-700 text-white' : 'bg-slate-800 text-slate-400'
+                      }`}>
+                        {sub.badge}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+
+              {/* Module 3: Reports & Business Intelligence */}
+              {selectedModule.id === 'reports' && [
+                { id: 'sales-monthly', label: 'Monthly Sales (FY)', icon: FileSpreadsheet },
+                { id: 'sales-annual', label: 'Annual Sales (FY)', icon: ShieldCheck },
+                { id: 'purchase-overall', label: 'Procurement Report', icon: ShoppingBag },
+                { id: 'estimate-pipeline', label: 'Estimate Pipeline', icon: Calculator },
+                { id: 'customer-analytics', label: 'Customer Profit Analytics', icon: ShieldCheck },
+                { id: 'vendor-analytics', label: 'Vendor Landed Cost Comparison', icon: Calculator },
+              ].map(sub => {
+                const Icon = sub.icon
+                const isSubActive = activeTab === sub.id
+                return (
+                  <button
+                    key={sub.id}
+                    onClick={() => setActiveTab(sub.id as any)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                      isSubActive
+                        ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/30'
+                        : 'text-slate-300 hover:text-white hover:bg-slate-800 bg-slate-950/60 border border-slate-800'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    <span>{sub.label}</span>
+                  </button>
+                )
+              })}
+
+              {/* Module 4: Master Entities & Directories */}
+              {selectedModule.id === 'masters' && [
+                { id: 'vendors', label: 'Vendors / Suppliers', icon: Building2, badge: parties.length },
+                { id: 'estimates', label: 'Saved Estimates', icon: CheckCircle2, badge: estimates.length },
+                { id: 'profiles', label: 'Our Internal Profiles', icon: ShieldCheck, badge: profiles.length },
+                { id: 'locations', label: 'Delivery Hubs', icon: Truck, badge: locations.length },
+              ].map(sub => {
+                const Icon = sub.icon
+                const isSubActive = activeTab === sub.id
+                return (
+                  <button
+                    key={sub.id}
+                    onClick={() => setActiveTab(sub.id as any)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                      isSubActive
+                        ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/30'
+                        : 'text-slate-300 hover:text-white hover:bg-slate-800 bg-slate-950/60 border border-slate-800'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    <span>{sub.label}</span>
+                    {sub.badge !== undefined && (
+                      <span className={`px-1.5 py-0.2 rounded text-[10px] font-mono ${
+                        isSubActive ? 'bg-blue-700 text-white' : 'bg-slate-800 text-slate-400'
+                      }`}>
+                        {sub.badge}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+
+              {/* Module 5: Stock & Inventory */}
+              {selectedModule.id === 'stock' && [
+                { id: 'profile-stocks', label: 'Profile Stock Ledger', icon: ShieldCheck, badge: profileStockList.length },
+                { id: 'receipts', label: 'Purchase Entries', icon: ShoppingBag, badge: purchaseReceipts.length },
+                { id: 'inwards', label: 'Freight / Courier Inward', icon: Truck, badge: courierInwards.length },
+                { id: 'couriers', label: 'Courier Masters', icon: Building2, badge: couriers.length },
+                { id: 'analytics', label: 'Courier Performance', icon: CheckCircle2 },
+                { id: 'token-register', label: 'Token Register & Profits', icon: FileSpreadsheet },
+              ].map(sub => {
+                const Icon = sub.icon
+                const isSubActive = activeTab === sub.id
+                return (
+                  <button
+                    key={sub.id}
+                    onClick={() => setActiveTab(sub.id as any)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                      isSubActive
+                        ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/30'
+                        : 'text-slate-300 hover:text-white hover:bg-slate-800 bg-slate-950/60 border border-slate-800'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    <span>{sub.label}</span>
+                    {sub.badge !== undefined && (
+                      <span className={`px-1.5 py-0.2 rounded text-[10px] font-mono ${
+                        isSubActive ? 'bg-blue-700 text-white' : 'bg-slate-800 text-slate-400'
+                      }`}>
+                        {sub.badge}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+
+              {/* Module 6: Sales Operations */}
+              {selectedModule.id === 'sales' && [
+                { id: 'sales-estimates', label: 'Sales Estimates', icon: FileText },
+                { id: 'sales-invoices', label: 'Sales Invoices', icon: ShoppingBag },
+                { id: 'sales-payments', label: 'Customer Payments', icon: CheckCircle2 },
+                { id: 'party-ledgers', label: 'Party Ledgers', icon: FileText },
+                { id: 'outstanding-ageing', label: 'Outstanding & Ageing', icon: AlertCircle },
+              ].map(sub => {
+                const Icon = sub.icon
+                const isSubActive = activeTab === sub.id
+                return (
+                  <button
+                    key={sub.id}
+                    onClick={() => setActiveTab(sub.id as any)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                      isSubActive
+                        ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/30'
+                        : 'text-slate-300 hover:text-white hover:bg-slate-800 bg-slate-950/60 border border-slate-800'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    <span>{sub.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* TAB CONTENT 1: ESTIMATE CALCULATOR */}
@@ -825,6 +1236,343 @@ export default function TokenProcurementPage() {
         </div>
       )}
 
+      
+      {/* TAB CONTENT: VENDOR QUOTES */}
+      {activeTab === 'quotes' && (
+        <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl overflow-hidden">
+          <div className="p-4 border-b border-slate-700 flex justify-between items-center">
+            <div>
+              <h3 className="text-base font-semibold text-white">Vendor Quotations Master</h3>
+              <p className="text-xs text-slate-400">Active token rate quotations received from verified suppliers and manufacturers.</p>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm text-slate-300">
+              <thead className="bg-slate-900/60 text-xs font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-700">
+                <tr>
+                  <th className="p-3.5">Quote #</th>
+                  <th className="p-3.5">Vendor</th>
+                  <th className="p-3.5">Quote Date</th>
+                  <th className="p-3.5">Valid From</th>
+                  <th className="p-3.5">Valid To</th>
+                  <th className="p-3.5 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {quotes.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="p-6 text-center text-slate-500">
+                      No vendor quotations found.
+                    </td>
+                  </tr>
+                ) : (
+                  quotes.map(q => (
+                    <tr key={q.id} className="hover:bg-slate-800/40">
+                      <td className="p-3.5 font-mono font-medium text-blue-400">{q.quote_number}</td>
+                      <td className="p-3.5 text-slate-200">{q.party_name || q.party_id}</td>
+                      <td className="p-3.5 text-xs text-slate-400">{q.quote_date}</td>
+                      <td className="p-3.5 text-xs text-slate-400">{q.valid_from}</td>
+                      <td className="p-3.5 text-xs text-slate-400">{q.valid_to || 'Open'}</td>
+                      <td className="p-3.5 text-center">
+                        <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                          q.status === 'ACTIVE' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-400'
+                        }`}>
+                          {q.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB CONTENT: SAVED ESTIMATES */}
+      {activeTab === 'estimates' && (
+        <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl overflow-hidden">
+          <div className="p-4 border-b border-slate-700 flex justify-between items-center">
+            <div>
+              <h3 className="text-base font-semibold text-white">Saved Procurement Estimates</h3>
+              <p className="text-xs text-slate-400">Pre-PO cost calculations and supplier estimations recorded in the system.</p>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm text-slate-300">
+              <thead className="bg-slate-900/60 text-xs font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-700">
+                <tr>
+                  <th className="p-3.5">Estimate #</th>
+                  <th className="p-3.5">Date</th>
+                  <th className="p-3.5">Vendor</th>
+                  <th className="p-3.5 text-right">Quantity</th>
+                  <th className="p-3.5 text-right">Base Amount</th>
+                  <th className="p-3.5 text-right">GST Amount</th>
+                  <th className="p-3.5 text-right">Grand Total</th>
+                  <th className="p-3.5 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {estimates.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="p-6 text-center text-slate-500">
+                      No saved procurement estimates found. Use the Estimate Calculator to generate a new estimate.
+                    </td>
+                  </tr>
+                ) : (
+                  estimates.map(e => (
+                    <tr key={e.id} className="hover:bg-slate-800/40">
+                      <td className="p-3.5 font-mono font-medium text-blue-400">{e.estimate_number}</td>
+                      <td className="p-3.5 text-xs text-slate-400">{e.estimate_date}</td>
+                      <td className="p-3.5 text-slate-200">{e.party_name || e.party_id}</td>
+                      <td className="p-3.5 text-right font-mono">{e.quantity}</td>
+                      <td className="p-3.5 text-right font-mono text-slate-300">₹{Number(e.base_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                      <td className="p-3.5 text-right font-mono text-slate-400">₹{Number(e.gst_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                      <td className="p-3.5 text-right font-mono font-bold text-white">₹{Number(e.grand_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                      <td className="p-3.5 text-center">
+                        <span className="px-2 py-0.5 rounded text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                          {e.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB CONTENT: VENDORS / SUPPLIERS */}
+      {activeTab === 'vendors' && (
+        <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl overflow-hidden">
+          <div className="p-4 border-b border-slate-700 flex justify-between items-center">
+            <div>
+              <h3 className="text-base font-semibold text-white">Procurement Vendors & Suppliers</h3>
+              <p className="text-xs text-slate-400">Registered hardware token manufacturers, distributors, and supply partners.</p>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm text-slate-300">
+              <thead className="bg-slate-900/60 text-xs font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-700">
+                <tr>
+                  <th className="p-3.5">Vendor Name</th>
+                  <th className="p-3.5">Contact Person</th>
+                  <th className="p-3.5">Phone / Mobile</th>
+                  <th className="p-3.5">Email</th>
+                  <th className="p-3.5">City / Location</th>
+                  <th className="p-3.5 text-right">Credit Period</th>
+                  <th className="p-3.5 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {parties.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="p-6 text-center text-slate-500">
+                      No procurement vendors found.
+                    </td>
+                  </tr>
+                ) : (
+                  parties.map(p => (
+                    <tr key={p.id} className="hover:bg-slate-800/40">
+                      <td className="p-3.5 font-medium text-white">{p.party_name}</td>
+                      <td className="p-3.5 text-slate-300">{p.contact_person || '-'}</td>
+                      <td className="p-3.5 font-mono text-xs text-slate-300">{p.mobile || '-'}</td>
+                      <td className="p-3.5 text-xs text-slate-400">{p.email || '-'}</td>
+                      <td className="p-3.5 text-xs text-slate-400">{p.city || 'India'}</td>
+                      <td className="p-3.5 text-right font-mono text-xs">{p.credit_period_days || 0} days</td>
+                      <td className="p-3.5 text-center">
+                        <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                          p.is_active ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-400'
+                        }`}>
+                          {p.is_active ? 'ACTIVE' : 'INACTIVE'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB CONTENT: OUR INTERNAL PROFILES */}
+      {activeTab === 'profiles' && (
+        <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl overflow-hidden">
+          <div className="p-4 border-b border-slate-700 flex justify-between items-center">
+            <div>
+              <h3 className="text-base font-semibold text-white">Our Internal Company Profiles</h3>
+              <p className="text-xs text-slate-400">Purchasing entities, GST registrations, and multi-profile legal entities.</p>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm text-slate-300">
+              <thead className="bg-slate-900/60 text-xs font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-700">
+                <tr>
+                  <th className="p-3.5">Legal Entity Name</th>
+                  <th className="p-3.5">Trade Name</th>
+                  <th className="p-3.5">GST Registration</th>
+                  <th className="p-3.5">Contact Details</th>
+                  <th className="p-3.5 text-center">Default Entity</th>
+                  <th className="p-3.5 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {profiles.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="p-6 text-center text-slate-500">
+                      No internal company profiles configured.
+                    </td>
+                  </tr>
+                ) : (
+                  profiles.map(prof => (
+                    <tr key={prof.id} className="hover:bg-slate-800/40">
+                      <td className="p-3.5 font-medium text-white">{prof.legal_name}</td>
+                      <td className="p-3.5 text-slate-300">{prof.trade_name || prof.legal_name}</td>
+                      <td className="p-3.5 font-mono text-xs text-slate-300">
+                        {prof.gst_registered ? prof.gstin || 'Registered' : 'Non-GST'}
+                      </td>
+                      <td className="p-3.5 text-xs text-slate-400">{prof.email || prof.mobile || '-'}</td>
+                      <td className="p-3.5 text-center">
+                        {prof.is_default ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                            DEFAULT
+                          </span>
+                        ) : (
+                          <span className="text-slate-600 text-xs">-</span>
+                        )}
+                      </td>
+                      <td className="p-3.5 text-center">
+                        <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                          prof.is_active ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-400'
+                        }`}>
+                          {prof.is_active ? 'ACTIVE' : 'INACTIVE'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB CONTENT: DELIVERY HUBS */}
+      {activeTab === 'locations' && (
+        <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl overflow-hidden">
+          <div className="p-4 border-b border-slate-700 flex justify-between items-center">
+            <div>
+              <h3 className="text-base font-semibold text-white">Delivery Hubs & Receiving Locations</h3>
+              <p className="text-xs text-slate-400">Branch offices and logistics receiving centers for token delivery.</p>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm text-slate-300">
+              <thead className="bg-slate-900/60 text-xs font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-700">
+                <tr>
+                  <th className="p-3.5">Hub / Location Name</th>
+                  <th className="p-3.5">Contact Person</th>
+                  <th className="p-3.5">Phone / Mobile</th>
+                  <th className="p-3.5">Address</th>
+                  <th className="p-3.5">City & State</th>
+                  <th className="p-3.5 text-center">Default Hub</th>
+                  <th className="p-3.5 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {locations.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="p-6 text-center text-slate-500">
+                      No delivery locations configured.
+                    </td>
+                  </tr>
+                ) : (
+                  locations.map(loc => (
+                    <tr key={loc.id} className="hover:bg-slate-800/40">
+                      <td className="p-3.5 font-medium text-white">{loc.location_name}</td>
+                      <td className="p-3.5 text-slate-300">{loc.contact_person || '-'}</td>
+                      <td className="p-3.5 font-mono text-xs text-slate-300">{loc.mobile || '-'}</td>
+                      <td className="p-3.5 text-xs text-slate-400">{loc.address_line || '-'}</td>
+                      <td className="p-3.5 text-xs text-slate-300">{loc.city} {loc.pincode ? `(${loc.pincode})` : ''}</td>
+                      <td className="p-3.5 text-center">
+                        {loc.is_default ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                            DEFAULT
+                          </span>
+                        ) : (
+                          <span className="text-slate-600 text-xs">-</span>
+                        )}
+                      </td>
+                      <td className="p-3.5 text-center">
+                        <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                          loc.is_active ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-400'
+                        }`}>
+                          {loc.is_active ? 'ACTIVE' : 'INACTIVE'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB CONTENT: CUSTOMER PAYMENTS */}
+      {activeTab === 'sales-payments' && (
+        <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl overflow-hidden">
+          <div className="p-4 border-b border-slate-700 flex justify-between items-center">
+            <div>
+              <h3 className="text-base font-semibold text-white">Customer Payment Receipts</h3>
+              <p className="text-xs text-slate-400">Payment entries, bank transactions, and customer settlement vouchers.</p>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm text-slate-300">
+              <thead className="bg-slate-900/60 text-xs font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-700">
+                <tr>
+                  <th className="p-3.5">Receipt #</th>
+                  <th className="p-3.5">Payment Date</th>
+                  <th className="p-3.5">Customer / Party</th>
+                  <th className="p-3.5">Payment Mode</th>
+                  <th className="p-3.5">Transaction Ref / UTR</th>
+                  <th className="p-3.5 text-right">Amount Received</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {salesPayments.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="p-6 text-center text-slate-500">
+                      No customer payment receipts recorded yet. Click &quot;Record Payment&quot; on any sales invoice to log payments.
+                    </td>
+                  </tr>
+                ) : (
+                  salesPayments.map((sp: any) => (
+                    <tr key={sp.id} className="hover:bg-slate-800/40">
+                      <td className="p-3.5 font-mono font-medium text-emerald-400">{sp.receipt_number}</td>
+                      <td className="p-3.5 text-xs text-slate-400">{sp.payment_date}</td>
+                      <td className="p-3.5 font-medium text-white">{sp.party_name || sp.customer_id}</td>
+                      <td className="p-3.5">
+                        <span className="px-2 py-0.5 rounded text-xs bg-slate-800 text-slate-300 border border-slate-700">
+                          {sp.payment_mode}
+                        </span>
+                      </td>
+                      <td className="p-3.5 font-mono text-xs text-slate-400">{sp.transaction_reference_utr || '-'}</td>
+                      <td className="p-3.5 text-right font-mono font-bold text-emerald-400">
+                        ₹{Number(sp.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* TAB CONTENT 3: PURCHASE ORDERS (DIRECT ISSUE & CANCEL) */}
       {activeTab === 'orders' && (
         <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl overflow-hidden">
@@ -998,7 +1746,7 @@ export default function TokenProcurementPage() {
               }}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold shadow-sm"
             >
-              <Plus className="w-3.5 h-3.5" /> + New Purchase Bill
+              <Plus className="w-3.5 h-3.5" /> New Purchase Bill
             </button>
           </div>
           <div className="overflow-x-auto">
@@ -1043,6 +1791,14 @@ export default function TokenProcurementPage() {
                         </span>
                       </td>
                       <td className="p-3.5 text-right space-x-2">
+                        <a
+                          href={`/api/token-documents/purchase_bill/${b.id}/view-html`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs transition"
+                        >
+                          <Printer className="w-3 h-3" /> A4 Print
+                        </a>
                         {b.status === 'DRAFT' && (
                           <button
                             onClick={async () => {
@@ -1100,7 +1856,7 @@ export default function TokenProcurementPage() {
               }}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold shadow-sm"
             >
-              <Plus className="w-3.5 h-3.5" /> + Record Opening Stock
+              <Plus className="w-3.5 h-3.5" /> Record Opening Stock
             </button>
           </div>
           <div className="overflow-x-auto">
@@ -1389,7 +2145,7 @@ export default function TokenProcurementPage() {
               }}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold"
             >
-              <Plus className="w-3.5 h-3.5" /> + Add Courier Company
+              <Plus className="w-3.5 h-3.5" /> Add Courier Company
             </button>
           </div>
           <div className="overflow-x-auto">
@@ -1524,6 +2280,14 @@ export default function TokenProcurementPage() {
                       </span>
                     </td>
                     <td className="p-3.5 text-right space-x-2">
+                      <a
+                        href={`/api/token-documents/sales_estimate/${est.id}/view-html`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs transition"
+                      >
+                        <Printer className="w-3 h-3" /> A4 Print
+                      </a>
                       {est.status !== 'APPROVED' && est.status !== 'CONVERTED' && (
                         <button
                           onClick={async () => {
@@ -1625,6 +2389,14 @@ export default function TokenProcurementPage() {
                       </span>
                     </td>
                     <td className="p-3.5 text-right space-x-2">
+                      <a
+                        href={`/api/token-documents/sales_invoice/${inv.id}/view-html`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs transition"
+                      >
+                        <Printer className="w-3 h-3" /> A4 Print
+                      </a>
                       {inv.status === 'DRAFT' && (
                         <button
                           onClick={async () => {
@@ -2210,6 +2982,400 @@ export default function TokenProcurementPage() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* TAB CONTENT: SALES RATE MASTER */}
+      {activeTab === 'sales-rates' && (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center bg-slate-900/60 p-4 rounded-xl border border-slate-800">
+            <div>
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <Calculator className="w-5 h-5 text-emerald-400" />
+                Sales Rate Master & Quantity Slabs
+              </h2>
+              <p className="text-xs text-slate-400">
+                Define commercial selling rates for customers with multi-slab tiered quantity discounts and effective date validity.
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setSalesRateForm({
+                  id: '',
+                  company_profile_id: '',
+                  token_model_id: 'tm-1',
+                  customer_category_id: '',
+                  customer_id: '',
+                  rate_type: 'FIXED',
+                  rate: 100,
+                  quantity_slabs: [{ min_quantity: 1, max_quantity: 50, unit_rate: 100 }],
+                  effective_from: new Date().toISOString().slice(0, 10),
+                  effective_to: '',
+                  priority: 10,
+                  is_active: true
+                })
+                setShowSalesRateModal(true)
+              }}
+              className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold"
+            >
+              <Plus className="w-4 h-4" /> Add Sales Rate
+            </button>
+          </div>
+
+          {/* Test Sales Rate Tool */}
+          <div className="bg-slate-900/40 p-4 rounded-xl border border-slate-800 space-y-3">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+              <Search className="w-4 h-4 text-blue-400" /> Rate Preview & Resolution Simulator
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+              <div>
+                <label className="text-[10px] uppercase text-slate-400">Customer</label>
+                <select
+                  value={ratePreviewInput.customer_id}
+                  onChange={(e) => setRatePreviewInput({ ...ratePreviewInput, customer_id: e.target.value })}
+                  className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-xs text-white"
+                >
+                  <option value="">-- General Customer --</option>
+                  {partnersList.map((p: any) => (
+                    <option key={p.id} value={p.id}>{p.company_name || p.partner_code}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] uppercase text-slate-400">Token Model</label>
+                <select
+                  value={ratePreviewInput.token_model_id}
+                  onChange={(e) => setRatePreviewInput({ ...ratePreviewInput, token_model_id: e.target.value })}
+                  className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-xs text-white"
+                >
+                  <option value="tm-1">EPASS2003 AUTO</option>
+                  <option value="tm-2">WATCHDATA PROXKEY</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] uppercase text-slate-400">Quantity</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={ratePreviewInput.quantity}
+                  onChange={(e) => setRatePreviewInput({ ...ratePreviewInput, quantity: parseInt(e.target.value, 10) || 1 })}
+                  className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-xs text-white font-mono"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase text-slate-400">Transaction Date</label>
+                <input
+                  type="date"
+                  value={ratePreviewInput.date}
+                  onChange={(e) => setRatePreviewInput({ ...ratePreviewInput, date: e.target.value })}
+                  className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-xs text-white font-mono"
+                />
+              </div>
+              <div className="flex items-end">
+                <button
+                  type="button"
+                  disabled={ratePreviewLoading}
+                  onClick={async () => {
+                    setRatePreviewLoading(true)
+                    try {
+                      const res = await fetch('/api/token-pricing/resolve', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(ratePreviewInput)
+                      }).then(r => r.json())
+                      setRatePreviewResult(res)
+                    } catch (e: any) {
+                      alert(e.message)
+                    } finally {
+                      setRatePreviewLoading(false)
+                    }
+                  }}
+                  className="w-full py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-semibold"
+                >
+                  {ratePreviewLoading ? 'Resolving...' : 'Test Sales Rate'}
+                </button>
+              </div>
+            </div>
+
+            {ratePreviewResult && (
+              <div className="p-3 bg-slate-800/80 rounded border border-slate-700 text-xs flex justify-between items-center">
+                <div>
+                  <span className="font-semibold text-emerald-400 text-sm">Resolved Rate: ₹{ratePreviewResult.unit_rate}/token</span>
+                  <div className="text-slate-400 text-[11px] mt-0.5">{ratePreviewResult.explanation}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[10px] uppercase text-slate-400">Taxable Value</div>
+                  <div className="font-bold font-mono text-white text-sm">₹{Number(ratePreviewResult.taxable_value || 0).toFixed(2)}</div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Sales Rates Table */}
+          <div className="overflow-x-auto bg-slate-900 rounded-xl border border-slate-800">
+            <table className="w-full text-left text-xs text-slate-300">
+              <thead className="bg-slate-800/80 text-slate-400 uppercase font-mono">
+                <tr>
+                  <th className="p-3">Model</th>
+                  <th className="p-3">Category</th>
+                  <th className="p-3">Type</th>
+                  <th className="p-3 text-right">Base / Slab Rate</th>
+                  <th className="p-3">Validity</th>
+                  <th className="p-3">Priority</th>
+                  <th className="p-3">Status</th>
+                  <th className="p-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {salesRatesList.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="p-6 text-center text-slate-500">No sales rates defined yet.</td>
+                  </tr>
+                ) : (
+                  salesRatesList.map((r: any) => (
+                    <tr key={r.id} className="hover:bg-slate-800/40">
+                      <td className="p-3 font-semibold text-white">{r.model_name || r.token_model_id}</td>
+                      <td className="p-3 text-slate-400">{r.customer_category_id ? 'Category Specified' : 'GENERAL RATE'}</td>
+                      <td className="p-3 font-mono">{r.rate_type}</td>
+                      <td className="p-3 text-right font-mono font-bold text-emerald-400">
+                        {r.rate_type === 'SLAB' ? `${r.quantity_slabs?.length || 0} Slabs` : `₹${Number(r.rate).toFixed(2)}`}
+                      </td>
+                      <td className="p-3 text-slate-400 font-mono">{r.effective_from} {r.effective_to ? `to ${r.effective_to}` : 'onwards'}</td>
+                      <td className="p-3 font-mono">{r.priority}</td>
+                      <td className="p-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] ${r.is_active ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-rose-950 text-rose-300 border border-rose-800'}`}>
+                          {r.is_active ? 'ACTIVE' : 'INACTIVE'}
+                        </span>
+                      </td>
+                      <td className="p-3 text-right">
+                        <button
+                          onClick={async () => {
+                            if (confirm('Delete this sales rate?')) {
+                              await fetch(`/api/token-sales-rates/${r.id}`, { method: 'DELETE' })
+                              loadAllData()
+                            }
+                          }}
+                          className="text-rose-400 hover:text-rose-300 font-semibold"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB CONTENT: PRICING CATEGORIES */}
+      {activeTab === 'pricing-categories' && (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center bg-slate-900/60 p-4 rounded-xl border border-slate-800">
+            <div>
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-blue-400" />
+                Customer Pricing Categories & Assignments
+              </h2>
+              <p className="text-xs text-slate-400">
+                Segment customers into pricing categories (Kerala, High Volume, VIP, New Customer) with priority resolution.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setAssignCategoryForm({
+                    customer_id: '',
+                    customer_category_id: '',
+                    assignment_type: 'PERMANENT',
+                    effective_from: new Date().toISOString().slice(0, 10),
+                    effective_to: '',
+                    is_active: true
+                  })
+                  setShowAssignCategoryModal(true)
+                }}
+                className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold"
+              >
+                <Plus className="w-4 h-4" /> Assign Customer
+              </button>
+              <button
+                onClick={() => {
+                  setCategoryForm({
+                    id: '',
+                    company_profile_id: '',
+                    category_name: '',
+                    category_code: '',
+                    description: '',
+                    priority: 50,
+                    is_active: true
+                  })
+                  setShowCategoryModal(true)
+                }}
+                className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold"
+              >
+                <Plus className="w-4 h-4" /> New Category
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Categories List */}
+            <div className="bg-slate-900 rounded-xl border border-slate-800 p-4 space-y-3">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">Configured Categories</h3>
+              <div className="divide-y divide-slate-800">
+                {pricingCategoriesList.length === 0 ? (
+                  <div className="text-slate-500 text-xs py-4 text-center">No categories configured.</div>
+                ) : (
+                  pricingCategoriesList.map((cat: any) => (
+                    <div key={cat.id} className="py-2.5 flex justify-between items-center text-xs">
+                      <div>
+                        <div className="font-semibold text-white">{cat.category_name} <span className="font-mono text-slate-400">({cat.category_code})</span></div>
+                        <div className="text-slate-400 text-[11px]">Priority: {cat.priority} &bull; {cat.description || 'No description'}</div>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (confirm(`Delete category ${cat.category_name}?`)) {
+                            await fetch(`/api/pricing-categories/${cat.id}`, { method: 'DELETE' })
+                            loadAllData()
+                          }
+                        }}
+                        className="text-rose-400 hover:text-rose-300"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Customer Assignments */}
+            <div className="bg-slate-900 rounded-xl border border-slate-800 p-4 space-y-3">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">Customer Category Memberships</h3>
+              <div className="divide-y divide-slate-800">
+                {customerAssignmentsList.length === 0 ? (
+                  <div className="text-slate-500 text-xs py-4 text-center">No customers assigned yet.</div>
+                ) : (
+                  customerAssignmentsList.map((a: any) => (
+                    <div key={a.id} className="py-2.5 flex justify-between items-center text-xs">
+                      <div>
+                        <div className="font-semibold text-white">{a.customer_id}</div>
+                        <div className="text-slate-400 text-[11px]">Type: {a.assignment_type} &bull; {a.effective_from} {a.effective_to ? `to ${a.effective_to}` : '(Permanent)'}</div>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (confirm('Remove customer assignment?')) {
+                            await fetch(`/api/customer-category-assignments/${a.id}`, { method: 'DELETE' })
+                            loadAllData()
+                          }
+                        }}
+                        className="text-rose-400 hover:text-rose-300"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB CONTENT: CUSTOMER LEVELS */}
+      {activeTab === 'customer-levels' && (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center bg-slate-900/60 p-4 rounded-xl border border-slate-800">
+            <div>
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-purple-400" />
+                Customer Commercial Levels & Automatic Volume Rules
+              </h2>
+              <p className="text-xs text-slate-400">
+                Configure commercial tiers (VIP, High Volume, Level 1) and auto-evaluation rules based on posted sales invoices.
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setLevelForm({
+                  id: '',
+                  level_name: '',
+                  level_code: '',
+                  description: '',
+                  priority: 10,
+                  assignment_mode: 'AUTOMATIC',
+                  is_active: true
+                })
+                setShowLevelModal(true)
+              }}
+              className="flex items-center gap-2 px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-semibold"
+            >
+              <Plus className="w-4 h-4" /> Add Customer Level
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Levels List */}
+            <div className="bg-slate-900 rounded-xl border border-slate-800 p-4 space-y-3">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">Customer Levels Master</h3>
+              <div className="divide-y divide-slate-800">
+                {customerLevelsList.length === 0 ? (
+                  <div className="text-slate-500 text-xs py-4 text-center">No levels configured.</div>
+                ) : (
+                  customerLevelsList.map((l: any) => (
+                    <div key={l.id} className="py-2.5 flex justify-between items-center text-xs">
+                      <div>
+                        <div className="font-semibold text-white">{l.level_name} <span className="font-mono text-slate-400">({l.level_code})</span></div>
+                        <div className="text-slate-400 text-[11px]">Priority: {l.priority} &bull; Mode: {l.assignment_mode}</div>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (confirm(`Delete level ${l.level_name}?`)) {
+                            await fetch(`/api/customer-levels/${l.id}`, { method: 'DELETE' })
+                            loadAllData()
+                          }
+                        }}
+                        className="text-rose-400 hover:text-rose-300"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Level Rules */}
+            <div className="bg-slate-900 rounded-xl border border-slate-800 p-4 space-y-3">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">Volume Threshold Rules</h3>
+              <div className="divide-y divide-slate-800">
+                {customerLevelRulesList.length === 0 ? (
+                  <div className="text-slate-500 text-xs py-4 text-center">No automatic volume rules configured.</div>
+                ) : (
+                  customerLevelRulesList.map((rl: any) => (
+                    <div key={rl.id} className="py-2.5 flex justify-between items-center text-xs">
+                      <div>
+                        <div className="font-semibold text-white">Min Qty: {rl.min_purchase_volume} tokens</div>
+                        <div className="text-slate-400 text-[11px]">Period: {rl.period_type} &bull; Level ID: {rl.customer_level_id}</div>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (confirm('Delete rule?')) {
+                            await fetch(`/api/customer-level-rules/${rl.id}`, { method: 'DELETE' })
+                            loadAllData()
+                          }
+                        }}
+                        className="text-rose-400 hover:text-rose-300"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -2873,13 +4039,15 @@ export default function TokenProcurementPage() {
         <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl overflow-hidden">
           <div className="p-4 border-b border-slate-700 flex justify-between items-center">
             <div>
-              <h3 className="text-base font-semibold text-white">Purchase Order HTML Templates</h3>
-              <p className="text-xs text-slate-400">Manage organization-isolated A4 templates with dynamic placeholders.</p>
+              <h3 className="text-base font-semibold text-white">Document HTML Templates Master</h3>
+              <p className="text-xs text-slate-400">Manage statutory commercial A4 print templates for PO, Purchase Bills, Sales Estimates & Invoices.</p>
             </div>
             <button
               onClick={() => {
                 setTemplateForm({
                   id: '',
+                  company_profile_id: '',
+                  document_type: 'SALES_INVOICE',
                   template_name: '',
                   template_code: '',
                   description: '',
@@ -2902,8 +4070,10 @@ export default function TokenProcurementPage() {
             <table className="w-full text-left text-sm text-slate-300">
               <thead className="bg-slate-900/60 text-xs font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-700">
                 <tr>
+                  <th className="p-3.5">Document Type</th>
                   <th className="p-3.5">Template Code</th>
                   <th className="p-3.5">Template Name</th>
+                  <th className="p-3.5">Company Profile</th>
                   <th className="p-3.5">Effective Window</th>
                   <th className="p-3.5">Default?</th>
                   <th className="p-3.5">Status</th>
@@ -2913,8 +4083,10 @@ export default function TokenProcurementPage() {
               <tbody className="divide-y divide-slate-800">
                 {templates.map(t => (
                   <tr key={t.id} className="hover:bg-slate-800/40">
+                    <td className="p-3.5 font-mono text-xs text-blue-400 font-semibold">{t.document_type || 'PURCHASE_ORDER'}</td>
                     <td className="p-3.5 font-mono font-medium text-white">{t.template_code}</td>
                     <td className="p-3.5 font-medium text-slate-200">{t.template_name}</td>
+                    <td className="p-3.5 text-xs text-slate-300">{profiles.find((p: any) => p.id === t.company_profile_id)?.legal_name || 'Organization Wide'}</td>
                     <td className="p-3.5 text-xs text-slate-400">
                       {t.effective_from} {t.effective_to ? `to ${t.effective_to}` : '(No expiry)'}
                     </td>
@@ -2935,22 +4107,23 @@ export default function TokenProcurementPage() {
                     <td className="p-3.5 text-right space-x-2">
                       <button
                         onClick={async () => {
-                          const res = await fetch(`/api/token-procurement/templates/${t.id}`)
-                          const data = await res.json()
-                          if (data.template) {
-                            setTemplateForm({
-                              id: data.template.id,
-                              template_name: data.template.template_name,
-                              template_code: data.template.template_code,
-                              description: data.template.description || '',
-                              html_content: data.template.html_content,
-                              is_active: data.template.is_active,
-                              is_default: data.template.is_default,
-                              effective_from: data.template.effective_from || '',
-                              effective_to: data.template.effective_to || ''
-                            })
-                            setShowTemplateModal(true)
-                          }
+                          const res = await fetch(`/api/token-templates/${t.id}`).catch(() => null)
+                          const data = res ? await res.json() : null
+                          const item = data?.template || t
+                          setTemplateForm({
+                            id: item.id,
+                            company_profile_id: item.company_profile_id || '',
+                            document_type: item.document_type || 'PURCHASE_ORDER',
+                            template_name: item.template_name,
+                            template_code: item.template_code,
+                            description: item.description || '',
+                            html_content: item.html_content || '',
+                            is_active: item.is_active,
+                            is_default: item.is_default,
+                            effective_from: item.effective_from || '',
+                            effective_to: item.effective_to || ''
+                          })
+                          setShowTemplateModal(true)
                         }}
                         className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs transition"
                       >
@@ -2962,6 +4135,442 @@ export default function TokenProcurementPage() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* DOCUMENT NUMBERING SERIES TAB */}
+      {activeTab === 'numbering' && (
+        <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl overflow-hidden">
+          <div className="p-4 border-b border-slate-700 flex justify-between items-center">
+            <div>
+              <h3 className="text-base font-semibold text-white">Document Numbering Series Master</h3>
+              <p className="text-xs text-slate-400">Configure multi-series numbering with custom prefixes, suffixes, padding lengths, and concurrency-safe counters.</p>
+            </div>
+            <button
+              onClick={() => {
+                setSeriesForm({
+                  id: '',
+                  company_profile_id: profiles[0]?.id || '',
+                  document_type: 'SALES_INVOICE',
+                  series_name: '',
+                  prefix: '',
+                  suffix: '',
+                  starting_number: 1001,
+                  current_counter: 1000,
+                  padding_length: 4,
+                  effective_from: '2026-04-01',
+                  effective_to: '',
+                  is_active: true,
+                  is_default: false,
+                  allow_reuse_on_cancellation: false
+                })
+                setShowSeriesModal(true)
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add Numbering Series
+            </button>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm text-slate-300">
+              <thead className="bg-slate-900/60 text-xs font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-700">
+                <tr>
+                  <th className="p-3.5">Series Name</th>
+                  <th className="p-3.5">Doc Type</th>
+                  <th className="p-3.5">Company Profile</th>
+                  <th className="p-3.5">Prefix / Suffix</th>
+                  <th className="p-3.5">Current Counter</th>
+                  <th className="p-3.5">Padding</th>
+                  <th className="p-3.5">Status</th>
+                  <th className="p-3.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {numberingSeries.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="p-6 text-center text-slate-500">
+                      No numbering series configured. Click &quot;+ Add Numbering Series&quot; to configure custom sequence series.
+                    </td>
+                  </tr>
+                ) : (
+                  numberingSeries.map(s => (
+                    <tr key={s.id} className="hover:bg-slate-800/40">
+                      <td className="p-3.5 font-medium text-white">{s.series_name}</td>
+                      <td className="p-3.5 font-mono text-xs text-blue-400">{s.document_type}</td>
+                      <td className="p-3.5 text-xs text-slate-300">{profiles.find((p: any) => p.id === s.company_profile_id)?.legal_name || s.company_profile_id}</td>
+                      <td className="p-3.5 font-mono text-xs text-amber-300">{s.prefix}{'{seq}'}{s.suffix}</td>
+                      <td className="p-3.5 font-mono text-emerald-400 font-semibold">{s.current_counter}</td>
+                      <td className="p-3.5 text-xs text-slate-400">{s.padding_length} digits</td>
+                      <td className="p-3.5">
+                        <span className={`px-2 py-0.5 rounded text-xs ${s.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-800 text-slate-500'}`}>
+                          {s.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                      <td className="p-3.5 text-right">
+                        <button
+                          onClick={() => {
+                            setSeriesForm(s)
+                            setShowSeriesModal(true)
+                          }}
+                          className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs transition"
+                        >
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* NUMBERING RULES TAB */}
+      {activeTab === 'rules' && (
+        <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl overflow-hidden">
+          <div className="p-4 border-b border-slate-700 flex justify-between items-center">
+            <div>
+              <h3 className="text-base font-semibold text-white">Smart Numbering Rules Engine</h3>
+              <p className="text-xs text-slate-400">Configure priority-based conditional rules (GST status, State, District) to automatically route documents to specific series.</p>
+            </div>
+            <button
+              onClick={() => {
+                setRuleForm({
+                  id: '',
+                  company_profile_id: profiles[0]?.id || '',
+                  document_type: 'SALES_INVOICE',
+                  series_id: numberingSeries[0]?.id || '',
+                  rule_name: '',
+                  priority: 10,
+                  field: 'customer.gst_registered',
+                  operator: 'EQUALS',
+                  value: 'true',
+                  is_active: true
+                })
+                setShowRuleModal(true)
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add Smart Rule
+            </button>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm text-slate-300">
+              <thead className="bg-slate-900/60 text-xs font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-700">
+                <tr>
+                  <th className="p-3.5">Priority</th>
+                  <th className="p-3.5">Rule Name</th>
+                  <th className="p-3.5">Document Type</th>
+                  <th className="p-3.5">Condition</th>
+                  <th className="p-3.5">Target Series</th>
+                  <th className="p-3.5">Status</th>
+                  <th className="p-3.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {numberingRules.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="p-6 text-center text-slate-500">
+                      No smart rules configured yet. Click &quot;+ Add Smart Rule&quot; to configure priority-based routing.
+                    </td>
+                  </tr>
+                ) : (
+                  numberingRules.map(r => {
+                    const seriesObj = numberingSeries.find(s => s.id === r.series_id)
+                    return (
+                      <tr key={r.id} className="hover:bg-slate-800/40">
+                        <td className="p-3.5 font-mono text-emerald-400 font-bold">#{r.priority}</td>
+                        <td className="p-3.5 font-medium text-white">{r.rule_name}</td>
+                        <td className="p-3.5 font-mono text-xs text-blue-400">{r.document_type}</td>
+                        <td className="p-3.5 font-mono text-xs text-amber-300">{r.field} {r.operator} &quot;{r.value}&quot;</td>
+                        <td className="p-3.5 text-xs text-slate-200">{seriesObj?.series_name || r.series_id}</td>
+                        <td className="p-3.5">
+                          <span className={`px-2 py-0.5 rounded text-xs ${r.is_active ? 'bg-blue-500/10 text-blue-400' : 'bg-slate-800 text-slate-500'}`}>
+                            {r.is_active ? 'Active' : 'Inactive'}
+                          </span>
+                        </td>
+                        <td className="p-3.5 text-right">
+                          <button
+                            onClick={() => {
+                              setRuleForm(r)
+                              setShowRuleModal(true)
+                            }}
+                            className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs transition"
+                          >
+                            Edit
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TOKEN REGISTER & PROFIT REPORT TAB */}
+      {activeTab === 'token-register' && (
+        <div className="space-y-5">
+          <div className="bg-slate-800/60 p-5 rounded-xl border border-slate-700/60 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <FileSpreadsheet className="w-5 h-5 text-emerald-400" />
+                  Token Movement Register & Landed-Cost Profit Report
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Exact inventory balance (Closing = Opening + Inwards - Outwards) & landed-cost gross profit with full Indian FY continuity.
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={async () => {
+                    const params = new URLSearchParams()
+                    if (registerFilterProfile) params.set('company_profile_id', registerFilterProfile)
+                    if (registerFilterModel) params.set('token_model_id', registerFilterModel)
+                    params.set('from_date', registerFromDate)
+                    params.set('to_date', registerToDate)
+                    const res = await fetch(`/api/token-register/report?${params.toString()}`).then(r => r.json())
+                    setTokenRegisterReport(res)
+                  }}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-lg shadow-emerald-600/20"
+                >
+                  Generate Register Report
+                </button>
+              </div>
+            </div>
+
+            {/* Filters */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 pt-2 text-xs">
+              <div>
+                <label className="text-slate-400 font-semibold mb-1 block">Company Profile Isolation</label>
+                <select
+                  value={registerFilterProfile}
+                  onChange={(e) => setRegisterFilterProfile(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white"
+                >
+                  <option value="">Consolidated (All Profiles)</option>
+                  {profiles.map((p: any) => (
+                    <option key={p.id} value={p.id}>{p.legal_name || p.id}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-slate-400 font-semibold mb-1 block">Filter Token Model</label>
+                <select
+                  value={registerFilterModel}
+                  onChange={(e) => setRegisterFilterModel(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white"
+                >
+                  <option value="">All Token Models</option>
+                  {masters.tokenVersions?.map((tv: any) => (
+                    <option key={tv.id} value={tv.id}>{tv.version_name || tv.id}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-slate-400 font-semibold mb-1 block">From Date</label>
+                <input
+                  type="date"
+                  value={registerFromDate}
+                  onChange={(e) => setRegisterFromDate(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white font-mono"
+                />
+              </div>
+              <div>
+                <label className="text-slate-400 font-semibold mb-1 block">To Date</label>
+                <input
+                  type="date"
+                  value={registerToDate}
+                  onChange={(e) => setRegisterToDate(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white font-mono"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Metric KPI Cards */}
+          {tokenRegisterReport && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+                <span className="text-slate-400 text-xs">Total Opening Units</span>
+                <p className="text-xl font-bold font-mono text-white mt-1">{tokenRegisterReport.totals?.total_opening_qty || 0}</p>
+              </div>
+              <div className="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+                <span className="text-slate-400 text-xs">Total Inwards / Outwards</span>
+                <p className="text-xl font-bold font-mono text-white mt-1">
+                  +{tokenRegisterReport.totals?.total_inwards_qty || 0} / -{tokenRegisterReport.totals?.total_outwards_qty || 0}
+                </p>
+              </div>
+              <div className="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+                <span className="text-slate-400 text-xs">Total Closing Units</span>
+                <p className="text-xl font-bold font-mono text-blue-400 mt-1">{tokenRegisterReport.totals?.total_closing_qty || 0}</p>
+              </div>
+              <div className="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+                <span className="text-slate-400 text-xs">Gross Profit (Margin %)</span>
+                <p className="text-xl font-bold font-mono text-emerald-400 mt-1">
+                  ₹{Number(tokenRegisterReport.totals?.total_gross_profit || 0).toLocaleString()} ({tokenRegisterReport.totals?.overall_margin_percentage || 0}%)
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Token Register Table */}
+          <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl overflow-hidden">
+            <div className="p-4 border-b border-slate-700 flex justify-between items-center">
+              <h4 className="text-sm font-semibold text-white">Summary Movement Register (Click row for Chronological Drill-Down)</h4>
+              <span className="text-xs text-slate-400">Period: {registerFromDate} to {registerToDate}</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm text-slate-300">
+                <thead className="bg-slate-900/60 text-xs font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-700">
+                  <tr>
+                    <th className="p-3.5">Token Product / Model</th>
+                    <th className="p-3.5 text-right">Opening</th>
+                    <th className="p-3.5 text-right">Inwards</th>
+                    <th className="p-3.5 text-right">Outwards</th>
+                    <th className="p-3.5 text-right">Closing</th>
+                    <th className="p-3.5 text-right">Sales Value</th>
+                    <th className="p-3.5 text-right">Landed Cost</th>
+                    <th className="p-3.5 text-right">Gross Profit</th>
+                    <th className="p-3.5 text-right">Margin %</th>
+                    <th className="p-3.5 text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800">
+                  {(!tokenRegisterReport || tokenRegisterReport.rows?.length === 0) ? (
+                    <tr>
+                      <td colSpan={10} className="p-6 text-center text-slate-500">
+                        No stock records found for the selected period. Click &quot;Generate Register Report&quot;.
+                      </td>
+                    </tr>
+                  ) : (
+                    tokenRegisterReport.rows.map((row: any) => (
+                      <tr
+                        key={row.token_model_id}
+                        onClick={async () => {
+                          setSelectedDrillDownToken(row)
+                          const [detailRes, monthlyRes] = await Promise.all([
+                            fetch(`/api/token-register/token-detail/${row.token_model_id}?from_date=${registerFromDate}&to_date=${registerToDate}${registerFilterProfile ? `&company_profile_id=${registerFilterProfile}` : ''}`).then(r => r.json()),
+                            fetch(`/api/token-register/token-monthly/${row.token_model_id}?fy_start=2026${registerFilterProfile ? `&company_profile_id=${registerFilterProfile}` : ''}`).then(r => r.json())
+                          ])
+                          setDrillDownData(detailRes)
+                          setMonthlyFYData(monthlyRes.monthly || [])
+                        }}
+                        className="hover:bg-slate-700/40 cursor-pointer transition"
+                      >
+                        <td className="p-3.5 font-medium text-white">
+                          <div>{row.model_name}</div>
+                          <span className="text-xs text-slate-400">{row.manufacturer || 'Hardware Vendor'}</span>
+                        </td>
+                        <td className="p-3.5 text-right font-mono">{row.opening_qty}</td>
+                        <td className="p-3.5 text-right font-mono text-emerald-400">+{row.inward_qty}</td>
+                        <td className="p-3.5 text-right font-mono text-rose-400">-{row.outward_qty}</td>
+                        <td className="p-3.5 text-right font-mono font-bold text-blue-400">{row.closing_qty}</td>
+                        <td className="p-3.5 text-right font-mono">₹{Number(row.sales_value).toFixed(2)}</td>
+                        <td className="p-3.5 text-right font-mono text-slate-400">₹{Number(row.cost_value).toFixed(2)}</td>
+                        <td className="p-3.5 text-right font-mono text-emerald-400 font-bold">₹{Number(row.gross_profit).toFixed(2)}</td>
+                        <td className="p-3.5 text-right font-mono font-bold text-amber-300">{row.margin_percentage}%</td>
+                        <td className="p-3.5 text-center">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${row.reconciliation_status === 'BALANCED' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
+                            {row.reconciliation_status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Drill-down Detail Modal / Section */}
+          {selectedDrillDownToken && drillDownData && (
+            <div className="bg-slate-900 p-5 rounded-xl border border-blue-500/30 space-y-4 shadow-xl">
+              <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                <div>
+                  <h4 className="text-base font-bold text-white flex items-center gap-2">
+                    <ShieldCheck className="w-5 h-5 text-blue-400" />
+                    Chronological Drill-Down: {selectedDrillDownToken.model_name}
+                  </h4>
+                  <p className="text-xs text-slate-400">Detailed transaction-by-transaction movement history and running inventory balance.</p>
+                </div>
+                <button
+                  onClick={() => {
+                    setSelectedDrillDownToken(null)
+                    setDrillDownData(null)
+                  }}
+                  className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs"
+                >
+                  Close Drill-Down
+                </button>
+              </div>
+
+              {/* Monthly breakdown */}
+              {monthlyFYData.length > 0 && (
+                <div>
+                  <h5 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Indian Financial Year (Apr - Mar) Monthly Continuity</h5>
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-2 text-xs">
+                    {monthlyFYData.map((m: any) => (
+                      <div key={m.month_key} className="bg-slate-800/80 p-2.5 rounded border border-slate-700/60">
+                        <span className="font-bold text-blue-300 block">{m.month_name}</span>
+                        <div className="mt-1 text-[11px] text-slate-400 space-y-0.5 font-mono">
+                          <div>Open: {m.opening_qty}</div>
+                          <div className="text-emerald-400">+{m.inward_qty} | <span className="text-rose-400">-{m.outward_qty}</span></div>
+                          <div className="font-bold text-white">Close: {m.closing_qty}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Transactions Ledger */}
+              <div className="overflow-x-auto pt-2">
+                <table className="w-full text-left text-xs text-slate-300">
+                  <thead className="bg-slate-800 text-slate-400 uppercase font-mono">
+                    <tr>
+                      <th className="p-2.5">Date</th>
+                      <th className="p-2.5">Document #</th>
+                      <th className="p-2.5">Type</th>
+                      <th className="p-2.5">Party / Reference</th>
+                      <th className="p-2.5 text-right">Inward</th>
+                      <th className="p-2.5 text-right">Outward</th>
+                      <th className="p-2.5 text-right">Rate</th>
+                      <th className="p-2.5 text-right">Running Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800 font-mono">
+                    {drillDownData.movements?.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="p-4 text-center text-slate-500">No movement records in this period.</td>
+                      </tr>
+                    ) : (
+                      drillDownData.movements.map((mov: any, idx: number) => (
+                        <tr key={idx} className="hover:bg-slate-800/40">
+                          <td className="p-2.5">{mov.date}</td>
+                          <td className="p-2.5 font-semibold text-blue-400">{mov.document_number}</td>
+                          <td className="p-2.5">
+                            <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">{mov.document_type}</span>
+                          </td>
+                          <td className="p-2.5 text-slate-300">{mov.party_name || mov.notes || '-'}</td>
+                          <td className="p-2.5 text-right text-emerald-400 font-bold">{mov.inward_qty > 0 ? `+${mov.inward_qty}` : '-'}</td>
+                          <td className="p-2.5 text-right text-rose-400 font-bold">{mov.outward_qty > 0 ? `-${mov.outward_qty}` : '-'}</td>
+                          <td className="p-2.5 text-right">₹{Number(mov.rate).toFixed(2)}</td>
+                          <td className="p-2.5 text-right font-bold text-white bg-slate-800/30">{mov.running_balance}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -3156,6 +4765,35 @@ export default function TokenProcurementPage() {
             <form onSubmit={handleSaveTemplate} className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">Document Type *</label>
+                  <select
+                    value={templateForm.document_type}
+                    onChange={e => setTemplateForm({ ...templateForm, document_type: e.target.value as any })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-100"
+                  >
+                    <option value="PURCHASE_ORDER">Purchase Order (PO)</option>
+                    <option value="PURCHASE_BILL">Purchase Bill (PB)</option>
+                    <option value="SALES_ESTIMATE">Sales Estimate</option>
+                    <option value="SALES_INVOICE">Sales Invoice</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">Company Profile (Optional override)</label>
+                  <select
+                    value={templateForm.company_profile_id || ''}
+                    onChange={e => setTemplateForm({ ...templateForm, company_profile_id: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-100"
+                  >
+                    <option value="">Organization Wide (Default)</option>
+                    {profiles.map((p: any) => (
+                      <option key={p.id} value={p.id}>{p.legal_name || p.id}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
                   <label className="block text-xs font-semibold text-slate-400 mb-1">Template Name *</label>
                   <input
                     type="text"
@@ -3252,6 +4890,321 @@ export default function TokenProcurementPage() {
                 >
                   Save Template
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: CONFIGURE NUMBERING SERIES */}
+      {showSeriesModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <FileText className="w-5 h-5 text-blue-400" />
+                {seriesForm.id ? 'Edit Numbering Series' : 'New Numbering Series'}
+              </h3>
+              <button onClick={() => setShowSeriesModal(false)} className="text-slate-400 hover:text-white">&times;</button>
+            </div>
+            <form onSubmit={async (e) => {
+              e.preventDefault()
+              const res = await fetch('/api/token-numbering/series', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(seriesForm)
+              }).then(r => r.json())
+              if (res.success) {
+                setShowSeriesModal(false)
+                fetch('/api/token-numbering/series').then(r => r.json()).then(d => setNumberingSeries(d.series || []))
+              } else {
+                alert(res.error || 'Failed to save series.')
+              }
+            }} className="space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Document Type *</label>
+                  <select
+                    value={seriesForm.document_type}
+                    onChange={(e) => setSeriesForm({ ...seriesForm, document_type: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white"
+                  >
+                    <option value="SALES_INVOICE">Sales Invoice</option>
+                    <option value="SALES_ESTIMATE">Sales Estimate</option>
+                    <option value="PURCHASE_BILL">Purchase Bill</option>
+                    <option value="PURCHASE_ORDER">Purchase Order</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Company Profile *</label>
+                  <select
+                    value={seriesForm.company_profile_id}
+                    onChange={(e) => setSeriesForm({ ...seriesForm, company_profile_id: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white"
+                    required
+                  >
+                    <option value="">Select Entity Profile</option>
+                    {profiles.map((p: any) => (
+                      <option key={p.id} value={p.id}>{p.legal_name || p.id}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Series Name *</label>
+                <input
+                  type="text"
+                  value={seriesForm.series_name}
+                  onChange={(e) => setSeriesForm({ ...seriesForm, series_name: e.target.value })}
+                  className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white"
+                  placeholder="e.g. GST Kerala Sales 26-27"
+                  required
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Prefix *</label>
+                  <input
+                    type="text"
+                    value={seriesForm.prefix}
+                    onChange={(e) => setSeriesForm({ ...seriesForm, prefix: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white font-mono"
+                    placeholder="e.g. INV/26-27/"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Suffix</label>
+                  <input
+                    type="text"
+                    value={seriesForm.suffix || ''}
+                    onChange={(e) => setSeriesForm({ ...seriesForm, suffix: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white font-mono"
+                    placeholder="e.g. /KL"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Starting Number</label>
+                  <input
+                    type="number"
+                    value={seriesForm.starting_number}
+                    onChange={(e) => setSeriesForm({ ...seriesForm, starting_number: parseInt(e.target.value, 10) || 1 })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Current Counter</label>
+                  <input
+                    type="number"
+                    value={seriesForm.current_counter}
+                    onChange={(e) => setSeriesForm({ ...seriesForm, current_counter: parseInt(e.target.value, 10) || 0 })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Padding Length</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="10"
+                    value={seriesForm.padding_length}
+                    onChange={(e) => setSeriesForm({ ...seriesForm, padding_length: parseInt(e.target.value, 10) || 4 })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white font-mono"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Effective From</label>
+                  <input
+                    type="date"
+                    value={seriesForm.effective_from}
+                    onChange={(e) => setSeriesForm({ ...seriesForm, effective_from: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Effective To</label>
+                  <input
+                    type="date"
+                    value={seriesForm.effective_to || ''}
+                    onChange={(e) => setSeriesForm({ ...seriesForm, effective_to: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white font-mono"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-4 pt-2">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={seriesForm.is_active}
+                    onChange={(e) => setSeriesForm({ ...seriesForm, is_active: e.target.checked })}
+                  />
+                  <span>Active</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={seriesForm.is_default}
+                    onChange={(e) => setSeriesForm({ ...seriesForm, is_default: e.target.checked })}
+                  />
+                  <span>Default Series</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={seriesForm.allow_reuse_on_cancellation}
+                    onChange={(e) => setSeriesForm({ ...seriesForm, allow_reuse_on_cancellation: e.target.checked })}
+                  />
+                  <span>Allow Reuse On Cancellation</span>
+                </label>
+              </div>
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+                <button type="button" onClick={() => setShowSeriesModal(false)} className="px-4 py-2 bg-slate-800 text-slate-300 rounded">Cancel</button>
+                <button type="submit" className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-semibold">Save Series</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: CONFIGURE SMART NUMBERING RULE */}
+      {showRuleModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                {ruleForm.id ? 'Edit Smart Numbering Rule' : 'New Smart Numbering Rule'}
+              </h3>
+              <button onClick={() => setShowRuleModal(false)} className="text-slate-400 hover:text-white">&times;</button>
+            </div>
+            <form onSubmit={async (e) => {
+              e.preventDefault()
+              const res = await fetch('/api/token-numbering/rules', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(ruleForm)
+              }).then(r => r.json())
+              if (res.success) {
+                setShowRuleModal(false)
+                fetch('/api/token-numbering/rules').then(r => r.json()).then(d => setNumberingRules(d.rules || []))
+              } else {
+                alert(res.error || 'Failed to save rule.')
+              }
+            }} className="space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Company Profile *</label>
+                  <select
+                    value={ruleForm.company_profile_id}
+                    onChange={(e) => setRuleForm({ ...ruleForm, company_profile_id: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white"
+                    required
+                  >
+                    <option value="">Select Entity Profile</option>
+                    {profiles.map((p: any) => (
+                      <option key={p.id} value={p.id}>{p.legal_name || p.id}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Target Series *</label>
+                  <select
+                    value={ruleForm.series_id}
+                    onChange={(e) => setRuleForm({ ...ruleForm, series_id: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white font-medium text-amber-300"
+                    required
+                  >
+                    <option value="">Select Numbering Series</option>
+                    {numberingSeries.map((s: any) => (
+                      <option key={s.id} value={s.id}>{s.series_name} ({s.prefix})</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <label className="text-slate-300 font-semibold block mb-1">Rule Name *</label>
+                  <input
+                    type="text"
+                    value={ruleForm.rule_name}
+                    onChange={(e) => setRuleForm({ ...ruleForm, rule_name: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white"
+                    placeholder="e.g. Registered Kerala Customer"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Priority (1=High) *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={ruleForm.priority}
+                    onChange={(e) => setRuleForm({ ...ruleForm, priority: parseInt(e.target.value, 10) || 1 })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white font-mono"
+                    required
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Field *</label>
+                  <select
+                    value={ruleForm.field}
+                    onChange={(e) => setRuleForm({ ...ruleForm, field: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white font-mono"
+                  >
+                    <option value="customer.gst_registered">customer.gst_registered</option>
+                    <option value="customer.state">customer.state</option>
+                    <option value="customer.state_code">customer.state_code</option>
+                    <option value="customer.district">customer.district</option>
+                    <option value="customer.city">customer.city</option>
+                    <option value="customer.type">customer.type</option>
+                    <option value="place_of_supply">place_of_supply</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Operator *</label>
+                  <select
+                    value={ruleForm.operator}
+                    onChange={(e) => setRuleForm({ ...ruleForm, operator: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white font-mono"
+                  >
+                    <option value="EQUALS">EQUALS</option>
+                    <option value="NOT_EQUALS">NOT_EQUALS</option>
+                    <option value="CONTAINS">CONTAINS</option>
+                    <option value="IN">IN</option>
+                    <option value="EXISTS">EXISTS</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Match Value *</label>
+                  <input
+                    type="text"
+                    value={ruleForm.value}
+                    onChange={(e) => setRuleForm({ ...ruleForm, value: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white font-mono"
+                    placeholder="e.g. true or Kerala"
+                    required
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-2 pt-2">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={ruleForm.is_active}
+                    onChange={(e) => setRuleForm({ ...ruleForm, is_active: e.target.checked })}
+                  />
+                  <span>Rule Active</span>
+                </label>
+              </div>
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+                <button type="button" onClick={() => setShowRuleModal(false)} className="px-4 py-2 bg-slate-800 text-slate-300 rounded">Cancel</button>
+                <button type="submit" className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-semibold">Save Rule</button>
               </div>
             </form>
           </div>

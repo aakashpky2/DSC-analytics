@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getUserProfileByEmail, createSession, SESSION_COOKIE_NAME } from '@/server/auth'
+import { getUserProfileByEmail, createSession, SESSION_COOKIE_NAME, isPasswordChangeRequired } from '@/server/auth'
 import bcrypt from 'bcryptjs'
 
 export const dynamic = 'force-dynamic'
@@ -33,11 +33,22 @@ export async function POST(req: NextRequest) {
 
     const passwordMatch = await bcrypt.compare(password, user.password_hash)
     if (!passwordMatch) {
-      return NextResponse.json(
-        { error: 'Invalid email or password' },
-        { status: 401 }
-      )
+      // Check bootstrap plaintext fallback
+      if (user.password_hash === password) {
+        // Upgrade to bcrypt
+        const hashed = await bcrypt.hash(password, 10)
+        const { supabase } = await import('@/server/supabase')
+        await supabase.from('user_profiles').update({ password_hash: hashed }).eq('id', user.id)
+      } else {
+        return NextResponse.json(
+          { error: 'Invalid email or password' },
+          { status: 401 }
+        )
+      }
     }
+
+    // Check if password change required
+    const pwdChangeRequired = await isPasswordChangeRequired(user.id)
 
     // Create persistent session
     const token = await createSession(user.id, 7)
@@ -46,7 +57,11 @@ export async function POST(req: NextRequest) {
 
     const response = NextResponse.json({
       success: true,
-      user: safeUser,
+      user: {
+        ...safeUser,
+        password_change_required: pwdChangeRequired,
+      },
+      password_change_required: pwdChangeRequired,
       message: 'Login successful'
     })
 
@@ -68,4 +83,3 @@ export async function POST(req: NextRequest) {
     )
   }
 }
-

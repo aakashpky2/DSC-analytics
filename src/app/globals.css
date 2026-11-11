@@ -5,6 +5,9 @@
 :root {
   --background: #0B1120;
   --foreground: #F1F5F9;
+  --scrollbar-track: rgba(11, 17, 32, 0.6);
+  --scrollbar-thumb: #334155;
+  --scrollbar-thumb-hover: #475569;
 }
 
 body {
@@ -12,7 +15,45 @@ body {
   color: var(--foreground);
 }
 
-/* Visually hide scrollbar while preserving scroll functionality */
+/* ==========================================================================
+   GLOBAL SIGNSYNC ENTERPRISE SCROLLBAR SPECIFICATION
+   Dark, slim, modern, ergonomic. Matches the Slate/Navy design system.
+   Width: 8px to 10px, rounded pill thumb, dark slate hover state.
+   Firefox & Chromium compliant.
+   ========================================================================== */
+
+/* Firefox standard scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+/* WebKit / Chromium / Edge / Safari */
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 6px;
+  border: 2px solid #0B1120; /* Inset padding effect using deep dark background */
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Visually hide scrollbar while preserving scroll functionality where explicitly requested */
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }

@@ -64,7 +64,11 @@ const navigationGroups: NavGroup[] = [
     basePath: '/dsc',
     items: [
       { name: 'Product Catalog', href: '/dsc/catalog' },
-      { name: 'Application Workflow', href: '/dsc/applications' }
+      { name: 'Application Workflow', href: '/dsc/applications' },
+      { name: 'Direct Issuance & Associates', href: '/dsc/direct', badge: 'New' },
+      { name: 'Partner Commissions', href: '/dsc/commissions' },
+      { name: 'Daily Issuance & Reports', href: '/dsc/issuance' },
+      { name: 'Revenue Dashboard', href: '/reports/revenue', badge: 'Executive' }
     ]
   },
   {

@@ -1,0 +1,26 @@
+{
+  "created_at": "2026-11-06T15:27:12.665Z",
+  "backup_directory": "data\\backups\\pre_cleanup_1793978832644",
+  "tables": {
+    "invoices": {
+      "record_count": 103,
+      "file": "data\\backups\\pre_cleanup_1793978832644\\invoices.json"
+    },
+    "payments_received": {
+      "record_count": 31,
+      "file": "data\\backups\\pre_cleanup_1793978832644\\payments_received.json"
+    },
+    "financial_ledger": {
+      "record_count": 121,
+      "file": "data\\backups\\pre_cleanup_1793978832644\\financial_ledger.json"
+    },
+    "company_profile": {
+      "record_count": 44,
+      "file": "data\\backups\\pre_cleanup_1793978832644\\company_profile.json"
+    },
+    "audit_logs": {
+      "record_count": 298,
+      "file": "data\\backups\\pre_cleanup_1793978832644\\audit_logs.json"
+    }
+  }
+}

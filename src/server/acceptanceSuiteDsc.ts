@@ -1,8 +1,9 @@
 import http from 'http'
+import { createSession } from './auth'
 
-const COOKIE = 'signsync_session=test-token-1793960101460'
 const BASE_HOST = '127.0.0.1'
 const BASE_PORT = 3000
+let sessionCookie = ''
 
 function request(method: string, path: string, body?: any): Promise<{ status: number; data: any }> {
   return new Promise((resolve, reject) => {
@@ -16,7 +17,7 @@ function request(method: string, path: string, body?: any): Promise<{ status: nu
         headers: {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(payload),
-          Cookie: COOKIE,
+          Cookie: sessionCookie,
         },
       },
       (res) => {
@@ -52,7 +53,10 @@ function assert(section: string, name: string, condition: boolean, details: stri
   console.log(`[${status}] ${section} - ${name}: ${details}`)
 }
 
-async function runAcceptanceSuite() {
+export async function runAcceptanceSuite(): Promise<{ total: number; passed: number; failed: number }> {
+  const token = await createSession('usr-admin-root')
+  sessionCookie = `signsync_session=${token}`
+
   console.log('======================================================================')
   console.log('STARTING DBIZ ERP DSC & TOKEN INVENTORY MANAGER ACCEPTANCE AUDIT')
   console.log('======================================================================\n')
@@ -222,12 +226,12 @@ async function runAcceptanceSuite() {
   console.log(`TOTAL AUDIT CHECKS: ${results.length} | PASS: ${passed} | FAIL: ${failed}`)
   console.log('======================================================================')
 
-  if (failed > 0) {
-    process.exit(1)
-  }
+  return { total: results.length, passed, failed }
 }
 
-runAcceptanceSuite().catch((err) => {
-  console.error('Fatal audit suite error:', err)
-  process.exit(1)
-})
+if (require.main === module) {
+  runAcceptanceSuite().catch((err) => {
+    console.error('Fatal audit suite error:', err)
+    process.exit(1)
+  })
+}

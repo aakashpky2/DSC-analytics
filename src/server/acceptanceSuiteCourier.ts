@@ -1,8 +1,9 @@
 import http from 'http'
+import { createSession } from './auth'
 
-const COOKIE = 'signsync_session=test-token-1793960101460'
 const BASE_HOST = '127.0.0.1'
 const BASE_PORT = 3000
+let sessionCookie = ''
 
 function request(method: string, path: string, body?: any): Promise<{ status: number; data: any }> {
   return new Promise((resolve, reject) => {
@@ -16,7 +17,7 @@ function request(method: string, path: string, body?: any): Promise<{ status: nu
         headers: {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(payload),
-          Cookie: COOKIE,
+          Cookie: sessionCookie,
         },
       },
       (res) => {
@@ -52,7 +53,10 @@ function assert(ref: string, name: string, condition: boolean, details: string) 
   console.log(`[${status}] ${ref} - ${name}: ${details}`)
 }
 
-async function runCourierSuite() {
+export async function runCourierSuite(): Promise<{ total: number; passed: number; failed: number }> {
+  const token = await createSession('usr-admin-root')
+  sessionCookie = `signsync_session=${token}`
+
   console.log('======================================================================')
   console.log('STARTING DBIZ ERP COURIER & LOGISTICS MODULE ACCEPTANCE SUITE')
   console.log('======================================================================\n')
@@ -246,12 +250,12 @@ async function runCourierSuite() {
   console.log(`TOTAL AUDIT CHECKS: ${results.length} | PASS: ${passed} | FAIL: ${failed}`)
   console.log('======================================================================')
 
-  if (failed > 0) {
-    process.exit(1)
-  }
+  return { total: results.length, passed, failed }
 }
 
-runCourierSuite().catch((err) => {
-  console.error('Fatal courier acceptance suite error:', err)
-  process.exit(1)
-})
+if (require.main === module) {
+  runCourierSuite().catch((err) => {
+    console.error('Fatal courier acceptance suite error:', err)
+    process.exit(1)
+  })
+}

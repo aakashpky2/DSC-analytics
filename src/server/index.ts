@@ -1,9 +1,4 @@
-import dotenv from 'dotenv'
-dotenv.config({ path: '.env.local' })
-dotenv.config()
-
 import express from 'express'
-import cors from 'cors'
 import cookieParser from 'cookie-parser'
 import next from 'next'
 import { apiRouter } from './routes/api'
@@ -11,7 +6,7 @@ import { SESSION_COOKIE_NAME, validateSessionToken } from './auth'
 import { run } from './supabase'
 
 const dev = process.env.NODE_ENV !== 'production'
-const hostname = process.env.HOSTNAME || '0.0.0.0'
+const hostname = '0.0.0.0'
 const port = parseInt(process.env.PORT || '3000', 10)
 
 // Initialize Next.js app with SSR
@@ -60,10 +55,9 @@ async function startServer() {
 
   const server = express()
 
-  server.use(cors())
   server.use(cookieParser())
-  server.use(express.json())
-  server.use(express.urlencoded({ extended: true }))
+  server.use(express.json({ limit: '25mb' }))
+  server.use(express.urlencoded({ extended: true, limit: '25mb' }))
 
   // Backend API endpoints mounted on /api
   server.use('/api', apiRouter)
@@ -82,6 +76,9 @@ async function startServer() {
         if (token) {
           const user = await validateSessionToken(token)
           if (user) {
+            if (user.password_change_required) {
+              return res.redirect('/change-password')
+            }
             return res.redirect('/')
           }
         }
@@ -100,6 +97,15 @@ async function startServer() {
       // Invalidate expired/bad cookie and redirect to login
       res.clearCookie(SESSION_COOKIE_NAME)
       return res.redirect('/login')
+    }
+
+    // Mandatory first-login password change check
+    if (user.password_change_required) {
+      if (urlPath !== '/change-password') {
+        return res.redirect('/change-password')
+      }
+    } else if (urlPath === '/change-password') {
+      return res.redirect('/')
     }
 
     // Set cache prevention headers on protected responses
@@ -125,6 +131,6 @@ async function startServer() {
 }
 
 startServer().catch((err) => {
-  console.error('Server failed to start:', err)
+  console.error('Failed to start server:', err)
   process.exit(1)
 })

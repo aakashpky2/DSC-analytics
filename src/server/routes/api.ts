@@ -24,6 +24,12 @@ import { billingRouter } from './billingModule'
 import { procurementRouter } from './tokenProcurement'
 import { tokenSalesRouter } from './tokenSales'
 import { reportsAndLedgersRouter } from './partyLedgers'
+import { tokenModuleRouter } from './tokenModuleRouter'
+import { dscCommissionRouter } from './dscCommissionRouter'
+import { dscIssuanceRouter } from './dscIssuanceRouter'
+import { dscDirectIssuanceRouter } from './dscDirectIssuanceRouter'
+import { unifiedRevenueRouter } from './unifiedRevenueRouter'
+import { dashboardRouter } from './dashboardRouter'
 import { loadLeadStore, saveLeadStore } from '../leadStore'
 import { evaluatePartnerMatch } from '../partnerMatchEngine'
 
@@ -63,6 +69,12 @@ apiRouter.use(billingRouter)
 apiRouter.use(procurementRouter)
 apiRouter.use(tokenSalesRouter)
 apiRouter.use(reportsAndLedgersRouter)
+apiRouter.use(tokenModuleRouter)
+apiRouter.use(dscCommissionRouter)
+apiRouter.use(dscIssuanceRouter)
+apiRouter.use(dscDirectIssuanceRouter)
+apiRouter.use(unifiedRevenueRouter)
+apiRouter.use(dashboardRouter)
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const user = (req as any).user
@@ -216,14 +228,17 @@ export async function logAuditEvent(params: {
   reason?: string
   delegationId?: string
   ipAddress?: string
+  organizationId?: string
 }) {
   try {
     const id = `aud-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+    const orgId = params.organizationId || 'comp-default'
     await run(`
-      INSERT INTO audit_logs (id, user_id, action_type, module_key, table_affected, record_id, old_value_json, new_value_json, reason, delegation_id, ip_address)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO audit_logs (id, organization_id, user_id, action_type, module_key, table_affected, record_id, old_value_json, new_value_json, reason, delegation_id, ip_address)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       id,
+      orgId,
       params.userId,
       params.actionType,
       params.moduleKey,
@@ -1757,11 +1772,13 @@ apiRouter.post('/crm/leads', requirePermission('crm', 'can_create'), async (req:
       phone: cleanPhone
     })
 
+    const orgId = user?.organization_id || 'comp-default'
+
     // Insert primary record in crm_leads (PostgreSQL / Supabase compatible)
     await run(`
-      INSERT INTO crm_leads (id, lead_code, company_name, contact_person, email, phone, gstin, pan, requirement_summary, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
-    `, [id, lead_code, cleanCompany, cleanContact, cleanEmail, cleanPhone, cleanPan, cleanReq])
+      INSERT INTO crm_leads (id, lead_code, company_name, contact_person, email, phone, gstin, pan, requirement_summary, status, organization_id)
+      VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 'new', ?)
+    `, [id, lead_code, cleanCompany, cleanContact, cleanEmail, cleanPhone, cleanPan, cleanReq, orgId])
 
     // Save extended specification attributes into leadStore
     if (id && id !== 'undefined' && String(id).trim().length > 0) {
@@ -2115,10 +2132,11 @@ apiRouter.post('/crm/follow-ups', requireAuth, async (req: Request, res: Respons
     if (!lead_id) return res.status(400).json({ error: 'Lead is required.' })
     if (!notes || !notes.trim()) return res.status(400).json({ error: 'Follow-up notes/comments are required.' })
     const id = `fu-${Date.now()}`
+    const orgId = currentUser?.organization_id || 'comp-default'
     await run(`
-      INSERT INTO crm_follow_ups (id, lead_id, channel, scheduled_at, notes, disposition, conducted_by, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
-    `, [id, lead_id, contact_mode || 'phone_call', follow_up_date || new Date().toISOString(), notes || null, disposition || null, currentUser.id])
+      INSERT INTO crm_follow_ups (id, lead_id, channel, scheduled_at, notes, disposition, conducted_by, status, organization_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+    `, [id, lead_id, contact_mode || 'phone_call', follow_up_date || new Date().toISOString(), notes || null, disposition || null, currentUser.id, orgId])
     return res.status(201).json({ success: true, id, message: 'Follow-up scheduled.' })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })
@@ -3420,10 +3438,11 @@ apiRouter.post('/admin/settings/couriers', requireAdmin, async (req: Request, re
     const { company_name, tracking_url_template, support_phone } = req.body
     if (!company_name) return res.status(400).json({ error: 'Company name is required.' })
     const id = `cp-${Date.now()}`
+    const orgId = (req as any).user?.organization_id || 'comp-default'
     await run(`
-      INSERT INTO courier_partners (id, company_name, tracking_url_template, support_phone, is_active)
-      VALUES (?, ?, ?, ?, 1)
-    `, [id, company_name.trim(), tracking_url_template || null, support_phone || null])
+      INSERT INTO courier_partners (id, organization_id, company_name, tracking_url_template, support_phone, is_active)
+      VALUES (?, ?, ?, ?, ?, 1)
+    `, [id, orgId, company_name.trim(), tracking_url_template || null, support_phone || null])
 
     return res.status(201).json({ success: true, id, message: 'Courier company added successfully.' })
   } catch (err: unknown) {
@@ -3859,10 +3878,12 @@ apiRouter.get('/crm/lead-sources', requireAuth, async (_req: Request, res: Respo
 
 apiRouter.post('/crm/lead-sources', requireAdmin, async (req: Request, res: Response) => {
   try {
+    const user = (req as any).user
     const { source_name } = req.body
     if (!source_name) return res.status(400).json({ error: 'Lead source name is required.' })
     const id = `src-${Date.now()}`
-    await run('INSERT INTO crm_lead_sources (id, source_name, is_active) VALUES (?, ?, 1)', [id, source_name.trim()])
+    const orgId = user?.organization_id || 'comp-default'
+    await run('INSERT INTO crm_lead_sources (id, source_name, is_active, organization_id) VALUES (?, ?, 1, ?)', [id, source_name.trim(), orgId])
     return res.status(201).json({ success: true, id, message: 'Lead source added.' })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })

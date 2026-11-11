@@ -52,6 +52,12 @@ const billingModule_1 = require("./billingModule");
 const tokenProcurement_1 = require("./tokenProcurement");
 const tokenSales_1 = require("./tokenSales");
 const partyLedgers_1 = require("./partyLedgers");
+const tokenModuleRouter_1 = require("./tokenModuleRouter");
+const dscCommissionRouter_1 = require("./dscCommissionRouter");
+const dscIssuanceRouter_1 = require("./dscIssuanceRouter");
+const dscDirectIssuanceRouter_1 = require("./dscDirectIssuanceRouter");
+const unifiedRevenueRouter_1 = require("./unifiedRevenueRouter");
+const dashboardRouter_1 = require("./dashboardRouter");
 const leadStore_1 = require("../leadStore");
 const partnerMatchEngine_1 = require("../partnerMatchEngine");
 exports.apiRouter = (0, express_1.Router)();
@@ -91,6 +97,12 @@ exports.apiRouter.use(billingModule_1.billingRouter);
 exports.apiRouter.use(tokenProcurement_1.procurementRouter);
 exports.apiRouter.use(tokenSales_1.tokenSalesRouter);
 exports.apiRouter.use(partyLedgers_1.reportsAndLedgersRouter);
+exports.apiRouter.use(tokenModuleRouter_1.tokenModuleRouter);
+exports.apiRouter.use(dscCommissionRouter_1.dscCommissionRouter);
+exports.apiRouter.use(dscIssuanceRouter_1.dscIssuanceRouter);
+exports.apiRouter.use(dscDirectIssuanceRouter_1.dscDirectIssuanceRouter);
+exports.apiRouter.use(unifiedRevenueRouter_1.unifiedRevenueRouter);
+exports.apiRouter.use(dashboardRouter_1.dashboardRouter);
 function requireAuth(req, res, next) {
     const user = req.user;
     if (!user) {
@@ -219,11 +231,13 @@ function requirePermission(moduleKey, actionKey) {
 async function logAuditEvent(params) {
     try {
         const id = `aud-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const orgId = params.organizationId || 'comp-default';
         await (0, supabase_1.run)(`
-      INSERT INTO audit_logs (id, user_id, action_type, module_key, table_affected, record_id, old_value_json, new_value_json, reason, delegation_id, ip_address)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO audit_logs (id, organization_id, user_id, action_type, module_key, table_affected, record_id, old_value_json, new_value_json, reason, delegation_id, ip_address)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
             id,
+            orgId,
             params.userId,
             params.actionType,
             params.moduleKey,
@@ -1541,11 +1555,12 @@ exports.apiRouter.post('/crm/leads', requirePermission('crm', 'can_create'), asy
             email: cleanEmail,
             phone: cleanPhone
         });
+        const orgId = (user === null || user === void 0 ? void 0 : user.organization_id) || 'comp-default';
         // Insert primary record in crm_leads (PostgreSQL / Supabase compatible)
         await (0, supabase_1.run)(`
-      INSERT INTO crm_leads (id, lead_code, company_name, contact_person, email, phone, gstin, pan, requirement_summary, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
-    `, [id, lead_code, cleanCompany, cleanContact, cleanEmail, cleanPhone, cleanPan, cleanReq]);
+      INSERT INTO crm_leads (id, lead_code, company_name, contact_person, email, phone, gstin, pan, requirement_summary, status, organization_id)
+      VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 'new', ?)
+    `, [id, lead_code, cleanCompany, cleanContact, cleanEmail, cleanPhone, cleanPan, cleanReq, orgId]);
         // Save extended specification attributes into leadStore
         if (id && id !== 'undefined' && String(id).trim().length > 0) {
             const store = (0, leadStore_1.loadLeadStore)();
@@ -1864,10 +1879,11 @@ exports.apiRouter.post('/crm/follow-ups', requireAuth, async (req, res) => {
         if (!notes || !notes.trim())
             return res.status(400).json({ error: 'Follow-up notes/comments are required.' });
         const id = `fu-${Date.now()}`;
+        const orgId = (currentUser === null || currentUser === void 0 ? void 0 : currentUser.organization_id) || 'comp-default';
         await (0, supabase_1.run)(`
-      INSERT INTO crm_follow_ups (id, lead_id, channel, scheduled_at, notes, disposition, conducted_by, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
-    `, [id, lead_id, contact_mode || 'phone_call', follow_up_date || new Date().toISOString(), notes || null, disposition || null, currentUser.id]);
+      INSERT INTO crm_follow_ups (id, lead_id, channel, scheduled_at, notes, disposition, conducted_by, status, organization_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+    `, [id, lead_id, contact_mode || 'phone_call', follow_up_date || new Date().toISOString(), notes || null, disposition || null, currentUser.id, orgId]);
         return res.status(201).json({ success: true, id, message: 'Follow-up scheduled.' });
     }
     catch (err) {
@@ -3034,15 +3050,17 @@ exports.apiRouter.get('/admin/settings/couriers', requireAuth, async (_req, res)
     }
 });
 exports.apiRouter.post('/admin/settings/couriers', requireAdmin, async (req, res) => {
+    var _a;
     try {
         const { company_name, tracking_url_template, support_phone } = req.body;
         if (!company_name)
             return res.status(400).json({ error: 'Company name is required.' });
         const id = `cp-${Date.now()}`;
+        const orgId = ((_a = req.user) === null || _a === void 0 ? void 0 : _a.organization_id) || 'comp-default';
         await (0, supabase_1.run)(`
-      INSERT INTO courier_partners (id, company_name, tracking_url_template, support_phone, is_active)
-      VALUES (?, ?, ?, ?, 1)
-    `, [id, company_name.trim(), tracking_url_template || null, support_phone || null]);
+      INSERT INTO courier_partners (id, organization_id, company_name, tracking_url_template, support_phone, is_active)
+      VALUES (?, ?, ?, ?, ?, 1)
+    `, [id, orgId, company_name.trim(), tracking_url_template || null, support_phone || null]);
         return res.status(201).json({ success: true, id, message: 'Courier company added successfully.' });
     }
     catch (err) {
@@ -3453,11 +3471,13 @@ exports.apiRouter.get('/crm/lead-sources', requireAuth, async (_req, res) => {
 });
 exports.apiRouter.post('/crm/lead-sources', requireAdmin, async (req, res) => {
     try {
+        const user = req.user;
         const { source_name } = req.body;
         if (!source_name)
             return res.status(400).json({ error: 'Lead source name is required.' });
         const id = `src-${Date.now()}`;
-        await (0, supabase_1.run)('INSERT INTO crm_lead_sources (id, source_name, is_active) VALUES (?, ?, 1)', [id, source_name.trim()]);
+        const orgId = (user === null || user === void 0 ? void 0 : user.organization_id) || 'comp-default';
+        await (0, supabase_1.run)('INSERT INTO crm_lead_sources (id, source_name, is_active, organization_id) VALUES (?, ?, 1, ?)', [id, source_name.trim(), orgId]);
         return res.status(201).json({ success: true, id, message: 'Lead source added.' });
     }
     catch (err) {

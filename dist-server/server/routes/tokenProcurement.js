@@ -2367,7 +2367,7 @@ exports.procurementRouter.get('/token-procurement/profile-stocks', requireAuth, 
             sql += ' AND tps.company_profile_id = ?';
             params.push(String(company_profile_id));
         }
-        sql += ' ORDER BY prof.legal_name ASC, tps.model_name ASC';
+        sql += ' ORDER BY model_name ASC';
         const stocks = await (0, supabase_1.queryAll)(sql, params);
         return res.json({ profile_stocks: stocks });
     }

@@ -3,10 +3,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.runCourierSuite = runCourierSuite;
 const http_1 = __importDefault(require("http"));
-const COOKIE = 'signsync_session=test-token-1793960101460';
+const auth_1 = require("./auth");
 const BASE_HOST = '127.0.0.1';
 const BASE_PORT = 3000;
+let sessionCookie = '';
 function request(method, path, body) {
     return new Promise((resolve, reject) => {
         const payload = body ? JSON.stringify(body) : '';
@@ -18,7 +20,7 @@ function request(method, path, body) {
             headers: {
                 'Content-Type': 'application/json',
                 'Content-Length': Buffer.byteLength(payload),
-                Cookie: COOKIE,
+                Cookie: sessionCookie,
             },
         }, (res) => {
             let raw = '';
@@ -46,6 +48,8 @@ function assert(ref, name, condition, details) {
 }
 async function runCourierSuite() {
     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p;
+    const token = await (0, auth_1.createSession)('usr-admin-root');
+    sessionCookie = `signsync_session=${token}`;
     console.log('======================================================================');
     console.log('STARTING DBIZ ERP COURIER & LOGISTICS MODULE ACCEPTANCE SUITE');
     console.log('======================================================================\n');
@@ -199,11 +203,11 @@ async function runCourierSuite() {
     const failed = results.filter((r) => r.status === 'FAIL').length;
     console.log(`TOTAL AUDIT CHECKS: ${results.length} | PASS: ${passed} | FAIL: ${failed}`);
     console.log('======================================================================');
-    if (failed > 0) {
-        process.exit(1);
-    }
+    return { total: results.length, passed, failed };
 }
-runCourierSuite().catch((err) => {
-    console.error('Fatal courier acceptance suite error:', err);
-    process.exit(1);
-});
+if (require.main === module) {
+    runCourierSuite().catch((err) => {
+        console.error('Fatal courier acceptance suite error:', err);
+        process.exit(1);
+    });
+}

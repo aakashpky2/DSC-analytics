@@ -366,7 +366,7 @@ async function runAcceptanceSuite() {
   console.log('\n--- LEAD-018 to LEAD-024: Interaction Logging & Outcomes ---');
   try {
     const intLeadRes = await page.request.post(`${BASE_URL}/api/crm/leads`, {
-      data: { company_name: 'Interaction Test Enterprise', phone: '9876543210' }
+      data: { company_name: 'Interaction Test Enterprise Unmatched', phone: '9123456780' }
     });
     const intLead = await intLeadRes.json();
 

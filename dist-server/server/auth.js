@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SESSION_COOKIE_NAME = void 0;
+exports.SESSION_COOKIE_NAME = exports.setPasswordChangeRequired = exports.isPasswordChangeRequired = void 0;
 exports.generateToken = generateToken;
 exports.createSession = createSession;
 exports.invalidateSession = invalidateSession;
@@ -16,6 +16,9 @@ exports.hashPassword = hashPassword;
 const supabase_1 = require("./supabase");
 const crypto_1 = __importDefault(require("crypto"));
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
+const passwordChangeStore_1 = require("./passwordChangeStore");
+Object.defineProperty(exports, "isPasswordChangeRequired", { enumerable: true, get: function () { return passwordChangeStore_1.isPasswordChangeRequired; } });
+Object.defineProperty(exports, "setPasswordChangeRequired", { enumerable: true, get: function () { return passwordChangeStore_1.setPasswordChangeRequired; } });
 exports.SESSION_COOKIE_NAME = 'signsync_session';
 // Generate secure random hex token
 function generateToken(bytes = 32) {
@@ -62,6 +65,7 @@ async function getUserProfileById(userId) {
     if (error || !data) {
         return null;
     }
+    const pwdChangeRequired = await (0, passwordChangeStore_1.isPasswordChangeRequired)(data.id);
     return {
         id: data.id,
         email: data.email,
@@ -74,11 +78,12 @@ async function getUserProfileById(userId) {
         level_name: ((_d = data.hierarchy_levels) === null || _d === void 0 ? void 0 : _d.level_name) || '',
         branch_id: data.branch_id,
         branch_name: (_e = data.branches) === null || _e === void 0 ? void 0 : _e.branch_name,
-        organization_id: data.organization_id || (data.branch_id ? `org-${data.branch_id}` : 'org-default'),
+        organization_id: data.organization_id || (data.branch_id ? `org-${data.branch_id}` : 'comp-default'),
         status: data.status,
         permissions_frozen: Number(data.permissions_frozen || 0),
         can_grant_permissions: Number(data.can_grant_permissions || 0),
         mask_pii_fields: ((_f = data.hierarchy_levels) === null || _f === void 0 ? void 0 : _f.level_order) === 4 ? 1 : 0,
+        password_change_required: pwdChangeRequired,
     };
 }
 // Direct, parameterized user profile lookup by Email with relations
@@ -95,6 +100,7 @@ async function getUserProfileByEmail(email) {
     if (error || !data) {
         return null;
     }
+    const pwdChangeRequired = await (0, passwordChangeStore_1.isPasswordChangeRequired)(data.id);
     return {
         id: data.id,
         email: data.email,
@@ -108,10 +114,12 @@ async function getUserProfileByEmail(email) {
         level_name: ((_d = data.hierarchy_levels) === null || _d === void 0 ? void 0 : _d.level_name) || '',
         branch_id: data.branch_id,
         branch_name: (_e = data.branches) === null || _e === void 0 ? void 0 : _e.branch_name,
+        organization_id: data.organization_id || (data.branch_id ? `org-${data.branch_id}` : 'comp-default'),
         status: data.status,
         permissions_frozen: Number(data.permissions_frozen || 0),
         can_grant_permissions: Number(data.can_grant_permissions || 0),
         mask_pii_fields: ((_f = data.hierarchy_levels) === null || _f === void 0 ? void 0 : _f.level_order) === 4 ? 1 : 0,
+        password_change_required: pwdChangeRequired,
     };
 }
 // Validate session token and return user profile

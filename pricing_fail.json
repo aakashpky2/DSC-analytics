@@ -1,0 +1,20 @@
+[
+  {
+    "id": "TEST-20",
+    "name": "Monthly volume rule",
+    "status": "FAIL",
+    "details": "Expected HIGH VOLUME and 1,100 qty, got cl-hv-1794287099504 and 1100"
+  },
+  {
+    "id": "TEST-21",
+    "name": "Annual FY volume rule",
+    "status": "FAIL",
+    "details": "Expected VIP PREMIUM, got cl-vip-1794287099504"
+  },
+  {
+    "id": "TEST-22",
+    "name": "Manual override",
+    "status": "FAIL",
+    "details": "Manual override was overwritten"
+  }
+]

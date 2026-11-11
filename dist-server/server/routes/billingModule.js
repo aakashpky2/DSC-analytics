@@ -10,6 +10,10 @@ exports.billingRouter = (0, express_1.Router)();
 function getSessionUser(req) {
     return req.user;
 }
+function getAuthOrg(req) {
+    const user = getSessionUser(req);
+    return (user === null || user === void 0 ? void 0 : user.organization_id) || 'comp-default';
+}
 function requireAuth(req, res, next) {
     const user = getSessionUser(req);
     if (!user) {
@@ -520,8 +524,10 @@ exports.billingRouter.post('/billing/invoices/extended', requirePermission('can_
                 billing_address: partner.billing_address
             }
         });
+        const orgId = getAuthOrg(req);
         const { error: insertErr } = await supabase_1.supabase.from('invoices').insert({
             id: invoiceId,
+            organization_id: orgId,
             invoice_number: invoiceNumber,
             series_id: targetSeriesId,
             partner_id: partner.id,
@@ -548,6 +554,7 @@ exports.billingRouter.post('/billing/invoices/extended', requirePermission('can_
             const runningBal = (Number(partner.wallet_balance) || 0) + calc.grandTotal;
             await supabase_1.supabase.from('financial_ledger').insert({
                 id: `led-${Date.now()}`,
+                organization_id: orgId,
                 partner_id: partner.id,
                 entry_date: today,
                 transaction_type: 'invoice_raised',
@@ -652,6 +659,7 @@ exports.billingRouter.post('/billing/invoices/:id/issue', requirePermission('can
         // Ledger posting
         await supabase_1.supabase.from('financial_ledger').insert({
             id: `led-${Date.now()}`,
+            organization_id: invoice.organization_id || getAuthOrg(req),
             partner_id: invoice.partner_id,
             entry_date: new Date().toISOString().slice(0, 10),
             transaction_type: 'invoice_raised',
@@ -706,6 +714,7 @@ exports.billingRouter.post('/billing/invoices/:id/cancel', requirePermission('ca
         if (prevStatus !== 'draft') {
             await supabase_1.supabase.from('financial_ledger').insert({
                 id: `led-${Date.now()}`,
+                organization_id: invoice.organization_id || getAuthOrg(req),
                 partner_id: invoice.partner_id,
                 entry_date: cancelledAt.slice(0, 10),
                 transaction_type: 'invoice_cancelled',
@@ -792,6 +801,7 @@ exports.billingRouter.post('/billing/payments/record', requirePermission('can_cr
         // Insert payment record
         const { error: payErr } = await supabase_1.supabase.from('payments_received').insert({
             id: paymentId,
+            organization_id: invoice.organization_id || getAuthOrg(req),
             invoice_id: invoice.id,
             partner_id: invoice.partner_id,
             amount_paid: payAmount,
@@ -842,6 +852,7 @@ exports.billingRouter.post('/billing/payments/record', requirePermission('can_cr
         // Post to financial ledger (credit)
         await supabase_1.supabase.from('financial_ledger').insert({
             id: `led-${Date.now()}`,
+            organization_id: invoice.organization_id || getAuthOrg(req),
             partner_id: invoice.partner_id,
             entry_date: today.slice(0, 10),
             transaction_type: 'payment_received',
@@ -913,6 +924,7 @@ exports.billingRouter.post('/billing/credit-notes', requirePermission('can_creat
         // Post to ledger as credit adjustment
         await supabase_1.supabase.from('financial_ledger').insert({
             id: `led-${Date.now()}`,
+            organization_id: invoice.organization_id || getAuthOrg(req),
             partner_id: invoice.partner_id,
             entry_date: today.slice(0, 10),
             transaction_type: 'credit_note',
@@ -982,6 +994,7 @@ exports.billingRouter.post('/billing/debit-notes', requirePermission('can_create
         // Post to ledger as supplementary debit
         await supabase_1.supabase.from('financial_ledger').insert({
             id: `led-${Date.now()}`,
+            organization_id: invoice.organization_id || getAuthOrg(req),
             partner_id: invoice.partner_id,
             entry_date: today.slice(0, 10),
             transaction_type: 'debit_note',

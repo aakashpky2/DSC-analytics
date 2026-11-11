@@ -1,6 +1,8 @@
 import { supabase, run } from './supabase'
 import crypto from 'crypto'
 import bcrypt from 'bcryptjs'
+import { isPasswordChangeRequired, setPasswordChangeRequired } from './passwordChangeStore'
+export { isPasswordChangeRequired, setPasswordChangeRequired }
 
 export const SESSION_COOKIE_NAME = 'signsync_session'
 
@@ -21,6 +23,7 @@ export interface SessionUser {
   permissions_frozen: number
   can_grant_permissions: number
   mask_pii_fields: number
+  password_change_required?: boolean
 }
 
 // Generate secure random hex token
@@ -74,6 +77,8 @@ export async function getUserProfileById(userId: string): Promise<SessionUser | 
     return null
   }
 
+  const pwdChangeRequired = await isPasswordChangeRequired(data.id)
+
   return {
     id: data.id,
     email: data.email,
@@ -86,11 +91,12 @@ export async function getUserProfileById(userId: string): Promise<SessionUser | 
     level_name: data.hierarchy_levels?.level_name || '',
     branch_id: data.branch_id,
     branch_name: data.branches?.branch_name,
-    organization_id: data.organization_id || (data.branch_id ? `org-${data.branch_id}` : 'org-default'),
+    organization_id: data.organization_id || (data.branch_id ? `org-${data.branch_id}` : 'comp-default'),
     status: data.status,
     permissions_frozen: Number(data.permissions_frozen || 0),
     can_grant_permissions: Number(data.can_grant_permissions || 0),
     mask_pii_fields: data.hierarchy_levels?.level_order === 4 ? 1 : 0,
+    password_change_required: pwdChangeRequired,
   }
 }
 
@@ -109,6 +115,8 @@ export async function getUserProfileByEmail(email: string): Promise<(SessionUser
     return null
   }
 
+  const pwdChangeRequired = await isPasswordChangeRequired(data.id)
+
   return {
     id: data.id,
     email: data.email,
@@ -122,10 +130,12 @@ export async function getUserProfileByEmail(email: string): Promise<(SessionUser
     level_name: data.hierarchy_levels?.level_name || '',
     branch_id: data.branch_id,
     branch_name: data.branches?.branch_name,
+    organization_id: data.organization_id || (data.branch_id ? `org-${data.branch_id}` : 'comp-default'),
     status: data.status,
     permissions_frozen: Number(data.permissions_frozen || 0),
     can_grant_permissions: Number(data.can_grant_permissions || 0),
     mask_pii_fields: data.hierarchy_levels?.level_order === 4 ? 1 : 0,
+    password_change_required: pwdChangeRequired,
   }
 }
 

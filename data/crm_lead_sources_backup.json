@@ -1,0 +1,92 @@
+[
+  {
+    "id": "src-1",
+    "source_name": "Direct Website Walk-in",
+    "is_active": 1,
+    "created_at": "2026-11-04T09:27:34+00:00"
+  },
+  {
+    "id": "src-2",
+    "source_name": "Partner CA Referral",
+    "is_active": 1,
+    "created_at": "2026-11-04T09:27:34+00:00"
+  },
+  {
+    "id": "src-3",
+    "source_name": "Google Search Campaign",
+    "is_active": 1,
+    "created_at": "2026-11-04T09:27:34+00:00"
+  },
+  {
+    "id": "src-4",
+    "source_name": "WhatsApp Business",
+    "is_active": 1,
+    "created_at": "2026-11-04T09:27:34+00:00"
+  },
+  {
+    "id": "src-5",
+    "source_name": "Cold Call & Field Outreach",
+    "is_active": 1,
+    "created_at": "2026-11-04T09:27:34+00:00"
+  },
+  {
+    "id": "src-1793790330290",
+    "source_name": "Trade Exhibition 0192",
+    "is_active": 1,
+    "created_at": "2026-11-04T11:05:30+00:00"
+  },
+  {
+    "id": "src-1793790386901",
+    "source_name": "Trade Exhibition 6802",
+    "is_active": 1,
+    "created_at": "2026-11-04T11:06:26+00:00"
+  },
+  {
+    "id": "src-1793790818802",
+    "source_name": "Trade Exhibition 8714",
+    "is_active": 1,
+    "created_at": "2026-11-04T11:13:38+00:00"
+  },
+  {
+    "id": "src-1793944097769",
+    "source_name": "Trade Expo 2026-6658",
+    "is_active": 0,
+    "created_at": "2026-11-06T05:48:17.322797+00:00"
+  },
+  {
+    "id": "src-1793944263252",
+    "source_name": "Trade Expo 2026-2029",
+    "is_active": 0,
+    "created_at": "2026-11-06T05:51:02.871581+00:00"
+  },
+  {
+    "id": "src-1793944549473",
+    "source_name": "Trade Expo 2026-8472",
+    "is_active": 0,
+    "created_at": "2026-11-06T05:55:49.002783+00:00"
+  },
+  {
+    "id": "src-1793944693413",
+    "source_name": "Trade Expo 2026-2644",
+    "is_active": 0,
+    "created_at": "2026-11-06T05:58:12.925424+00:00"
+  },
+  {
+    "id": "src-1793944840868",
+    "source_name": "Trade Expo 2026-9981",
+    "is_active": 0,
+    "created_at": "2026-11-06T06:00:40.40144+00:00"
+  },
+  {
+    "id": "src-1793947878232",
+    "source_name": "Trade Expo 2026-7301",
+    "is_active": 0,
+    "created_at": "2026-11-06T06:51:17.62796+00:00"
+  },
+  {
+    "id": "src-1793949247901",
+    "source_name": "Trade Expo 2026-7318",
+    "is_active": 0,
+    "created_at": "2026-11-06T07:14:07.242052+00:00"
+  }
+]

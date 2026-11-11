@@ -125,7 +125,8 @@ exports.leadManagementRouter.post('/crm/lead-sources', async (req, res) => {
             return res.status(400).json({ error: 'Source name is required.' });
         }
         const id = `src-${Date.now()}`;
-        await (0, supabase_1.run)('INSERT INTO crm_lead_sources (id, source_name, is_active) VALUES (?, ?, 1)', [id, source_name.trim()]);
+        const orgId = (user === null || user === void 0 ? void 0 : user.organization_id) || 'comp-default';
+        await (0, supabase_1.run)('INSERT INTO crm_lead_sources (id, source_name, is_active, organization_id) VALUES (?, ?, 1, ?)', [id, source_name.trim(), orgId]);
         return res.status(201).json({ success: true, id, source_name: source_name.trim() });
     }
     catch (err) {
@@ -563,10 +564,11 @@ exports.leadManagementRouter.post('/crm/leads/:id/interactions', async (req, res
         // Schedule next follow-up in crm_follow_ups if date provided
         if (next_follow_up_date) {
             const fuId = `fu-${Date.now()}`;
+            const orgId = (user === null || user === void 0 ? void 0 : user.organization_id) || 'comp-default';
             await (0, supabase_1.run)(`
-        INSERT INTO crm_follow_ups (id, lead_id, channel, scheduled_at, status, notes, conducted_by)
-        VALUES (?, ?, ?, ?, 'scheduled', ?, ?)
-      `, [fuId, leadId, channel.channel_name, next_follow_up_date, conversation_notes || reason, user.id]);
+        INSERT INTO crm_follow_ups (id, lead_id, channel, scheduled_at, status, notes, conducted_by, organization_id)
+        VALUES (?, ?, ?, ?, 'scheduled', ?, ?, ?)
+      `, [fuId, leadId, channel.channel_name, next_follow_up_date, conversation_notes || reason, user.id, orgId]);
         }
         (0, leadStore_1.saveLeadStore)(store);
         return res.status(201).json({ success: true, interaction });
@@ -710,9 +712,10 @@ exports.leadManagementRouter.post('/crm/leads/:id/convert-partner', async (req, 
         // Create new partner
         const partnerId = `part-${Date.now()}`;
         const partnerCode = `PRT-${state_code || 'IN'}-${Date.now().toString().slice(-4)}`;
+        const orgId = (user === null || user === void 0 ? void 0 : user.organization_id) || 'comp-default';
         await (0, supabase_1.run)(`
-      INSERT INTO partners (id, partner_code, type, company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+      INSERT INTO partners (id, partner_code, type, company_name, contact_person, email, phone, gstin, pan, billing_address, state_code, status, organization_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
     `, [
             partnerId,
             partnerCode,
@@ -724,7 +727,8 @@ exports.leadManagementRouter.post('/crm/leads/:id/convert-partner', async (req, 
             gstin ? gstin.trim().toUpperCase() : null,
             pan ? pan.trim().toUpperCase() : null,
             billing_address || null,
-            state_code || '27'
+            state_code || '27',
+            orgId
         ]);
         // Record conversion link (LM-28)
         const linkId = `lcl-${Date.now()}`;
@@ -1151,11 +1155,12 @@ exports.leadManagementRouter.post('/crm/leads/import/commit', async (req, res) =
                 email: cleanEmail,
                 phone: cleanPhone
             });
+            const orgId = (user === null || user === void 0 ? void 0 : user.organization_id) || 'comp-default';
             // Insert into PostgreSQL
             await (0, supabase_1.run)(`
-        INSERT INTO crm_leads (id, lead_code, company_name, contact_person, email, phone, gstin, pan, requirement_summary, status, assigned_to)
-        VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, 'new', ?)
-      `, [id, lead_code, cleanCompany, cleanContact, cleanEmail, cleanPhone, cleanReq, assigned_to || null]);
+        INSERT INTO crm_leads (id, lead_code, company_name, contact_person, email, phone, gstin, pan, requirement_summary, status, assigned_to, organization_id)
+        VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, 'new', ?, ?)
+      `, [id, lead_code, cleanCompany, cleanContact, cleanEmail, cleanPhone, cleanReq, assigned_to || null, orgId]);
             const nowTime = Date.now();
             const dueDateIso = new Date(nowTime + appliedTatDays * 24 * 60 * 60 * 1000).toISOString();
             // Save extended metadata

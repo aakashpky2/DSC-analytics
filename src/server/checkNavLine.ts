@@ -1,0 +1,10 @@
+import fs from 'fs'
+
+const content = fs.readFileSync('src/app/inventory/procurement/page.tsx', 'utf8')
+
+// Let's create the replacement for lines 705 to 765
+const lines = content.split('\n')
+const navStart = lines.findIndex(l => l.includes('{/* Navigation Tabs */}'))
+console.log('navStart line:', navStart + 1)
+console.log(lines.slice(navStart, navStart + 60).join('\n'))
+

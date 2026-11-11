@@ -2972,7 +2972,7 @@ procurementRouter.get('/token-procurement/profile-stocks', requireAuth, async (r
       params.push(String(company_profile_id))
     }
 
-    sql += ' ORDER BY prof.legal_name ASC, tps.model_name ASC'
+    sql += ' ORDER BY model_name ASC'
 
     const stocks = await queryAll(sql, params)
     return res.json({ profile_stocks: stocks })

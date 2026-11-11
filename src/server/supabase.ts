@@ -549,12 +549,22 @@ export async function run(sql: string, params: any[] = []): Promise<{ lastID: nu
 
   try {
     if (trimmed.startsWith('insert into')) {
-      const colsMatch = sql.match(/\(([^)]+)\)\s*values/i)
+      const colsMatch = sql.match(/\(([^)]+)\)\s*values\s*\(([^)]+)\)/i)
       if (colsMatch) {
         const cols = colsMatch[1].split(',').map(c => c.trim())
+        const valPlaceholders = colsMatch[2].split(',').map(v => v.trim())
         const row: Record<string, any> = {}
+        let paramIdx = 0
         cols.forEach((col, idx) => {
-          row[col] = params[idx]
+          const ph = valPlaceholders[idx]
+          if (ph === '?') {
+            row[col] = params[paramIdx++]
+          } else if (ph.toUpperCase() === 'NULL') {
+            row[col] = null
+          } else {
+            // Literal string or number
+            row[col] = ph.replace(/^['"]|['"]$/g, '')
+          }
         })
         const { error } = await supabase.from(table).insert(row)
         if (error) throw error

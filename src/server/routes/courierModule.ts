@@ -306,14 +306,17 @@ courierModuleRouter.post('/courier/shipments', requirePermission('courier', 'can
       notes: notes || 'Standard outward dispatch',
     }
 
+    const orgId = currentUser?.organization_id || 'comp-default'
+
     await run(`
       INSERT INTO courier_dispatches (
-        id, dispatch_number, carrier_name, awb_number, recipient_name, recipient_phone,
+        id, organization_id, dispatch_number, carrier_name, awb_number, recipient_name, recipient_phone,
         shipping_address, package_contents, status, proof_of_delivery_url, dispatched_at, notes
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'MANIFESTED', null, CURRENT_TIMESTAMP, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'MANIFESTED', null, CURRENT_TIMESTAMP, ?)
     `, [
       dispatchId,
+      orgId,
       dispatchNumber,
       carrierName,
       cleanAwb || 'AWB-PENDING',
