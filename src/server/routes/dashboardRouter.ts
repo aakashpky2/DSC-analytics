@@ -241,13 +241,12 @@ dashboardRouter.get('/dashboard/overview', requireAuth, async (req: Request, res
         }
       })
 
-      // Permitted Quick Actions for Staff
+      // Permitted Quick Actions for Staff: CRM, Customer Directory & Application Workflow
       const quickActions = [
         { label: 'New DSC Application', href: '/dsc/applications?new=true', icon: 'FilePlus', color: 'indigo' },
-        { label: 'Daily DSC Issuance', href: '/dsc/issuance', icon: 'FileCheck2', color: 'emerald' },
         { label: 'Customer Directory', href: '/partners', icon: 'Users2', color: 'cyan' },
         { label: 'Follow-ups & Leads', href: '/crm/leads', icon: 'PhoneCall', color: 'purple' },
-        { label: 'Direct Issuance Hub', href: '/dsc/direct', icon: 'ShieldCheck', color: 'blue' },
+        { label: 'Calling Queue', href: '/crm/calling-queue', icon: 'Headphones', color: 'blue' },
       ]
 
       return res.json({

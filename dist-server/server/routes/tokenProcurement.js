@@ -22,6 +22,17 @@ function requireAuth(req, res, next) {
     }
     next();
 }
+function requireProcurementAccess(req, res, next) {
+    const user = req.user;
+    if (!user) {
+        return res.status(401).json({ error: 'Please enter your email and password to sign in.' });
+    }
+    if (user.hierarchy_level_order > 3) {
+        return res.status(403).json({ error: 'Access denied. You do not have permission to access Token Procurement and Purchase Orders.' });
+    }
+    next();
+}
+exports.procurementRouter.use(requireAuth, requireProcurementAccess);
 // RBAC Guards
 function requirePermission(moduleKey, actionKey) {
     return (req, res, next) => {

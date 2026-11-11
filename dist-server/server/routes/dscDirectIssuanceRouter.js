@@ -35,9 +35,18 @@ function requireAdminRole(req, res, next) {
     }
     next();
 }
-// ----------------------------------------------------------------------------
-// 1. LOOKUP & INITIALIZATION DATA (/api/dsc/direct/init-data)
-// ----------------------------------------------------------------------------
+// Guard: Level 4 cannot access Direct Issuance Hub
+function requireDirectIssuanceAccess(req, res, next) {
+    const user = getSessionUser(req);
+    if (!user) {
+        return res.status(401).json({ error: 'Authentication required.' });
+    }
+    if (user.hierarchy_level_order > 3) {
+        return res.status(403).json({ error: 'Access denied. You do not have permission to access Direct Issuance Hub.' });
+    }
+    next();
+}
+exports.dscDirectIssuanceRouter.use(requireAuth, requireDirectIssuanceAccess);
 exports.dscDirectIssuanceRouter.get('/dsc/direct/init-data', requireAuth, async (req, res) => {
     try {
         const user = getSessionUser(req);

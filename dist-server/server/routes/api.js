@@ -763,6 +763,10 @@ exports.apiRouter.post('/partners', requirePermission('partners', 'can_create'),
 // ==========================================
 exports.apiRouter.get('/dsc/catalog', requireAuth, async (req, res) => {
     try {
+        const user = req.user;
+        if (user && user.hierarchy_level_order > 3) {
+            return res.status(403).json({ error: 'Access denied. You do not have permission to view DSC Product Catalog or Pricing.' });
+        }
         const { page, limit, offset, isPaginated } = (0, pagination_1.parsePaginationParams)(req.query);
         const selectSql = 'SELECT * FROM dsc_catalog ORDER BY class_type, validity_years';
         const countSql = 'SELECT COUNT(*) as count FROM dsc_catalog';

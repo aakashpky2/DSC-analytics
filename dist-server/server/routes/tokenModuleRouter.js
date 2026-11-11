@@ -28,6 +28,20 @@ function requireAuth(req, res, next) {
     }
     next();
 }
+function requireTokenModuleAccess(req, res, next) {
+    const user = req.user;
+    if (!user) {
+        return res.status(401).json({ error: 'Please enter your email and password to sign in.' });
+    }
+    if (user.status !== 'active') {
+        return res.status(403).json({ error: 'Your account is inactive.' });
+    }
+    if (user.hierarchy_level_order > 3) {
+        return res.status(403).json({ error: 'Access denied. You do not have permission to manage Hardware Token Stock or Pricing.' });
+    }
+    next();
+}
+exports.tokenModuleRouter.use(requireAuth, requireTokenModuleAccess);
 // ============================================================================
 // PART A: DOCUMENT TEMPLATES API
 // ============================================================================

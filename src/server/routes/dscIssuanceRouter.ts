@@ -29,6 +29,19 @@ function requireAuth(req: Request, res: Response, next: any) {
   next()
 }
 
+function requireIssuanceAccess(req: Request, res: Response, next: any) {
+  const user = getSessionUser(req)
+  if (!user) {
+    return res.status(401).json({ error: 'Please enter your email and password to sign in.' })
+  }
+  if (user.hierarchy_level_order > 3) {
+    return res.status(403).json({ error: 'Access denied. You do not have permission to access Daily DSC Issuance management.' })
+  }
+  next()
+}
+
+dscIssuanceRouter.use(requireAuth, requireIssuanceAccess)
+
 // ----------------------------------------------------------------------------
 // 1. GET INITIAL ISSUANCE LOOKUP DATA
 // ----------------------------------------------------------------------------

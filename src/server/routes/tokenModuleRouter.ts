@@ -78,6 +78,22 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   next()
 }
 
+function requireTokenModuleAccess(req: Request, res: Response, next: NextFunction) {
+  const user = (req as any).user
+  if (!user) {
+    return res.status(401).json({ error: 'Please enter your email and password to sign in.' })
+  }
+  if (user.status !== 'active') {
+    return res.status(403).json({ error: 'Your account is inactive.' })
+  }
+  if (user.hierarchy_level_order > 3) {
+    return res.status(403).json({ error: 'Access denied. You do not have permission to manage Hardware Token Stock or Pricing.' })
+  }
+  next()
+}
+
+tokenModuleRouter.use(requireAuth, requireTokenModuleAccess)
+
 // ============================================================================
 // PART A: DOCUMENT TEMPLATES API
 // ============================================================================

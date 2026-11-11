@@ -98,152 +98,124 @@ export default function UsersPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-white">Staff & Access Roles</h1>
-          <p className="text-xs text-slate-400 mt-1">
-            Manage employee accounts, assign business roles, and control access to company records.
-          </p>
+          <h2 className="text-xl font-bold text-white tracking-tight">Staff & Roles</h2>
+          <p className="text-xs text-slate-400">Manage internal operator accounts, tier hierarchy, and granular overrides</p>
         </div>
         <button
           onClick={() => setIsModalOpen(true)}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs shadow-md shadow-indigo-600/20 transition cursor-pointer self-start sm:self-auto"
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md shadow-indigo-600/20 transition cursor-pointer"
         >
-          <Plus className="w-4 h-4" /> Add Staff Member
+          <UserPlus className="w-4 h-4" />
+          Add Staff Member
         </button>
       </div>
 
-      {/* Staff Roles Legend */}
-      <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
-        {[
-          { title: 'Super Admin', desc: 'Full office & company access', color: 'border-indigo-500/40 text-indigo-400' },
-          { title: 'Regional Partner Admin', desc: 'Partner network & pricing', color: 'border-blue-500/40 text-blue-400' },
-          { title: 'Branch Manager', desc: 'Branch stock & approvals', color: 'border-cyan-500/40 text-cyan-400' },
-          { title: 'Operations Executive', desc: 'DSC applications & invoicing', color: 'border-emerald-500/40 text-emerald-400' },
-          { title: 'Field Staff', desc: 'Customer inquiries & calls', color: 'border-amber-500/40 text-amber-400' },
-        ].map((tier, idx) => (
-          <div key={idx} className={`p-3 rounded-xl bg-slate-900/60 border ${tier.color} space-y-1`}>
-            <div className="text-xs font-semibold text-white">{tier.title}</div>
-            <div className="text-[10px] text-slate-400">{tier.desc}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Users Data Table */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
-        <div className="p-4 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <span className="text-xs font-semibold text-white">Employee Accounts ({totalCount})</span>
-            <div className="flex items-center gap-1.5 text-xs text-amber-400">
-              <EyeOff className="w-3.5 h-3.5" />
-              <span className="text-[11px]">Field staff see masked contacts</span>
-            </div>
-          </div>
-
-          <div className="relative w-full sm:w-64">
-            <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+      {/* Main Table Card */}
+      <div className="rounded-xl border border-slate-800 bg-slate-900/50 backdrop-blur-sm overflow-hidden">
+        {/* Table Filters Header */}
+        <div className="p-4 border-b border-slate-800 flex flex-col sm:flex-row gap-3 items-center justify-between">
+          <div className="relative w-full sm:w-72">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
             <input
               type="text"
-              placeholder="Search staff name, email, role..."
+              placeholder="Search by name, email, or role..."
               value={search}
               onChange={(e) => handleSearchChange(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white"
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-4 py-1.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 transition"
             />
+          </div>
+          <div className="text-xs text-slate-500 flex items-center gap-1">
+            <Shield className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Strict Role-Based Access Active</span>
           </div>
         </div>
 
-        <div className="overflow-x-auto no-scrollbar">
-          <table className="w-full text-left text-xs whitespace-nowrap">
+        {/* Users Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
             <thead>
-              <tr className="text-slate-400 bg-slate-900/80 border-b border-slate-800">
-                <th className="p-3 font-semibold whitespace-nowrap">Staff Name & Contact</th>
-                <th className="p-3 font-semibold whitespace-nowrap">Assigned Role</th>
-                <th className="p-3 font-semibold whitespace-nowrap">Role Tier</th>
-                <th className="p-3 font-semibold whitespace-nowrap">Can Grant Access</th>
-                <th className="p-3 font-semibold whitespace-nowrap">Access State</th>
-                <th className="p-3 font-semibold whitespace-nowrap">Account Status</th>
-                <th className="p-3 text-right font-semibold whitespace-nowrap">Actions</th>
+              <tr className="border-b border-slate-800 bg-slate-950/40 text-slate-400 font-medium">
+                <th className="py-3 px-4">User</th>
+                <th className="py-3 px-4">Role Tier</th>
+                <th className="py-3 px-4">Phone</th>
+                <th className="py-3 px-4">Status</th>
+                <th className="py-3 px-4">Security Policy</th>
+                <th className="py-3 px-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="p-6 text-center text-slate-500 text-xs whitespace-nowrap">
+                  <td colSpan={6} className="py-8 text-center text-slate-500">
                     Loading staff members...
                   </td>
                 </tr>
               ) : users.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-6 text-center text-slate-500 text-xs whitespace-nowrap">
-                    No staff records found.
+                  <td colSpan={6} className="py-8 text-center text-slate-500">
+                    No staff members found matching query.
                   </td>
                 </tr>
               ) : (
-                users.map((u: any) => (
-                  <tr key={u.id} className="hover:bg-slate-800/40 h-12">
-                    <td className="p-3 whitespace-nowrap">
+                users.map((u) => (
+                  <tr key={u.id} className="hover:bg-slate-800/30 transition">
+                    <td className="py-3 px-4">
                       <div className="font-semibold text-white">{u.full_name}</div>
-                      <div className="text-[11px] text-slate-400 font-mono">{u.email}</div>
+                      <div className="text-[11px] text-slate-500 font-mono">{u.email}</div>
                     </td>
-                    <td className="p-3 whitespace-nowrap">
-                      <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
-                        {u.role_name || 'Staff Member'}
+                    <td className="py-3 px-4">
+                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                        {u.role_name || u.role_id}
                       </span>
                     </td>
-                    <td className="p-3 whitespace-nowrap">
-                      <span className="text-indigo-300 font-medium whitespace-nowrap">
-                        {u.level_name || `Tier ${u.level_order}`}
-                      </span>
+                    <td className="py-3 px-4 font-mono text-slate-400">
+                      {u.phone_number || '—'}
                     </td>
-                    <td className="p-3 whitespace-nowrap">
-                      {u.can_grant_permissions ? (
-                        <span className="text-emerald-400 flex items-center gap-1 font-medium whitespace-nowrap">
-                          <UserCheck className="w-3.5 h-3.5" /> Allowed
-                        </span>
-                      ) : (
-                        <span className="text-slate-500 font-medium whitespace-nowrap">Standard</span>
-                      )}
-                    </td>
-                    <td className="p-3 whitespace-nowrap">
-                      {u.permissions_frozen ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-red-500/20 text-red-300 font-mono text-[10px] border border-red-500/30 whitespace-nowrap">
-                          <Lock className="w-3 h-3" /> Locked
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono text-[10px] whitespace-nowrap">
-                          <Unlock className="w-3 h-3" /> Active
-                        </span>
-                      )}
-                    </td>
-                    <td className="p-3 whitespace-nowrap">
+                    <td className="py-3 px-4">
                       <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] border capitalize whitespace-nowrap ${
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium ${
                           u.status === 'active'
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                            : 'bg-red-500/10 text-red-400 border-red-500/20'
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
                         }`}
                       >
-                        {u.status}
+                        {u.status === 'active' ? 'Active' : 'Deactivated'}
                       </span>
                     </td>
-                    <td className="p-3 text-right">
-                      {u.id !== 'usr-admin-root' && (
-                        <div className="flex items-center justify-end gap-2">
+                    <td className="py-3 px-4">
+                      {u.permissions_frozen ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] text-amber-400 font-medium">
+                          <Lock className="w-3 h-3" /> Overrides Frozen
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
+                          <Unlock className="w-3 h-3 text-slate-500" /> Standard Inherited
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      {u.role_id === 'role-super-admin' ? (
+                        <span className="text-[11px] text-slate-600 font-medium">System Root</span>
+                      ) : (
+                        <div className="flex items-center justify-end gap-1.5">
                           <button
                             onClick={() => setSelectedUserForPerms(u)}
-                            className="px-2 py-1 rounded bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/30 text-[11px] font-medium transition cursor-pointer flex items-center gap-1"
-                            title="Edit granular permissions & PII masking"
+                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition cursor-pointer"
+                            title="Manage Granular Permissions"
                           >
-                            <Sliders className="w-3 h-3" /> Permissions
+                            <Sliders className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => handleToggleFreeze(u.id, u.permissions_frozen)}
                             disabled={actionLoading === u.id}
-                            className={`px-2 py-1 rounded text-[11px] font-medium transition cursor-pointer ${
+                            className={`p-1.5 rounded-lg transition cursor-pointer ${
                               u.permissions_frozen
-                                ? 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20'
-                                : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20'
+                                ? 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20'
+                                : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
                             }`}
+                            title={u.permissions_frozen ? 'Unfreeze Permissions' : 'Freeze Current Permissions'}
                           >
-                            {u.permissions_frozen ? 'Unlock' : 'Lock'}
+                            {u.permissions_frozen ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
                           </button>
                           <button
                             onClick={() => handleToggleStatus(u.id, u.status)}

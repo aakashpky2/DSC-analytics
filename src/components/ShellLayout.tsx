@@ -24,12 +24,14 @@ import {
   Pin,
   PinOff,
 } from 'lucide-react'
-import { UI_TERMS } from '@/lib/terms'
+import { canAccessRoute } from '@/lib/routePermissions'
+import { AccessDeniedCard } from '@/components/AccessDeniedCard'
 
 interface SubItem {
   name: string
   href: string
   badge?: string
+  minTier?: number
 }
 
 interface NavGroup {
@@ -63,22 +65,23 @@ const navigationGroups: NavGroup[] = [
     icon: FileCheck2,
     basePath: '/dsc',
     items: [
-      { name: 'Product Catalog', href: '/dsc/catalog' },
+      { name: 'Product Catalog', href: '/dsc/catalog', minTier: 3 },
       { name: 'Application Workflow', href: '/dsc/applications' },
-      { name: 'Direct Issuance & Associates', href: '/dsc/direct', badge: 'New' },
-      { name: 'Partner Commissions', href: '/dsc/commissions' },
-      { name: 'Daily Issuance & Reports', href: '/dsc/issuance' },
-      { name: 'Revenue Dashboard', href: '/reports/revenue', badge: 'Executive' }
+      { name: 'Direct Issuance & Associates', href: '/dsc/direct', badge: 'New', minTier: 3 },
+      { name: 'Partner Commissions', href: '/dsc/commissions', minTier: 1 },
+      { name: 'Daily Issuance & Reports', href: '/dsc/issuance', minTier: 3 },
+      { name: 'Revenue Dashboard', href: '/reports/revenue', badge: 'Executive', minTier: 3 }
     ]
   },
   {
     name: 'Hardware Tokens',
     icon: Cpu,
     basePath: '/inventory',
+    minTier: 3,
     items: [
-      { name: 'Stock Register', href: '/inventory/tokens' },
-      { name: 'Branch Hubs', href: '/inventory/branches' },
-      { name: 'Token Procurement & PO', href: '/inventory/procurement', badge: 'New' }
+      { name: 'Stock Register', href: '/inventory/tokens', minTier: 3 },
+      { name: 'Branch Hubs', href: '/inventory/branches', minTier: 2 },
+      { name: 'Token Procurement & PO', href: '/inventory/procurement', badge: 'New', minTier: 3 }
     ]
   },
   {
@@ -104,10 +107,11 @@ const navigationGroups: NavGroup[] = [
     name: 'Invoices & Billing',
     icon: Receipt,
     basePath: '/billing',
+    minTier: 3,
     items: [
-      { name: 'Invoice Register', href: '/billing/invoices' },
-      { name: 'Invoice Builder', href: '/billing/invoices/new' },
-      { name: 'Bank Accounts', href: '/billing/accounts' }
+      { name: 'Invoice Register', href: '/billing/invoices', minTier: 3 },
+      { name: 'Invoice Builder', href: '/billing/invoices/new', minTier: 3 },
+      { name: 'Bank Accounts', href: '/billing/accounts', minTier: 3 }
     ]
   },
   {
@@ -115,9 +119,10 @@ const navigationGroups: NavGroup[] = [
     icon: CheckCircle2,
     basePath: '/billing',
     badge: 'Audit',
+    minTier: 3,
     items: [
-      { name: 'Verification Queue', href: '/billing/payments', badge: 'Audit' },
-      { name: 'Financial Ledger', href: '/billing/ledger' }
+      { name: 'Verification Queue', href: '/billing/payments', badge: 'Audit', minTier: 3 },
+      { name: 'Financial Ledger', href: '/billing/ledger', minTier: 3 }
     ]
   },
   {
@@ -134,11 +139,11 @@ const navigationGroups: NavGroup[] = [
     basePath: '/admin',
     minTier: 1,
     items: [
-      { name: 'User Management', href: '/admin/users' },
-      { name: 'Hierarchy Levels', href: '/admin/roles' },
-      { name: 'Permissions Delegation', href: '/admin/delegations' },
-      { name: 'Master Settings', href: '/admin/settings' },
-      { name: 'Audit History', href: '/admin/audit' }
+      { name: 'User Management', href: '/admin/users', minTier: 1 },
+      { name: 'Hierarchy Levels', href: '/admin/roles', minTier: 1 },
+      { name: 'Permissions Delegation', href: '/admin/delegations', minTier: 1 },
+      { name: 'Master Settings', href: '/admin/settings', minTier: 1 },
+      { name: 'Audit History', href: '/admin/audit', minTier: 1 }
     ]
   }
 ]
@@ -261,13 +266,24 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
     return <>{children}</>
   }
 
-  // Filter navigation groups based on current staff member's hierarchy tier
-  const visibleGroups = navigationGroups.filter((group) => {
-    if (group.minTier !== undefined && currentUser) {
-      return currentUser.hierarchy_level_order <= group.minTier
-    }
-    return true
-  })
+  // Filter navigation groups and their subitems based on current staff member's hierarchy tier
+  const visibleGroups = navigationGroups
+    .filter((group) => {
+      if (group.minTier !== undefined && currentUser) {
+        return currentUser.hierarchy_level_order <= group.minTier
+      }
+      return true
+    })
+    .map((group) => {
+      const filteredItems = group.items.filter((item) => {
+        if (item.minTier !== undefined && currentUser) {
+          return currentUser.hierarchy_level_order <= item.minTier
+        }
+        return true
+      })
+      return { ...group, items: filteredItems }
+    })
+    .filter((group) => group.items.length > 0)
 
   const toggleGroup = (groupName: string) => {
     setExpandedGroup((prev) => (prev === groupName ? null : groupName))
@@ -543,7 +559,16 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
 
         {/* Page Content */}
         <main className="flex-1 overflow-y-auto p-6 bg-slate-950">
-          {children}
+          {currentUser && !canAccessRoute(pathname, currentUser).allowed ? (
+            <AccessDeniedCard
+              title="Access Restricted"
+              message={canAccessRoute(pathname, currentUser).message}
+              backHref="/"
+              backLabel="Return to Home Dashboard"
+            />
+          ) : (
+            children
+          )}
         </main>
       </div>
     </div>
