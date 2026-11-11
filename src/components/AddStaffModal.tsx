@@ -1,7 +1,13 @@
 'use client'
 
 import React, { useState } from 'react'
-import { X, UserPlus, ShieldAlert } from 'lucide-react'
+import { X, UserPlus, ShieldAlert, CheckCircle2 } from 'lucide-react'
+import {
+  validateEmployeeName,
+  validateCompanyEmail,
+  validateMobileNumber,
+  validateInitialPassword,
+} from '@/lib/staffValidation'
 
 interface AddStaffModalProps {
   isOpen: boolean
@@ -18,8 +24,18 @@ export function AddStaffModal({ isOpen, onClose, onSuccess }: AddStaffModalProps
     role_id: 'role-field-staff',
     initial_password: '',
   })
+
+  // Field-specific validation errors for instant UX feedback
+  const [fieldErrors, setFieldErrors] = useState<{
+    full_name?: string
+    email?: string
+    phone_number?: string
+    initial_password?: string
+  }>({})
+
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [successMsg, setSuccessMsg] = useState('')
 
   if (!isOpen) return null
 
@@ -38,29 +54,99 @@ export function AddStaffModal({ isOpen, onClose, onSuccess }: AddStaffModalProps
     }))
   }
 
+  // Handle mobile input with strict 10-digit limit and digit-only filter
+  const handleMobileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value
+    // Strip non-digit characters
+    const digitsOnly = val.replace(/\D/g, '')
+    // Prevent entering more than 10 digits
+    const truncated = digitsOnly.slice(0, 10)
+
+    setFormData((prev) => {
+      // Auto-sync initial password if password is empty or was matching previous phone
+      const shouldSyncPassword = !prev.initial_password || prev.initial_password === prev.phone_number
+      return {
+        ...prev,
+        phone_number: truncated,
+        initial_password: shouldSyncPassword ? truncated : prev.initial_password,
+      }
+    })
+
+    if (fieldErrors.phone_number) {
+      setFieldErrors((prev) => ({ ...prev, phone_number: undefined }))
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    setSuccessMsg('')
+
+    // 1. Frontend Validation
+    const nameResult = validateEmployeeName(formData.full_name)
+    const emailResult = validateCompanyEmail(formData.email)
+    const mobileResult = validateMobileNumber(formData.phone_number)
+    const passwordResult = validateInitialPassword(formData.initial_password)
+
+    const newErrors: {
+      full_name?: string
+      email?: string
+      phone_number?: string
+      initial_password?: string
+    } = {}
+
+    if (!nameResult.valid) newErrors.full_name = nameResult.error
+    if (!emailResult.valid) newErrors.email = emailResult.error
+    if (!mobileResult.valid) newErrors.phone_number = mobileResult.error
+    if (!passwordResult.valid) newErrors.initial_password = passwordResult.error
+
+    if (Object.keys(newErrors).length > 0) {
+      setFieldErrors(newErrors)
+      return
+    }
+
+    setFieldErrors({})
     setLoading(true)
 
     try {
       const res = await fetch('/api/admin/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({
+          full_name: nameResult.name,
+          email: emailResult.email,
+          phone_number: mobileResult.mobile,
+          hierarchy_level_id: formData.hierarchy_level_id,
+          role_id: formData.role_id,
+          initial_password: passwordResult.password,
+        }),
       })
 
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
+
       if (!res.ok) {
-        setError(data.error || 'Failed to create staff account.')
-        setLoading(false)
+        // Status code specific handling
+        if (res.status === 409) {
+          setError(data.error || 'A staff member with this email or mobile already exists.')
+        } else if (res.status === 400) {
+          setError(data.error || 'Please correct the invalid fields and try again.')
+        } else if (res.status === 403) {
+          setError(data.error || 'You do not have permission to create this user.')
+        } else {
+          setError(data.error || 'Failed to create staff account. Please try again.')
+        }
         return
       }
 
-      onSuccess()
-      onClose()
+      setSuccessMsg('Staff account created successfully!')
+      setTimeout(() => {
+        onSuccess()
+        onClose()
+      }, 700)
     } catch {
       setError('A network error occurred. Please try again.')
+    } finally {
+      // Requirement: The loading state must ALWAYS be reset in a finally block
       setLoading(false)
     }
   }
@@ -81,57 +167,90 @@ export function AddStaffModal({ isOpen, onClose, onSuccess }: AddStaffModalProps
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            disabled={loading}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition disabled:opacity-50"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {error && (
-          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
+          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2 animate-in fade-in">
             <ShieldAlert className="w-4 h-4 shrink-0" />
             <span>{error}</span>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-3.5">
+        {successMsg && (
+          <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-center gap-2 animate-in fade-in">
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            <span>{successMsg}</span>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-3.5" noValidate>
+          {/* Employee Full Name */}
           <div>
             <label className="block text-slate-300 font-medium mb-1">Employee Full Name *</label>
             <input
-              required
               type="text"
               placeholder="e.g. Ramesh Kumar"
               value={formData.full_name}
-              onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
+              onChange={(e) => {
+                setFormData({ ...formData, full_name: e.target.value })
+                if (fieldErrors.full_name) setFieldErrors({ ...fieldErrors, full_name: undefined })
+              }}
+              className={`w-full bg-slate-950 border rounded-lg px-3 py-2 text-white placeholder:text-slate-500 focus:outline-none transition ${
+                fieldErrors.full_name ? 'border-red-500 focus:border-red-500' : 'border-slate-800 focus:border-indigo-500'
+              }`}
             />
+            {fieldErrors.full_name && (
+              <p className="text-[11px] text-red-400 mt-1">{fieldErrors.full_name}</p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
+            {/* Company Email */}
             <div>
               <label className="block text-slate-300 font-medium mb-1">Company Email *</label>
               <input
-                required
                 type="email"
                 placeholder="name@company.com"
                 value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
+                onChange={(e) => {
+                  setFormData({ ...formData, email: e.target.value })
+                  if (fieldErrors.email) setFieldErrors({ ...fieldErrors, email: undefined })
+                }}
+                className={`w-full bg-slate-950 border rounded-lg px-3 py-2 text-white placeholder:text-slate-500 focus:outline-none transition ${
+                  fieldErrors.email ? 'border-red-500 focus:border-red-500' : 'border-slate-800 focus:border-indigo-500'
+                }`}
               />
+              {fieldErrors.email && (
+                <p className="text-[11px] text-red-400 mt-1">{fieldErrors.email}</p>
+              )}
             </div>
+
+            {/* Mobile Number */}
             <div>
-              <label className="block text-slate-300 font-medium mb-1">Mobile Number</label>
+              <label className="block text-slate-300 font-medium mb-1">Mobile Number *</label>
               <input
                 type="tel"
-                placeholder="+91 9876543210"
+                placeholder="10-digit number"
+                maxLength={10}
                 value={formData.phone_number}
-                onChange={(e) => setFormData({ ...formData, phone_number: e.target.value })}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
+                onChange={handleMobileChange}
+                className={`w-full bg-slate-950 border rounded-lg px-3 py-2 text-white placeholder:text-slate-500 focus:outline-none font-mono transition ${
+                  fieldErrors.phone_number ? 'border-red-500 focus:border-red-500' : 'border-slate-800 focus:border-indigo-500'
+                }`}
               />
+              {fieldErrors.phone_number && (
+                <p className="text-[11px] text-red-400 mt-1">{fieldErrors.phone_number}</p>
+              )}
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
+            {/* Access Level */}
             <div>
               <label className="block text-slate-300 font-medium mb-1">Access Level *</label>
               <select
@@ -145,17 +264,25 @@ export function AddStaffModal({ isOpen, onClose, onSuccess }: AddStaffModalProps
                 <option value="tier-4">Level 4 - Field Staff / Tele-caller</option>
               </select>
             </div>
+
+            {/* Initial Password */}
             <div>
               <label className="block text-slate-300 font-medium mb-1">Initial Password *</label>
               <input
-                required
                 type="text"
                 placeholder="At least 8 characters"
                 value={formData.initial_password}
-                onChange={(e) => setFormData({ ...formData, initial_password: e.target.value })}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-mono"
-                minLength={8}
+                onChange={(e) => {
+                  setFormData({ ...formData, initial_password: e.target.value })
+                  if (fieldErrors.initial_password) setFieldErrors({ ...fieldErrors, initial_password: undefined })
+                }}
+                className={`w-full bg-slate-950 border rounded-lg px-3 py-2 text-white placeholder:text-slate-500 focus:outline-none font-mono transition ${
+                  fieldErrors.initial_password ? 'border-red-500 focus:border-red-500' : 'border-slate-800 focus:border-indigo-500'
+                }`}
               />
+              {fieldErrors.initial_password && (
+                <p className="text-[11px] text-red-400 mt-1">{fieldErrors.initial_password}</p>
+              )}
             </div>
           </div>
 
@@ -163,16 +290,17 @@ export function AddStaffModal({ isOpen, onClose, onSuccess }: AddStaffModalProps
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
+              disabled={loading}
+              className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={loading}
-              className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium shadow-md shadow-indigo-600/20 disabled:opacity-50 transition"
+              className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium shadow-md shadow-indigo-600/20 disabled:opacity-50 transition flex items-center gap-1.5"
             >
-              {loading ? 'Creating...' : 'Create Account'}
+              {loading ? 'Creating...' : 'Create Staff Member'}
             </button>
           </div>
         </form>
@@ -180,4 +308,3 @@ export function AddStaffModal({ isOpen, onClose, onSuccess }: AddStaffModalProps
     </div>
   )
 }
-

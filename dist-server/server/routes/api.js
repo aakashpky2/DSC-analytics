@@ -586,26 +586,62 @@ exports.apiRouter.get('/admin/users', requireAdmin, async (req, res) => {
 });
 exports.apiRouter.post('/admin/users', requireAdmin, async (req, res) => {
     try {
-        const { email, full_name, phone_number, role_id, hierarchy_level_id, branch_id, initial_password } = req.body;
-        if (!email || !full_name) {
-            return res.status(400).json({ error: 'Email and full name are required.' });
+        const currentUser = req.user;
+        const { email, full_name, phone_number, role_id, hierarchy_level_id, branch_id, initial_password } = req.body || {};
+        const { validateEmployeeName, validateCompanyEmail, validateMobileNumber, validateInitialPassword } = await Promise.resolve().then(() => __importStar(require('../../lib/staffValidation')));
+        // Strict validation
+        const nameCheck = validateEmployeeName(full_name);
+        if (!nameCheck.valid) {
+            return res.status(400).json({ success: false, error: nameCheck.error });
         }
-        const cleanEmail = email.trim().toLowerCase();
+        const emailCheck = validateCompanyEmail(email);
+        if (!emailCheck.valid) {
+            return res.status(400).json({ success: false, error: emailCheck.error });
+        }
+        const mobileCheck = validateMobileNumber(phone_number);
+        if (!mobileCheck.valid) {
+            return res.status(400).json({ success: false, error: mobileCheck.error });
+        }
+        const passwordCheck = validateInitialPassword(initial_password);
+        if (!passwordCheck.valid) {
+            return res.status(400).json({ success: false, error: passwordCheck.error });
+        }
+        const tier = hierarchy_level_id || 'tier-4';
+        const roleId = role_id || (tier === 'tier-1' ? 'role-partner-admin' : tier === 'tier-2' ? 'role-branch-mgr' : tier === 'tier-3' ? 'role-senior-exec' : 'role-field-staff');
+        const cleanEmail = emailCheck.email;
         const existing = await (0, supabase_1.queryOne)('SELECT id FROM user_profiles WHERE LOWER(email) = ?', [cleanEmail]);
         if (existing) {
-            return res.status(400).json({ error: 'A staff member with this email address already exists.' });
+            return res.status(409).json({ success: false, error: 'A staff member with this email address already exists.' });
+        }
+        const existingPhone = await (0, supabase_1.queryOne)('SELECT id FROM user_profiles WHERE phone_number = ?', [mobileCheck.mobile]);
+        if (existingPhone) {
+            return res.status(409).json({ success: false, error: 'A staff member with this mobile number already exists.' });
         }
         const id = `usr-${Date.now()}`;
-        const passwordPlain = initial_password && initial_password.length >= 8 ? initial_password : 'ChangeMe@123';
-        const password_hash = await (0, auth_1.hashPassword)(passwordPlain);
-        await (0, supabase_1.run)(`
-      INSERT INTO user_profiles (id, email, password_hash, full_name, phone_number, role_id, hierarchy_level_id, branch_id, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
-    `, [id, cleanEmail, password_hash, full_name.trim(), phone_number || null, role_id || 'role-field-staff', hierarchy_level_id || 'tier-4', branch_id || null]);
+        const password_hash = await (0, auth_1.hashPassword)(passwordCheck.password);
+        const orgId = (currentUser === null || currentUser === void 0 ? void 0 : currentUser.organization_id) || 'comp-default';
+        const { supabase: sb } = await Promise.resolve().then(() => __importStar(require('../supabase')));
+        const { error: insertError } = await sb.from('user_profiles').insert({
+            id,
+            email: cleanEmail,
+            password_hash,
+            full_name: nameCheck.name,
+            phone_number: mobileCheck.mobile,
+            role_id: roleId,
+            hierarchy_level_id: tier,
+            branch_id: branch_id || null,
+            organization_id: orgId,
+            status: 'active',
+            permissions_frozen: 0,
+        });
+        if (insertError) {
+            console.error('Insert error in /admin/users:', insertError.message);
+            return res.status(500).json({ success: false, error: 'Database error occurred while creating staff account.' });
+        }
         return res.status(201).json({ success: true, id, message: 'Staff account created successfully.' });
     }
     catch (err) {
-        return res.status(500).json({ error: err.message });
+        return res.status(500).json({ success: false, error: err.message || 'Unexpected server error.' });
     }
 });
 exports.apiRouter.patch('/admin/users/:id/freeze', requireAuth, async (req, res) => {
