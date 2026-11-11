@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { X, UserPlus, ShieldAlert, CheckCircle2 } from 'lucide-react'
 import {
   validateEmployeeName,
@@ -15,15 +15,17 @@ interface AddStaffModalProps {
   onSuccess: () => void
 }
 
+const INITIAL_FORM_STATE = {
+  full_name: '',
+  email: '',
+  phone_number: '',
+  hierarchy_level_id: 'tier-4',
+  role_id: 'role-field-staff',
+  initial_password: '',
+}
+
 export function AddStaffModal({ isOpen, onClose, onSuccess }: AddStaffModalProps) {
-  const [formData, setFormData] = useState({
-    full_name: '',
-    email: '',
-    phone_number: '',
-    hierarchy_level_id: 'tier-4',
-    role_id: 'role-field-staff',
-    initial_password: '',
-  })
+  const [formData, setFormData] = useState(INITIAL_FORM_STATE)
 
   // Field-specific validation errors for instant UX feedback
   const [fieldErrors, setFieldErrors] = useState<{
@@ -36,6 +38,30 @@ export function AddStaffModal({ isOpen, onClose, onSuccess }: AddStaffModalProps
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
+
+  // Clean form reset function
+  const resetForm = useCallback(() => {
+    setFormData(INITIAL_FORM_STATE)
+    setFieldErrors({})
+    setError('')
+    setSuccessMsg('')
+    setLoading(false)
+  }, [])
+
+  // Whenever the modal opens or closes, reset the form completely to fresh state
+  useEffect(() => {
+    if (isOpen) {
+      resetForm()
+    } else {
+      resetForm()
+    }
+  }, [isOpen, resetForm])
+
+  // Explicit close handler
+  const handleClose = () => {
+    resetForm()
+    onClose()
+  }
 
   if (!isOpen) return null
 
@@ -141,7 +167,7 @@ export function AddStaffModal({ isOpen, onClose, onSuccess }: AddStaffModalProps
       setSuccessMsg('Staff account created successfully!')
       setTimeout(() => {
         onSuccess()
-        onClose()
+        handleClose()
       }, 700)
     } catch {
       setError('A network error occurred. Please try again.')
@@ -166,7 +192,7 @@ export function AddStaffModal({ isOpen, onClose, onSuccess }: AddStaffModalProps
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             disabled={loading}
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition disabled:opacity-50"
           >
@@ -188,12 +214,13 @@ export function AddStaffModal({ isOpen, onClose, onSuccess }: AddStaffModalProps
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-3.5" noValidate>
+        <form onSubmit={handleSubmit} className="space-y-3.5" noValidate autoComplete="off">
           {/* Employee Full Name */}
           <div>
             <label className="block text-slate-300 font-medium mb-1">Employee Full Name *</label>
             <input
               type="text"
+              autoComplete="off"
               placeholder="e.g. Ramesh Kumar"
               value={formData.full_name}
               onChange={(e) => {
@@ -215,6 +242,7 @@ export function AddStaffModal({ isOpen, onClose, onSuccess }: AddStaffModalProps
               <label className="block text-slate-300 font-medium mb-1">Company Email *</label>
               <input
                 type="email"
+                autoComplete="off"
                 placeholder="name@company.com"
                 value={formData.email}
                 onChange={(e) => {
@@ -235,6 +263,7 @@ export function AddStaffModal({ isOpen, onClose, onSuccess }: AddStaffModalProps
               <label className="block text-slate-300 font-medium mb-1">Mobile Number *</label>
               <input
                 type="tel"
+                autoComplete="off"
                 placeholder="10-digit number"
                 maxLength={10}
                 value={formData.phone_number}
@@ -269,7 +298,8 @@ export function AddStaffModal({ isOpen, onClose, onSuccess }: AddStaffModalProps
             <div>
               <label className="block text-slate-300 font-medium mb-1">Initial Password *</label>
               <input
-                type="text"
+                type="password"
+                autoComplete="new-password"
                 placeholder="At least 8 characters"
                 value={formData.initial_password}
                 onChange={(e) => {
@@ -289,7 +319,7 @@ export function AddStaffModal({ isOpen, onClose, onSuccess }: AddStaffModalProps
           <div className="pt-3 border-t border-slate-800 flex items-center justify-end gap-2.5">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               disabled={loading}
               className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition disabled:opacity-50"
             >
