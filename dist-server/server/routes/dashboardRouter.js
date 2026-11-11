@@ -284,6 +284,8 @@ exports.dashboardRouter.get('/dashboard/overview', requireAuth, async (req, res)
             },
             partners: allowedPartners.slice(0, 10),
             invoices: invoicesRaw.slice(0, 10),
+            batches: batchesRaw.slice(0, 10),
+            leads: leadsRaw.slice(0, 10),
         });
     }
     catch (err) {

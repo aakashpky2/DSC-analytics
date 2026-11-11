@@ -305,6 +305,8 @@ dashboardRouter.get('/dashboard/overview', requireAuth, async (req: Request, res
       },
       partners: allowedPartners.slice(0, 10),
       invoices: invoicesRaw.slice(0, 10),
+      batches: batchesRaw.slice(0, 10),
+      leads: leadsRaw.slice(0, 10),
     })
   } catch (err: unknown) {
     return res.status(500).json({ error: (err as Error).message })

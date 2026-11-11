@@ -79,6 +79,15 @@ export default function HomeDashboardClient({ initialUser, initialData }: Dashbo
         if (resJson.user?.full_name) {
           setUser((prev) => ({ ...prev, full_name: resJson.user.full_name }))
         }
+        if (resJson.partners) {
+          setData((prev) => ({
+            ...prev,
+            partners: resJson.partners || prev.partners,
+            invoices: resJson.invoices || prev.invoices,
+            leads: resJson.leads || prev.leads,
+            batches: resJson.batches || prev.batches,
+          }))
+        }
       })
       .catch((err) => {
         console.error('Error fetching dashboard overview:', err)
@@ -96,11 +105,30 @@ export default function HomeDashboardClient({ initialUser, initialData }: Dashbo
     user?.hierarchy_level_order === 0 ||
     overviewData?.isStaffView === false
 
-  // Super Admin metric calculations
-  const totalOutstanding = data.invoices.reduce((sum: number, inv: InvoiceRecord) => sum + (inv.outstanding_balance || 0), 0)
-  const totalInvoiced = data.invoices.reduce((sum: number, inv: InvoiceRecord) => sum + (inv.total_amount || 0), 0)
-  const totalTokensPurchased = data.batches.reduce((sum: number, b: TokenPurchaseBatchRecord) => sum + (b.quantity_purchased || 0), 0)
-  const avgLandedCost = data.batches.length > 0 ? (data.batches[0].unit_landed_cost || 366.0) : 366.0
+  // Super Admin metric calculations (fall back to overviewData.kpis if SSR payload was empty)
+  const activePartnersCount = overviewData?.kpis?.active_partners_count !== undefined
+    ? overviewData.kpis.active_partners_count
+    : data.partners.length
+
+  const totalOutstanding = overviewData?.kpis?.pending_payments_amount !== undefined
+    ? overviewData.kpis.pending_payments_amount
+    : data.invoices.reduce((sum: number, inv: InvoiceRecord) => sum + (inv.outstanding_balance || 0), 0)
+
+  const totalInvoiced = overviewData?.kpis?.total_invoiced_amount !== undefined
+    ? overviewData.kpis.total_invoiced_amount
+    : data.invoices.reduce((sum: number, inv: InvoiceRecord) => sum + (inv.total_amount || 0), 0)
+
+  const totalTokensPurchased = overviewData?.kpis?.tokens_purchased_units !== undefined
+    ? overviewData.kpis.tokens_purchased_units
+    : data.batches.reduce((sum: number, b: TokenPurchaseBatchRecord) => sum + (b.quantity_purchased || 0), 0)
+
+  const avgLandedCost = overviewData?.kpis?.average_landed_cost !== undefined
+    ? overviewData.kpis.average_landed_cost
+    : (data.batches.length > 0 ? (data.batches[0].unit_landed_cost || 366.0) : 366.0)
+
+  const customerLeadsCount = overviewData?.kpis?.customer_leads_count !== undefined
+    ? overviewData.kpis.customer_leads_count
+    : data.leads.length
 
   return (
     <div className="space-y-8">
@@ -147,7 +175,7 @@ export default function HomeDashboardClient({ initialUser, initialData }: Dashbo
               <Users2 className="w-4 h-4 text-indigo-400" />
             </div>
             <div className="mt-2 text-2xl font-bold text-white">
-              {data.partners.length}
+              {activePartnersCount}
             </div>
             <div className="mt-1 flex items-center text-[11px] text-slate-400">
               <span className="text-emerald-400 font-semibold mr-1">All Documents Verified</span>
@@ -189,7 +217,7 @@ export default function HomeDashboardClient({ initialUser, initialData }: Dashbo
               <Layers className="w-4 h-4 text-purple-400" />
             </div>
             <div className="mt-2 text-2xl font-bold text-white">
-              {data.leads.length}
+              {customerLeadsCount}
             </div>
             <div className="mt-1 flex items-center text-[11px] text-purple-400">
               Inquiries in pipeline
