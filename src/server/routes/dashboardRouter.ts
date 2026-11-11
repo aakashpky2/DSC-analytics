@@ -167,7 +167,7 @@ dashboardRouter.get('/dashboard/overview', requireAuth, async (req: Request, res
         const partnerName = app.partner_company || app.applicant_name || 'Enterprise Client'
         let workDesc = 'KYC document verification required'
         let stageLabel = 'Documents'
-        let actionLabel = 'Verify Documents'
+        let actionLabel = 'Verify Docs'
         let actionUrl = `/dsc/applications?search=${encodeURIComponent(app.application_number || app.applicant_name)}`
 
         const s = (app.stage || '').toLowerCase()

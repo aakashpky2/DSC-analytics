@@ -461,7 +461,7 @@ export default function HomeDashboardClient({ initialUser, initialData }: Dashbo
                         <td className="py-2.5 text-right">
                           <Link
                             href={w.action_url}
-                            className="inline-flex items-center justify-center gap-1.5 w-32 py-1.5 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white text-[11px] font-semibold whitespace-nowrap transition shadow-sm shadow-indigo-900/30 text-center"
+                            className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white text-[11px] font-semibold whitespace-nowrap transition shadow-sm shadow-indigo-900/30 text-center"
                           >
                             <span>{w.action}</span>
                             <ArrowRight className="w-3 h-3 shrink-0" />

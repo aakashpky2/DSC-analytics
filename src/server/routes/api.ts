@@ -30,6 +30,7 @@ import { dscIssuanceRouter } from './dscIssuanceRouter'
 import { dscDirectIssuanceRouter } from './dscDirectIssuanceRouter'
 import { unifiedRevenueRouter } from './unifiedRevenueRouter'
 import { dashboardRouter } from './dashboardRouter'
+import { validateLeadPayload } from '../../lib/leadValidation'
 import { loadLeadStore, saveLeadStore } from '../leadStore'
 import { evaluatePartnerMatch } from '../partnerMatchEngine'
 
@@ -1786,6 +1787,16 @@ apiRouter.post('/crm/leads/check-duplicate', requirePermission('crm', 'can_view'
 apiRouter.post('/crm/leads', requirePermission('crm', 'can_create'), async (req: Request, res: Response) => {
   try {
     const user = (req as any).user
+
+    // LM-06 & LM-32: Strict supplied-value validation while preserving optional intake
+    const validation = validateLeadPayload(req.body || {})
+    if (!validation.valid) {
+      return res.status(422).json({
+        error: 'Validation failed on supplied lead details.',
+        errors: validation.errors,
+      })
+    }
+
     const {
       company_name,
       alternate_name,
@@ -1802,17 +1813,15 @@ apiRouter.post('/crm/leads', requirePermission('crm', 'can_create'), async (req:
       city,
       pan,
       requirement_summary,
-      pipeline_status
-    } = req.body
+    } = validation.sanitized
+    const pipeline_status = req.body?.pipeline_status
 
-    // LM-06: All lead fields optional. No personal/contact field may block saving.
-    // If not supplied, provide clean empty string for legacy not-null columns while keeping extendedStore unpolluted
-    const cleanCompany = company_name ? company_name.trim() : ''
-    const cleanContact = contact_person ? contact_person.trim() : ''
-    const cleanEmail = email ? email.trim().toLowerCase() : ''
-    const cleanPhone = phone ? phone.trim() : ''
-        const cleanPan = pan ? pan.trim().toUpperCase() : null
-    const cleanReq = requirement_summary ? requirement_summary.trim() : ''
+    const cleanCompany = company_name || ''
+    const cleanContact = contact_person || ''
+    const cleanEmail = email || ''
+    const cleanPhone = phone || ''
+    const cleanPan = pan || null
+    const cleanReq = requirement_summary || ''
 
     const id = `lead-${Date.now()}`
     const lead_code = await allocateNextReferenceNumber('lead')

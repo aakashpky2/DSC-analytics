@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import dotenv from 'dotenv'
+import { getFallbackRolePermission } from './defaultRolePermissions'
 
 dotenv.config({ path: '.env.local' })
 dotenv.config()
@@ -443,15 +444,22 @@ export async function queryOne<T = any>(sql: string, params: any[] = []): Promis
     if (table === 'role_module_permissions' && sql.includes('app_modules')) {
       const roleId = params[0]
       const moduleKey = params[1]
-      const { data: mod } = await supabase.from('app_modules').select('id').eq('module_key', moduleKey).maybeSingle()
-      if (!mod) return null
-      const { data: perm } = await supabase
-        .from('role_module_permissions')
-        .select('*')
-        .eq('role_id', roleId)
-        .eq('module_id', mod.id)
-        .maybeSingle()
-      return (perm || null) as T | null
+      try {
+        const { data: mod } = await supabase.from('app_modules').select('id').eq('module_key', moduleKey).maybeSingle()
+        if (mod) {
+          const { data: perm } = await supabase
+            .from('role_module_permissions')
+            .select('*')
+            .eq('role_id', roleId)
+            .eq('module_id', mod.id)
+            .maybeSingle()
+          if (perm) return perm as T
+        }
+      } catch {
+        // Fallback to configured default permissions matrix
+      }
+      const fallback = getFallbackRolePermission(roleId, moduleKey)
+      return (fallback || null) as T | null
     }
 
     // 5. Temporary delegations active grant check
