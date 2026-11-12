@@ -38,7 +38,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.leadManagementRouter = void 0;
 exports.resolveActiveTatDays = resolveActiveTatDays;
+exports.getUserCategoryIdsAsync = getUserCategoryIdsAsync;
 exports.getUserCategoryIds = getUserCategoryIds;
+exports.resolveLeadCategory = resolveLeadCategory;
+exports.canUserAccessLeadAsync = canUserAccessLeadAsync;
 exports.canUserAccessLead = canUserAccessLead;
 const express_1 = require("express");
 const crypto_1 = __importDefault(require("crypto"));
@@ -78,17 +81,80 @@ function isSupervisorOrAdmin(user) {
         return false;
     return user.hierarchy_level_order <= 1; // Tier 0 (Super Admin) or Tier 1 (Regional Admin)
 }
-// Get assigned category IDs for a user
+// Get assigned category IDs for a user (combining local store + relational Supabase table)
+async function getUserCategoryIdsAsync(userId) {
+    const store = (0, leadStore_1.loadLeadStore)();
+    const localCats = (store.user_category_access || [])
+        .filter(a => a.user_id === userId)
+        .map(a => a.category_id);
+    const catSet = new Set(localCats);
+    try {
+        const { data: dbAccess } = await supabase_1.supabase
+            .from('crm_user_category_access')
+            .select('category_id')
+            .eq('user_id', userId);
+        if (dbAccess && dbAccess.length > 0) {
+            for (const row of dbAccess) {
+                if (row.category_id) {
+                    catSet.add(row.category_id);
+                }
+            }
+        }
+    }
+    catch (err) {
+        // If DB check fails, fallback to cached / local
+    }
+    return Array.from(catSet);
+}
+// Synchronous helper reading from store with in-memory synchronization
 function getUserCategoryIds(userId) {
     const store = (0, leadStore_1.loadLeadStore)();
     return (store.user_category_access || [])
         .filter(a => a.user_id === userId)
         .map(a => a.category_id);
 }
-// Check if user has permission to access a specific lead by category
+// Helper: Resolve effective lead category from DB first, then fallback to extended_leads store
+async function resolveLeadCategory(leadId) {
+    var _a;
+    try {
+        const { data: lead } = await supabase_1.supabase
+            .from('crm_leads')
+            .select('category_id')
+            .eq('id', leadId)
+            .maybeSingle();
+        if (lead && lead.category_id) {
+            return lead.category_id;
+        }
+    }
+    catch (e) {
+        // fallback
+    }
+    const store = (0, leadStore_1.loadLeadStore)();
+    const ext = (_a = store.extended_leads) === null || _a === void 0 ? void 0 : _a[leadId];
+    return (ext === null || ext === void 0 ? void 0 : ext.category_id) || null;
+}
+// Unified async permission check: verifies if a user has access to a specific lead
+async function canUserAccessLeadAsync(user, leadIdOrCategory, isLeadId = false) {
+    if (isSupervisorOrAdmin(user))
+        return true;
+    if (!user || !user.id)
+        return false;
+    let categoryId = leadIdOrCategory;
+    if (isLeadId) {
+        categoryId = await resolveLeadCategory(leadIdOrCategory);
+    }
+    // Uncategorized leads are restricted to supervisors (LM-17)
+    if (!categoryId)
+        return false;
+    const assigned = await getUserCategoryIdsAsync(user.id);
+    return assigned.includes(categoryId);
+}
+// Check if user has permission to access a specific lead by category (sync fallback)
 function canUserAccessLead(user, leadCategoryId) {
     if (isSupervisorOrAdmin(user))
         return true;
+    if (!user || !user.id)
+        return false;
     // Uncategorized leads are restricted to supervisors (LM-17)
     if (!leadCategoryId)
         return false;
@@ -446,12 +512,13 @@ exports.leadManagementRouter.get('/crm/leads/:id/interactions', async (req, res)
     try {
         const user = req.user;
         const leadId = String(req.params.id);
-        const store = (0, leadStore_1.loadLeadStore)();
-        const ext = store.extended_leads[leadId];
-        // LM-16: Category isolation check
-        if (!canUserAccessLead(user, ext === null || ext === void 0 ? void 0 : ext.category_id)) {
+        // LM-16: Category isolation check (using unified async permission check with DB fallback)
+        const hasAccess = await canUserAccessLeadAsync(user, leadId, true);
+        if (!hasAccess) {
             return res.status(403).json({ error: 'You do not have access to leads in this category.' });
         }
+        const store = (0, leadStore_1.loadLeadStore)();
+        const ext = store.extended_leads[leadId];
         // Try reading authoritative relational history first (DEF-01)
         try {
             const { data: relInteractions } = await supabase_1.supabase
@@ -482,12 +549,13 @@ exports.leadManagementRouter.post('/crm/leads/:id/interactions', async (req, res
             return res.status(401).json({ error: 'Authentication required.' });
         }
         const leadId = String(req.params.id);
-        const store = (0, leadStore_1.loadLeadStore)();
-        const ext = store.extended_leads[leadId];
-        // LM-16: Category access check
-        if (!canUserAccessLead(user, ext === null || ext === void 0 ? void 0 : ext.category_id)) {
+        // LM-16: Category access check (unified async permission check with DB fallback)
+        const hasAccess = await canUserAccessLeadAsync(user, leadId, true);
+        if (!hasAccess) {
             return res.status(403).json({ error: 'You do not have permission to log contact for this category.' });
         }
+        const store = (0, leadStore_1.loadLeadStore)();
+        const ext = store.extended_leads[leadId];
         // LM-14: Call Block Enforcement on strong/confirmed existing partner matches
         if ((ext === null || ext === void 0 ? void 0 : ext.match_status) === 'CONTACT_REVIEW' || (ext === null || ext === void 0 ? void 0 : ext.match_status) === 'CONFIRMED_PARTNER') {
             const { supervisor_override, override_reason } = req.body;
@@ -618,9 +686,14 @@ exports.leadManagementRouter.get('/crm/calling-queue', async (req, res) => {
             }
         }
         // Filter by user category permissions (LM-16)
+        const userCatIds = await getUserCategoryIdsAsync(user.id);
+        const isSuper = isSupervisorOrAdmin(user);
         const filteredLeads = leads.filter(l => {
-            const ext = store.extended_leads[l.id];
-            return canUserAccessLead(user, ext === null || ext === void 0 ? void 0 : ext.category_id);
+            var _a;
+            if (isSuper)
+                return true;
+            const catId = l.category_id || ((_a = store.extended_leads[l.id]) === null || _a === void 0 ? void 0 : _a.category_id);
+            return catId ? userCatIds.includes(catId) : false;
         });
         // Classify into queue priority buckets (LM-15):
         // 1. OVERDUE (past scheduled follow-up OR elapsed TAT with no follow-up)
@@ -698,12 +771,13 @@ exports.leadManagementRouter.post('/crm/leads/:id/convert-partner', async (req, 
             return res.status(401).json({ error: 'Authentication required.' });
         }
         const leadId = String(req.params.id);
-        const store = (0, leadStore_1.loadLeadStore)();
-        const ext = store.extended_leads[leadId] || {};
         // LM-16: Category isolation check
-        if (!canUserAccessLead(user, ext.category_id)) {
+        const hasAccess = await canUserAccessLeadAsync(user, leadId, true);
+        if (!hasAccess) {
             return res.status(403).json({ error: 'You do not have access to convert leads in this category.' });
         }
+        const store = (0, leadStore_1.loadLeadStore)();
+        const ext = store.extended_leads[leadId] || {};
         // LM-28: Prevent double conversion
         if (store.conversion_links[leadId]) {
             return res.status(409).json({
@@ -800,11 +874,12 @@ exports.leadManagementRouter.get('/crm/leads/:id/service-tracking', async (req, 
     try {
         const user = req.user;
         const leadId = String(req.params.id);
-        const store = (0, leadStore_1.loadLeadStore)();
-        const ext = store.extended_leads[leadId] || {};
-        if (!canUserAccessLead(user, ext.category_id)) {
+        const hasAccess = await canUserAccessLeadAsync(user, leadId, true);
+        if (!hasAccess) {
             return res.status(403).json({ error: 'Access denied to this lead category.' });
         }
+        const store = (0, leadStore_1.loadLeadStore)();
+        const ext = store.extended_leads[leadId] || {};
         const tracking = store.service_tracking[leadId] || {
             id: `lst-new`,
             lead_id: leadId,
@@ -830,11 +905,12 @@ exports.leadManagementRouter.patch('/crm/leads/:id/service-tracking', async (req
             return res.status(401).json({ error: 'Authentication required.' });
         }
         const leadId = String(req.params.id);
-        const store = (0, leadStore_1.loadLeadStore)();
-        const ext = store.extended_leads[leadId] || {};
-        if (!canUserAccessLead(user, ext.category_id)) {
+        const hasAccess = await canUserAccessLeadAsync(user, leadId, true);
+        if (!hasAccess) {
             return res.status(403).json({ error: 'Access denied to this lead category.' });
         }
+        const store = (0, leadStore_1.loadLeadStore)();
+        const ext = store.extended_leads[leadId] || {};
         const current = store.service_tracking[leadId] || {
             id: `lst-${Date.now()}`,
             lead_id: leadId,
@@ -1310,20 +1386,25 @@ exports.leadManagementRouter.patch('/crm/leads/:id/assign', async (req, res) => 
             return res.status(401).json({ error: 'Authentication required.' });
         const leadId = String(req.params.id);
         const { assigned_to, reason } = req.body;
-        const store = (0, leadStore_1.loadLeadStore)();
-        const ext = store.extended_leads[leadId] || {};
         // Enforce category access
-        if (!canUserAccessLead(user, ext.category_id)) {
+        const hasAccess = await canUserAccessLeadAsync(user, leadId, true);
+        if (!hasAccess) {
             return res.status(403).json({ error: 'You do not have access to manage leads in this category.' });
         }
+        const effectiveCatId = await resolveLeadCategory(leadId);
+        const store = (0, leadStore_1.loadLeadStore)();
+        const ext = store.extended_leads[leadId] || {};
         // Verify target executive has access to this category
         if (assigned_to) {
             const targetExecutive = await (0, supabase_1.queryOne)('SELECT id, full_name, hierarchy_level_id FROM user_profiles WHERE id = ?', [assigned_to]);
             if (!targetExecutive) {
                 return res.status(404).json({ error: 'Target staff account not found.' });
             }
-            if (ext.category_id && !canUserAccessLead({ id: assigned_to, hierarchy_level_order: 3 }, ext.category_id)) {
-                return res.status(400).json({ error: 'Target staff member is not authorized for this lead category.' });
+            if (effectiveCatId) {
+                const targetHasAccess = await canUserAccessLeadAsync({ id: assigned_to, hierarchy_level_order: 3 }, effectiveCatId, false);
+                if (!targetHasAccess) {
+                    return res.status(400).json({ error: 'Target staff member is not authorized for this lead category.' });
+                }
             }
         }
         // Update assignment in PostgreSQL
@@ -1375,9 +1456,14 @@ exports.leadManagementRouter.get('/crm/action-center', async (req, res) => {
         const todayStr = new Date().toISOString().split('T')[0];
         // Fetch accessible leads
         const allLeads = await (0, supabase_1.queryAll)('SELECT l.*, u.full_name as assigned_agent_name FROM crm_leads l LEFT JOIN user_profiles u ON l.assigned_to = u.id WHERE l.is_merged = 0 ORDER BY l.created_at DESC');
+        const userCatIds = await getUserCategoryIdsAsync(user.id);
+        const isSuper = isSupervisorOrAdmin(user);
         const scopedLeads = allLeads.filter(l => {
-            const ext = store.extended_leads[l.id];
-            return canUserAccessLead(user, ext === null || ext === void 0 ? void 0 : ext.category_id);
+            var _a;
+            if (isSuper)
+                return true;
+            const catId = l.category_id || ((_a = store.extended_leads[l.id]) === null || _a === void 0 ? void 0 : _a.category_id);
+            return catId ? userCatIds.includes(catId) : false;
         });
         const followUps = await (0, supabase_1.queryAll)('SELECT * FROM crm_follow_ups ORDER BY scheduled_at ASC');
         const fuMap = new Map();
@@ -1473,11 +1559,12 @@ exports.leadManagementRouter.patch('/crm/leads/:id/pipeline-status', async (req,
         if (!allowed.includes(pipeline_status)) {
             return res.status(400).json({ error: 'Invalid pipeline status. Must be one of: ' + allowed.join(', ') });
         }
-        const store = (0, leadStore_1.loadLeadStore)();
-        const ext = store.extended_leads[leadId] || {};
-        if (!canUserAccessLead(user, ext.category_id)) {
+        const hasAccess = await canUserAccessLeadAsync(user, leadId, true);
+        if (!hasAccess) {
             return res.status(403).json({ error: 'You do not have access to this lead.' });
         }
+        const store = (0, leadStore_1.loadLeadStore)();
+        const ext = store.extended_leads[leadId] || {};
         ext.pipeline_status = pipeline_status;
         store.extended_leads[leadId] = ext;
         (0, leadStore_1.saveLeadStore)(store);
@@ -1497,7 +1584,15 @@ exports.leadManagementRouter.get('/crm/analytics', async (req, res) => {
             return res.status(401).json({ error: 'Authentication required.' });
         const store = (0, leadStore_1.loadLeadStore)();
         const allLeads = await (0, supabase_1.queryAll)('SELECT l.*, u.full_name as assigned_agent_name FROM crm_leads l LEFT JOIN user_profiles u ON l.assigned_to = u.id WHERE l.is_merged = 0');
-        const scoped = allLeads.filter(l => { var _a; return canUserAccessLead(user, (_a = store.extended_leads[l.id]) === null || _a === void 0 ? void 0 : _a.category_id); });
+        const userCatIds = await getUserCategoryIdsAsync(user.id);
+        const isSuper = isSupervisorOrAdmin(user);
+        const scoped = allLeads.filter(l => {
+            var _a;
+            if (isSuper)
+                return true;
+            const catId = l.category_id || ((_a = store.extended_leads[l.id]) === null || _a === void 0 ? void 0 : _a.category_id);
+            return catId ? userCatIds.includes(catId) : false;
+        });
         // Sources breakdown
         const sourceMap = {};
         const categoryMap = {};
@@ -1535,12 +1630,13 @@ exports.leadManagementRouter.post('/crm/leads/:id/reveal-phone', async (req, res
         if (!isValidLeadId(leadId)) {
             return res.status(400).json({ error: 'A valid Lead ID is required.' });
         }
-        const store = (0, leadStore_1.loadLeadStore)();
-        const ext = store.extended_leads[leadId] || {};
         // Enforce category access (LM-16)
-        if (!canUserAccessLead(user, ext.category_id)) {
+        const hasAccess = await canUserAccessLeadAsync(user, leadId, true);
+        if (!hasAccess) {
             return res.status(403).json({ error: 'You do not have permission to access contact info for this category.' });
         }
+        const store = (0, leadStore_1.loadLeadStore)();
+        const ext = store.extended_leads[leadId] || {};
         // Query unmasked primary lead record from PostgreSQL
         const lead = await (0, supabase_1.queryOne)('SELECT id, phone, contact_person, company_name FROM crm_leads WHERE id = ?', [leadId]);
         if (!lead) {
