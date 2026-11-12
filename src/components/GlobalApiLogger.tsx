@@ -57,22 +57,24 @@ export function GlobalApiLogger() {
         response.clone().json().then((data) => {
           if (isSuccess) {
             console.groupCollapsed(
-              `%c${method}%c ${url.split('?')[0]} %c${status} OK (${duration}ms)`,
+              `%c${method}%c ${url} %c${status} OK (${duration}ms)`,
               'background: #10b981; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;',
               'color: #a7f3d0; font-weight: normal;',
               'color: #34d399; font-weight: bold;'
             )
+            console.log('Request URL:', url)
             console.log('Response Status:', status)
             console.log('Duration:', `${duration}ms`)
             console.log('Response Data:', data)
             console.groupEnd()
           } else {
             console.group(
-              `%c${method}%c ${url.split('?')[0]} %c${status} ERROR (${duration}ms)`,
+              `%c${method}%c ${url} %c${status} ERROR (${duration}ms)`,
               'background: #ef4444; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;',
               'color: #fca5a5; font-weight: normal;',
               'color: #f87171; font-weight: bold;'
             )
+            console.error('Request URL:', url)
             console.error('Response Status:', status)
             console.error('Duration:', `${duration}ms`)
             console.error('Error Payload:', data)
