@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import ShellLayout from '@/components/ShellLayout'
+import { GlobalApiLogger } from '@/components/GlobalApiLogger'
 
 export const metadata: Metadata = {
   title: 'SignSync B2B Enterprise Platform | v2.4',
@@ -23,6 +24,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="bg-slate-950 text-slate-100 antialiased font-sans">
+        <GlobalApiLogger />
         <ShellLayout>{children}</ShellLayout>
       </body>
     </html>

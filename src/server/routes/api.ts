@@ -1709,24 +1709,25 @@ apiRouter.get('/crm/leads', requirePermission('crm', 'can_view'), async (req: Re
     const rawLeads = await queryAll(selectSql, params)
 
     // Merge extended metadata (category, source, service_intent, match_status, geography)
+    // NOTE: Prefer relational attributes on 'l' (crm_leads table) with fallback to store.extended_leads
     const enriched = rawLeads.map((l: any) => {
-      const ext = store.extended_leads[l.id] || {}
+      const ext = store.extended_leads?.[l.id] || {}
       return {
         ...l,
-        alternate_name: ext.alternate_name || null,
-        state: ext.state || null,
-        district: ext.district || null,
-        address: ext.address || null,
-        pin_code: ext.pin_code || null,
-        source_id: ext.source_id || null,
-        category_id: ext.category_id || null,
-        service_intent: ext.service_intent || 'Undecided',
-        match_status: ext.match_status || 'NO_MATCH',
-        linked_partner_id: ext.linked_partner_id || null,
-        partner_match_score: ext.partner_match_score || 0,
-        partner_match_factors: ext.partner_match_factors || null,
-        city: ext.city || null,
-        pipeline_status: ext.pipeline_status || (l.status === 'merged' ? 'WON' : l.status.toUpperCase()),
+        alternate_name: l.alternate_name || ext.alternate_name || null,
+        state: l.state || ext.state || null,
+        district: l.district || ext.district || null,
+        address: l.address || ext.address || null,
+        pin_code: l.pin_code || ext.pin_code || null,
+        source_id: l.source_id || ext.source_id || null,
+        category_id: l.category_id || ext.category_id || null,
+        service_intent: l.service_intent || ext.service_intent || 'Undecided',
+        match_status: l.match_status || ext.match_status || 'NO_MATCH',
+        linked_partner_id: l.linked_partner_id || ext.linked_partner_id || null,
+        partner_match_score: l.partner_match_score ?? ext.partner_match_score ?? 0,
+        partner_match_factors: l.partner_match_factors || ext.partner_match_factors || null,
+        city: l.city || ext.city || null,
+        pipeline_status: ext.pipeline_status || l.pipeline_status || (l.status === 'merged' ? 'WON' : l.status.toUpperCase()),
         applied_tat_days: ext.applied_tat_days || null,
         first_contact_due_at: ext.first_contact_due_at || null,
         assignment_history: ext.assignment_history || []
