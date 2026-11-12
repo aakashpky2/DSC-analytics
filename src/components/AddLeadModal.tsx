@@ -55,6 +55,9 @@ export function AddLeadModal({ isOpen, onClose, onSuccess }: ModalProps) {
   const pinCodeRef = useRef<HTMLInputElement>(null)
   const panRef = useRef<HTMLInputElement>(null)
 
+  // AbortController ref to cancel previous pending requests and avoid simultaneous network hammering
+  const matchAbortControllerRef = useRef<AbortController | null>(null)
+
   const resetForm = useCallback(() => {
     setFormData(INITIAL_LEAD_FORM)
     setFieldErrors({})
@@ -88,11 +91,6 @@ export function AddLeadModal({ isOpen, onClose, onSuccess }: ModalProps) {
     resetForm()
     onClose()
   }
-
-  if (!isOpen) return null
-
-  // AbortController ref to cancel previous pending requests and avoid simultaneous network hammering
-  const matchAbortControllerRef = useRef<AbortController | null>(null)
 
   // Real-time partner matching & duplicate check with request cancellation & debounce
   const checkMatches = async () => {
@@ -279,6 +277,8 @@ export function AddLeadModal({ isOpen, onClose, onSuccess }: ModalProps) {
       setLoading(false)
     }
   }
+
+  if (!isOpen) return null
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
