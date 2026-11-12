@@ -5321,6 +5321,30 @@
       "tracking_status": "PENDING_QUALIFICATION",
       "last_updated_by": "usr-1794390921917",
       "updated_at": "2026-11-11T11:40:23.360Z"
+    },
+    "lead-1794464366222": {
+      "id": "lst-1794464367137",
+      "lead_id": "lead-1794464366222",
+      "service_intent": "DSC",
+      "token_requested": 0,
+      "token_fulfilled": 0,
+      "dsc_requested": 1,
+      "dsc_fulfilled": 0,
+      "tracking_status": "PENDING_QUALIFICATION",
+      "last_updated_by": "usr-1794390921917",
+      "updated_at": "2026-11-12T06:19:27.137Z"
+    },
+    "lead-1794464392580": {
+      "id": "lst-1794464393632",
+      "lead_id": "lead-1794464392580",
+      "service_intent": "Undecided",
+      "token_requested": 0,
+      "token_fulfilled": 0,
+      "dsc_requested": 0,
+      "dsc_fulfilled": 0,
+      "tracking_status": "PENDING_QUALIFICATION",
+      "last_updated_by": "usr-1794390921917",
+      "updated_at": "2026-11-12T06:19:53.632Z"
     }
   },
   "conversion_links": {
@@ -9602,6 +9626,42 @@
       "partner_match_factors": "",
       "applied_tat_days": 2,
       "first_contact_due_at": "2026-11-13T11:40:23.360Z"
+    },
+    "lead-1794464366222": {
+      "alternate_name": "Apex DSC",
+      "city": "Kochi",
+      "state": "Kerala",
+      "district": "Ernakulam",
+      "address": "MG Road, Kochi",
+      "pin_code": "682001",
+      "source_id": "src-1",
+      "category_id": "cat-dsc-partner",
+      "service_intent": "DSC",
+      "pipeline_status": "NEW",
+      "match_status": "NO_MATCH",
+      "linked_partner_id": null,
+      "partner_match_score": 0,
+      "partner_match_factors": "",
+      "applied_tat_days": 2,
+      "first_contact_due_at": "2026-11-14T06:19:27.137Z"
+    },
+    "lead-1794464392580": {
+      "alternate_name": null,
+      "city": "Kochi",
+      "state": "Kerala",
+      "district": null,
+      "address": null,
+      "pin_code": null,
+      "source_id": null,
+      "category_id": null,
+      "service_intent": "Undecided",
+      "pipeline_status": "NEW",
+      "match_status": "NO_MATCH",
+      "linked_partner_id": null,
+      "partner_match_score": 0,
+      "partner_match_factors": "",
+      "applied_tat_days": 2,
+      "first_contact_due_at": "2026-11-14T06:19:53.632Z"
     }
   },
   "import_batches": [
