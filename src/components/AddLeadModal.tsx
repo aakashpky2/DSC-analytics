@@ -104,6 +104,11 @@ export function AddLeadModal({ isOpen, onClose, onSuccess }: ModalProps) {
     matchAbortControllerRef.current = abortController
 
     try {
+      console.log('[AddLeadModal] checkMatches initiating with:', {
+        company: formData.company_name,
+        email: formData.email,
+        phone: formData.phone
+      })
       // 1. Check partner matching (LM-08 to LM-11)
       const pRes = await fetch('/api/crm/leads/check-partner-match', {
         method: 'POST',
@@ -116,8 +121,13 @@ export function AddLeadModal({ isOpen, onClose, onSuccess }: ModalProps) {
           phone: formData.phone,
         }),
       })
-      if (!pRes.ok) return
+      console.log('[AddLeadModal] check-partner-match HTTP status:', pRes.status)
+      if (!pRes.ok) {
+        console.warn('[AddLeadModal] check-partner-match returned non-OK status:', pRes.status)
+        return
+      }
       const pData = await pRes.json()
+      console.log('[AddLeadModal] check-partner-match response payload:', pData)
       if (pData.hasMatch) {
         setPartnerMatchWarning(pData)
       } else {
@@ -131,15 +141,24 @@ export function AddLeadModal({ isOpen, onClose, onSuccess }: ModalProps) {
         signal: abortController.signal,
         body: JSON.stringify(formData),
       })
-      if (!dRes.ok) return
+      console.log('[AddLeadModal] check-duplicate HTTP status:', dRes.status)
+      if (!dRes.ok) {
+        console.warn('[AddLeadModal] check-duplicate returned non-OK status:', dRes.status)
+        return
+      }
       const dData = await dRes.json()
+      console.log('[AddLeadModal] check-duplicate response payload:', dData)
       if (dData.hasAlert) {
         setDuplicateWarning('Notice: Potential duplicate lead already exists in intake records.')
       } else {
         setDuplicateWarning(null)
       }
     } catch (err: any) {
-      if (err.name === 'AbortError') return
+      if (err.name === 'AbortError') {
+        console.log('[AddLeadModal] Previous match check request aborted.')
+        return
+      }
+      console.error('[AddLeadModal] checkMatches error:', err)
       // non-blocking
     }
   }
@@ -232,8 +251,10 @@ export function AddLeadModal({ isOpen, onClose, onSuccess }: ModalProps) {
     setSuccessMsg('')
 
     // LM-06 & LM-32: Validate complete intake payload (optional fields allowed; supplied invalid fields rejected)
+    console.log('[AddLeadModal] Submitting lead formData:', formData)
     const validation = validateLeadPayload(formData)
     if (!validation.valid) {
+      console.warn('[AddLeadModal] Frontend validation failed:', validation.errors)
       setFieldErrors(validation.errors)
 
       // Focus first invalid field
@@ -251,13 +272,16 @@ export function AddLeadModal({ isOpen, onClose, onSuccess }: ModalProps) {
     setLoading(true)
 
     try {
+      console.log('[AddLeadModal] Sending POST /api/crm/leads with sanitized payload:', validation.sanitized)
       const res = await fetch('/api/crm/leads', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(validation.sanitized),
       })
+      console.log('[AddLeadModal] POST /api/crm/leads response status:', res.status)
 
       const data = await res.json().catch(() => ({}))
+      console.log('[AddLeadModal] POST /api/crm/leads response data:', data)
 
       if (!res.ok) {
         if (res.status === 422 && data.errors) {
@@ -266,12 +290,14 @@ export function AddLeadModal({ isOpen, onClose, onSuccess }: ModalProps) {
         throw new Error(data.error || 'Unable to save lead. Please check your inputs.')
       }
 
+      console.log('[AddLeadModal] Lead created successfully!')
       setSuccessMsg('Customer lead created successfully!')
       setTimeout(() => {
         onSuccess()
         handleClose()
       }, 700)
     } catch (err: any) {
+      console.error('[AddLeadModal] Lead save error:', err)
       setError(err.message || 'Please check your inputs')
     } finally {
       setLoading(false)
