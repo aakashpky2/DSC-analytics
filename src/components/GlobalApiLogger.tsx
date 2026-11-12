@@ -79,9 +79,30 @@ export function GlobalApiLogger() {
             console.error('Duration:', `${duration}ms`)
             console.error('Error Payload:', data)
             console.groupEnd()
+
+            // Centrally dispatch 401 and 403 errors to Toast notification layer
+            if (status === 401 || status === 403) {
+              const errorMessage = data?.error || data?.message || (status === 403 ? 'Access forbidden by security policy.' : 'Authentication required.')
+              window.dispatchEvent(
+                new CustomEvent('signsync:auth-error', {
+                  detail: { status, message: errorMessage }
+                })
+              )
+            }
           }
         }).catch(() => {
           // If response is not JSON (e.g. text/html/binary)
+          if (status === 401 || status === 403) {
+            window.dispatchEvent(
+              new CustomEvent('signsync:auth-error', {
+                detail: {
+                  status,
+                  message: status === 403 ? 'Access restricted: you do not have permission for this resource.' : 'Session expired or unauthenticated.'
+                }
+              })
+            )
+          }
+
           const badgeStyle = isSuccess
             ? 'background: #10b981; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;'
             : 'background: #ef4444; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;'
