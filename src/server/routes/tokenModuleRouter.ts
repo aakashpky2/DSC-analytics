@@ -92,7 +92,12 @@ function requireTokenModuleAccess(req: Request, res: Response, next: NextFunctio
   next()
 }
 
-tokenModuleRouter.use(requireAuth, requireTokenModuleAccess)
+tokenModuleRouter.use('/token-', requireAuth, requireTokenModuleAccess)
+tokenModuleRouter.use('/pricing-categories', requireAuth, requireTokenModuleAccess)
+tokenModuleRouter.use('/customer-category-assignments', requireAuth, requireTokenModuleAccess)
+tokenModuleRouter.use('/customer-levels', requireAuth, requireTokenModuleAccess)
+tokenModuleRouter.use('/customer-level-rules', requireAuth, requireTokenModuleAccess)
+tokenModuleRouter.use('/customer-level-assignments', requireAuth, requireTokenModuleAccess)
 
 // ============================================================================
 // PART A: DOCUMENT TEMPLATES API

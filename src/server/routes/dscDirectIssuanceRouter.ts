@@ -72,7 +72,7 @@ function requireDirectIssuanceAccess(req: Request, res: Response, next: NextFunc
   next()
 }
 
-dscDirectIssuanceRouter.use(requireAuth, requireDirectIssuanceAccess)
+dscDirectIssuanceRouter.use('/dsc/direct', requireAuth, requireDirectIssuanceAccess)
 dscDirectIssuanceRouter.get('/dsc/direct/init-data', requireAuth, async (req: Request, res: Response) => {
   try {
     const user = getSessionUser(req)

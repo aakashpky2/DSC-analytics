@@ -1,5 +1,3 @@
-import sqliteDump from '../../data/sqlite_dump.json';
-
 export interface RoleModulePermissionRecord {
   id: string;
   role_id: string;
@@ -31,15 +29,50 @@ export const FALLBACK_APP_MODULES: AppConfigModuleRecord[] = [
   { id: 'mod-courier', module_key: 'courier', display_name: 'Courier & POD Tracking', route_path: '/courier' },
 ];
 
-export const FALLBACK_ROLE_MODULE_PERMISSIONS: RoleModulePermissionRecord[] = (sqliteDump.role_module_permissions || []) as any[];
+export const FALLBACK_ROLE_MODULE_PERMISSIONS: RoleModulePermissionRecord[] = [
+  // Super Admin (Level 0)
+  { id: 'rmp-admin-dashboard', role_id: 'role-super-admin', module_id: 'mod-dashboard', can_view: 1, can_create: 1, can_edit: 1, can_delete: 1, can_export: 1, mask_pii_fields: 0 },
+  { id: 'rmp-admin-crm', role_id: 'role-super-admin', module_id: 'mod-crm', can_view: 1, can_create: 1, can_edit: 1, can_delete: 1, can_export: 1, mask_pii_fields: 0 },
+  { id: 'rmp-admin-partners', role_id: 'role-super-admin', module_id: 'mod-partners', can_view: 1, can_create: 1, can_edit: 1, can_delete: 1, can_export: 1, mask_pii_fields: 0 },
+  { id: 'rmp-admin-dsc', role_id: 'role-super-admin', module_id: 'mod-dsc', can_view: 1, can_create: 1, can_edit: 1, can_delete: 1, can_export: 1, mask_pii_fields: 0 },
+  { id: 'rmp-admin-inventory', role_id: 'role-super-admin', module_id: 'mod-inventory', can_view: 1, can_create: 1, can_edit: 1, can_delete: 1, can_export: 1, mask_pii_fields: 0 },
+  { id: 'rmp-admin-billing', role_id: 'role-super-admin', module_id: 'mod-billing', can_view: 1, can_create: 1, can_edit: 1, can_delete: 1, can_export: 1, mask_pii_fields: 0 },
+  { id: 'rmp-admin-courier', role_id: 'role-super-admin', module_id: 'mod-courier', can_view: 1, can_create: 1, can_edit: 1, can_delete: 1, can_export: 1, mask_pii_fields: 0 },
+  { id: 'rmp-admin-users', role_id: 'role-super-admin', module_id: 'mod-users', can_view: 1, can_create: 1, can_edit: 1, can_delete: 1, can_export: 1, mask_pii_fields: 0 },
+
+  // Field Staff / Tele-caller (Level 4)
+  { id: 'rmp-field-dashboard', role_id: 'role-field-staff', module_id: 'mod-dashboard', can_view: 1, can_create: 1, can_edit: 0, can_delete: 0, can_export: 0, mask_pii_fields: 1 },
+  { id: 'rmp-field-crm', role_id: 'role-field-staff', module_id: 'mod-crm', can_view: 1, can_create: 1, can_edit: 0, can_delete: 0, can_export: 0, mask_pii_fields: 1 },
+  { id: 'rmp-field-partners', role_id: 'role-field-staff', module_id: 'mod-partners', can_view: 1, can_create: 0, can_edit: 0, can_delete: 0, can_export: 0, mask_pii_fields: 1 },
+  { id: 'rmp-field-dsc', role_id: 'role-field-staff', module_id: 'mod-dsc', can_view: 1, can_create: 0, can_edit: 0, can_delete: 0, can_export: 0, mask_pii_fields: 1 },
+  { id: 'rmp-field-inventory', role_id: 'role-field-staff', module_id: 'mod-inventory', can_view: 0, can_create: 0, can_edit: 0, can_delete: 0, can_export: 0, mask_pii_fields: 1 },
+  { id: 'rmp-field-services', role_id: 'role-field-staff', module_id: 'mod-services', can_view: 0, can_create: 0, can_edit: 0, can_delete: 0, can_export: 0, mask_pii_fields: 1 },
+  { id: 'rmp-field-billing', role_id: 'role-field-staff', module_id: 'mod-billing', can_view: 0, can_create: 0, can_edit: 0, can_delete: 0, can_export: 0, mask_pii_fields: 1 },
+  { id: 'rmp-field-courier', role_id: 'role-field-staff', module_id: 'mod-courier', can_view: 0, can_create: 0, can_edit: 0, can_delete: 0, can_export: 0, mask_pii_fields: 1 },
+  { id: 'rmp-field-users', role_id: 'role-field-staff', module_id: 'mod-users', can_view: 0, can_create: 0, can_edit: 0, can_delete: 0, can_export: 0, mask_pii_fields: 1 },
+
+  // Senior Executive / Staff (Level 3)
+  { id: 'rmp-senior-dashboard', role_id: 'role-senior-staff', module_id: 'mod-dashboard', can_view: 1, can_create: 1, can_edit: 0, can_delete: 0, can_export: 0, mask_pii_fields: 0 },
+  { id: 'rmp-senior-crm', role_id: 'role-senior-staff', module_id: 'mod-crm', can_view: 1, can_create: 1, can_edit: 1, can_delete: 0, can_export: 0, mask_pii_fields: 0 },
+  { id: 'rmp-senior-partners', role_id: 'role-senior-staff', module_id: 'mod-partners', can_view: 1, can_create: 1, can_edit: 1, can_delete: 0, can_export: 0, mask_pii_fields: 0 },
+  { id: 'rmp-senior-dsc', role_id: 'role-senior-staff', module_id: 'mod-dsc', can_view: 1, can_create: 1, can_edit: 1, can_delete: 0, can_export: 0, mask_pii_fields: 0 },
+
+  // Branch Manager (Level 2)
+  { id: 'rmp-branch-dashboard', role_id: 'role-branch-mgr', module_id: 'mod-dashboard', can_view: 1, can_create: 1, can_edit: 1, can_delete: 0, can_export: 1, mask_pii_fields: 0 },
+  { id: 'rmp-branch-crm', role_id: 'role-branch-mgr', module_id: 'mod-crm', can_view: 1, can_create: 1, can_edit: 1, can_delete: 0, can_export: 1, mask_pii_fields: 0 },
+
+  // Regional Admin (Level 1)
+  { id: 'rmp-reg-dashboard', role_id: 'role-partner-admin', module_id: 'mod-dashboard', can_view: 1, can_create: 1, can_edit: 1, can_delete: 1, can_export: 1, mask_pii_fields: 0 },
+  { id: 'rmp-reg-crm', role_id: 'role-partner-admin', module_id: 'mod-crm', can_view: 1, can_create: 1, can_edit: 1, can_delete: 1, can_export: 1, mask_pii_fields: 0 },
+];
 
 export function getFallbackRolePermission(roleId: string, moduleKey: string): RoleModulePermissionRecord | null {
   const mod = FALLBACK_APP_MODULES.find((m) => m.module_key === moduleKey);
   if (!mod) return null;
 
+  const normalizedRoleId = roleId.startsWith('role-') ? roleId : `role-${roleId}`;
   const perm = FALLBACK_ROLE_MODULE_PERMISSIONS.find(
-    (p) => (p.role_id === roleId || p.role_id === `role-${roleId}`) && p.module_id === mod.id
+    (p) => (p.role_id === roleId || p.role_id === normalizedRoleId) && p.module_id === mod.id
   );
   return perm || null;
 }
-

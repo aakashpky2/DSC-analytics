@@ -58,6 +58,7 @@ const dscIssuanceRouter_1 = require("./dscIssuanceRouter");
 const dscDirectIssuanceRouter_1 = require("./dscDirectIssuanceRouter");
 const unifiedRevenueRouter_1 = require("./unifiedRevenueRouter");
 const dashboardRouter_1 = require("./dashboardRouter");
+const leadValidation_1 = require("../../lib/leadValidation");
 const leadStore_1 = require("../leadStore");
 const partnerMatchEngine_1 = require("../partnerMatchEngine");
 exports.apiRouter = (0, express_1.Router)();
@@ -1574,18 +1575,25 @@ exports.apiRouter.post('/crm/leads/check-duplicate', requirePermission('crm', 'c
     }
 });
 exports.apiRouter.post('/crm/leads', requirePermission('crm', 'can_create'), async (req, res) => {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f;
     try {
         const user = req.user;
-        const { company_name, alternate_name, contact_person, email, phone, state, district, address, pin_code, source_id, category_id, service_intent, city, pan, requirement_summary, pipeline_status } = req.body;
-        // LM-06: All lead fields optional. No personal/contact field may block saving.
-        // If not supplied, provide clean empty string for legacy not-null columns while keeping extendedStore unpolluted
-        const cleanCompany = company_name ? company_name.trim() : '';
-        const cleanContact = contact_person ? contact_person.trim() : '';
-        const cleanEmail = email ? email.trim().toLowerCase() : '';
-        const cleanPhone = phone ? phone.trim() : '';
-        const cleanPan = pan ? pan.trim().toUpperCase() : null;
-        const cleanReq = requirement_summary ? requirement_summary.trim() : '';
+        // LM-06 & LM-32: Strict supplied-value validation while preserving optional intake
+        const validation = (0, leadValidation_1.validateLeadPayload)(req.body || {});
+        if (!validation.valid) {
+            return res.status(422).json({
+                error: 'Validation failed on supplied lead details.',
+                errors: validation.errors,
+            });
+        }
+        const { company_name, alternate_name, contact_person, email, phone, state, district, address, pin_code, source_id, category_id, service_intent, city, pan, requirement_summary, } = validation.sanitized;
+        const pipeline_status = (_a = req.body) === null || _a === void 0 ? void 0 : _a.pipeline_status;
+        const cleanCompany = company_name || '';
+        const cleanContact = contact_person || '';
+        const cleanEmail = email || '';
+        const cleanPhone = phone || '';
+        const cleanPan = pan || null;
+        const cleanReq = requirement_summary || '';
         const id = `lead-${Date.now()}`;
         const lead_code = await allocateNextReferenceNumber('lead');
         // LM-08 to LM-11: Evaluate partner matching immediately on creation
@@ -1616,12 +1624,12 @@ exports.apiRouter.post('/crm/leads', requirePermission('crm', 'can_create'), asy
                 if (tatData && tatData.length > 0 && tatData[0].first_contact_tat_days) {
                     appliedTatDays = Number(tatData[0].first_contact_tat_days);
                 }
-                else if ((_b = (_a = store.tat_settings) === null || _a === void 0 ? void 0 : _a[0]) === null || _b === void 0 ? void 0 : _b.first_contact_tat_days) {
+                else if ((_c = (_b = store.tat_settings) === null || _b === void 0 ? void 0 : _b[0]) === null || _c === void 0 ? void 0 : _c.first_contact_tat_days) {
                     appliedTatDays = Number(store.tat_settings[0].first_contact_tat_days);
                 }
             }
             catch (e) {
-                if ((_d = (_c = store.tat_settings) === null || _c === void 0 ? void 0 : _c[0]) === null || _d === void 0 ? void 0 : _d.first_contact_tat_days) {
+                if ((_e = (_d = store.tat_settings) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.first_contact_tat_days) {
                     appliedTatDays = Number(store.tat_settings[0].first_contact_tat_days);
                 }
             }
@@ -1638,7 +1646,7 @@ exports.apiRouter.post('/crm/leads', requirePermission('crm', 'can_create'), asy
                 service_intent: service_intent || 'Undecided',
                 pipeline_status: pipeline_status || 'NEW',
                 match_status: partnerMatch.matchStatus,
-                linked_partner_id: ((_e = partnerMatch.matchedPartner) === null || _e === void 0 ? void 0 : _e.id) || null,
+                linked_partner_id: ((_f = partnerMatch.matchedPartner) === null || _f === void 0 ? void 0 : _f.id) || null,
                 partner_match_score: partnerMatch.matchScore,
                 partner_match_factors: partnerMatch.matchFactors.join(' | '),
                 applied_tat_days: appliedTatDays,

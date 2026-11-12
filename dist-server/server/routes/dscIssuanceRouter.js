@@ -30,7 +30,7 @@ function requireIssuanceAccess(req, res, next) {
     }
     next();
 }
-exports.dscIssuanceRouter.use(requireAuth, requireIssuanceAccess);
+exports.dscIssuanceRouter.use('/dsc/issuance', requireAuth, requireIssuanceAccess);
 // ----------------------------------------------------------------------------
 // 1. GET INITIAL ISSUANCE LOOKUP DATA
 // ----------------------------------------------------------------------------

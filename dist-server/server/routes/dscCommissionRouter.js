@@ -26,7 +26,7 @@ function requireAdmin(req, res, next) {
 // ----------------------------------------------------------------------------
 // Enforce Level 0/1 on all commission routes
 // ----------------------------------------------------------------------------
-exports.dscCommissionRouter.use(requireAuth, requireAdmin);
+exports.dscCommissionRouter.use('/dsc', requireAuth, requireAdmin);
 // ----------------------------------------------------------------------------
 // 1. PARTNER ROLE TOGGLE & RETRIEVAL (Dual-role support)
 // ----------------------------------------------------------------------------

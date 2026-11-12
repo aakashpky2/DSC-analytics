@@ -32,7 +32,7 @@ function requireProcurementAccess(req, res, next) {
     }
     next();
 }
-exports.procurementRouter.use(requireAuth, requireProcurementAccess);
+exports.procurementRouter.use('/token-procurement', requireAuth, requireProcurementAccess);
 // RBAC Guards
 function requirePermission(moduleKey, actionKey) {
     return (req, res, next) => {

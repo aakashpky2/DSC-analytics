@@ -40,7 +40,7 @@ function requireIssuanceAccess(req: Request, res: Response, next: any) {
   next()
 }
 
-dscIssuanceRouter.use(requireAuth, requireIssuanceAccess)
+dscIssuanceRouter.use('/dsc/issuance', requireAuth, requireIssuanceAccess)
 
 // ----------------------------------------------------------------------------
 // 1. GET INITIAL ISSUANCE LOOKUP DATA

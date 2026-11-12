@@ -41,7 +41,12 @@ function requireTokenModuleAccess(req, res, next) {
     }
     next();
 }
-exports.tokenModuleRouter.use(requireAuth, requireTokenModuleAccess);
+exports.tokenModuleRouter.use('/token-', requireAuth, requireTokenModuleAccess);
+exports.tokenModuleRouter.use('/pricing-categories', requireAuth, requireTokenModuleAccess);
+exports.tokenModuleRouter.use('/customer-category-assignments', requireAuth, requireTokenModuleAccess);
+exports.tokenModuleRouter.use('/customer-levels', requireAuth, requireTokenModuleAccess);
+exports.tokenModuleRouter.use('/customer-level-rules', requireAuth, requireTokenModuleAccess);
+exports.tokenModuleRouter.use('/customer-level-assignments', requireAuth, requireTokenModuleAccess);
 // ============================================================================
 // PART A: DOCUMENT TEMPLATES API
 // ============================================================================

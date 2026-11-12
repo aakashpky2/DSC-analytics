@@ -9,6 +9,7 @@ exports.queryOne = queryOne;
 exports.run = run;
 const supabase_js_1 = require("@supabase/supabase-js");
 const dotenv_1 = __importDefault(require("dotenv"));
+const defaultRolePermissions_1 = require("./defaultRolePermissions");
 dotenv_1.default.config({ path: '.env.local' });
 dotenv_1.default.config();
 let rawUrl = process.env.SUPABASE_URL || 'https://kbqwsfmfiomcakbhclca.supabase.co';
@@ -389,16 +390,24 @@ async function queryOne(sql, params = []) {
         if (table === 'role_module_permissions' && sql.includes('app_modules')) {
             const roleId = params[0];
             const moduleKey = params[1];
-            const { data: mod } = await exports.supabase.from('app_modules').select('id').eq('module_key', moduleKey).maybeSingle();
-            if (!mod)
-                return null;
-            const { data: perm } = await exports.supabase
-                .from('role_module_permissions')
-                .select('*')
-                .eq('role_id', roleId)
-                .eq('module_id', mod.id)
-                .maybeSingle();
-            return (perm || null);
+            try {
+                const { data: mod } = await exports.supabase.from('app_modules').select('id').eq('module_key', moduleKey).maybeSingle();
+                if (mod) {
+                    const { data: perm } = await exports.supabase
+                        .from('role_module_permissions')
+                        .select('*')
+                        .eq('role_id', roleId)
+                        .eq('module_id', mod.id)
+                        .maybeSingle();
+                    if (perm)
+                        return perm;
+                }
+            }
+            catch (_h) {
+                // Fallback to configured default permissions matrix
+            }
+            const fallback = (0, defaultRolePermissions_1.getFallbackRolePermission)(roleId, moduleKey);
+            return (fallback || null);
         }
         // 5. Temporary delegations active grant check
         if (table === 'temporary_delegations' && sql.includes('JOIN user_profiles')) {
