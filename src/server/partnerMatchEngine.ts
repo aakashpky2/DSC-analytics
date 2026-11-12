@@ -50,6 +50,31 @@ function levenshteinDistance(a: string, b: string): number {
   return matrix[bn][an]
 }
 
+// In-memory cache for partners list (TTL: 60s) to prevent concurrent DB exhaustion during rapid UI checks
+let cachedPartners: any[] | null = null
+let cacheExpiry = 0
+
+async function getCachedPartners(): Promise<any[]> {
+  const now = Date.now()
+  if (cachedPartners && now < cacheExpiry) {
+    return cachedPartners
+  }
+  try {
+    const fresh = await queryAll<any>('SELECT id, partner_code, company_name, contact_person, email, phone FROM partners')
+    cachedPartners = fresh || []
+    cacheExpiry = now + 60_000 // 60s cache
+    return cachedPartners
+  } catch (err) {
+    if (cachedPartners) return cachedPartners // fallback to previous cache if DB transient error
+    throw err
+  }
+}
+
+export function invalidatePartnerMatchCache(): void {
+  cachedPartners = null
+  cacheExpiry = 0
+}
+
 export async function evaluatePartnerMatch(lead: {
   id?: string
   company_name?: string | null
@@ -62,8 +87,20 @@ export async function evaluatePartnerMatch(lead: {
   const compName = (lead.company_name || '').trim().toLowerCase()
   const altName = (lead.alternate_name || '').trim().toLowerCase()
 
-  // Fetch all partners
-  const partners = await queryAll<any>('SELECT id, partner_code, company_name, contact_person, email, phone FROM partners')
+  // Step 2 & Step 7: Fast-exit if no phone, email, or company name is provided
+  if (!normPhone && !normEmail && !compName && !altName) {
+    return {
+      hasMatch: false,
+      matchStatus: 'NO_MATCH',
+      callBlocked: false,
+      matchScore: 0,
+      matchFactors: [],
+      reviewRequired: false
+    }
+  }
+
+  // Fetch partners (cached in memory with 60s TTL to prevent DB overload)
+  const partners = await getCachedPartners()
   const store = loadLeadStore()
   const altContacts = store.partner_contacts || []
 

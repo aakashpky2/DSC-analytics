@@ -91,15 +91,26 @@ export function AddLeadModal({ isOpen, onClose, onSuccess }: ModalProps) {
 
   if (!isOpen) return null
 
-  // Real-time partner matching & duplicate check
+  // AbortController ref to cancel previous pending requests and avoid simultaneous network hammering
+  const matchAbortControllerRef = useRef<AbortController | null>(null)
+
+  // Real-time partner matching & duplicate check with request cancellation & debounce
   const checkMatches = async () => {
     if (!formData.phone && !formData.email && !formData.company_name) return
+
+    // Cancel any previous in-flight match requests
+    if (matchAbortControllerRef.current) {
+      matchAbortControllerRef.current.abort()
+    }
+    const abortController = new AbortController()
+    matchAbortControllerRef.current = abortController
 
     try {
       // 1. Check partner matching (LM-08 to LM-11)
       const pRes = await fetch('/api/crm/leads/check-partner-match', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: abortController.signal,
         body: JSON.stringify({
           company_name: formData.company_name,
           alternate_name: formData.alternate_name,
@@ -107,6 +118,7 @@ export function AddLeadModal({ isOpen, onClose, onSuccess }: ModalProps) {
           phone: formData.phone,
         }),
       })
+      if (!pRes.ok) return
       const pData = await pRes.json()
       if (pData.hasMatch) {
         setPartnerMatchWarning(pData)
@@ -118,15 +130,18 @@ export function AddLeadModal({ isOpen, onClose, onSuccess }: ModalProps) {
       const dRes = await fetch('/api/crm/leads/check-duplicate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: abortController.signal,
         body: JSON.stringify(formData),
       })
+      if (!dRes.ok) return
       const dData = await dRes.json()
       if (dData.hasAlert) {
         setDuplicateWarning('Notice: Potential duplicate lead already exists in intake records.')
       } else {
         setDuplicateWarning(null)
       }
-    } catch {
+    } catch (err: any) {
+      if (err.name === 'AbortError') return
       // non-blocking
     }
   }

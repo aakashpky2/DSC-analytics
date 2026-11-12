@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.invalidatePartnerMatchCache = invalidatePartnerMatchCache;
 exports.evaluatePartnerMatch = evaluatePartnerMatch;
 const supabase_1 = require("./supabase");
 const leadStore_1 = require("./leadStore");
@@ -31,13 +32,48 @@ function levenshteinDistance(a, b) {
     }
     return matrix[bn][an];
 }
+// In-memory cache for partners list (TTL: 60s) to prevent concurrent DB exhaustion during rapid UI checks
+let cachedPartners = null;
+let cacheExpiry = 0;
+async function getCachedPartners() {
+    const now = Date.now();
+    if (cachedPartners && now < cacheExpiry) {
+        return cachedPartners;
+    }
+    try {
+        const fresh = await (0, supabase_1.queryAll)('SELECT id, partner_code, company_name, contact_person, email, phone FROM partners');
+        cachedPartners = fresh || [];
+        cacheExpiry = now + 60000; // 60s cache
+        return cachedPartners;
+    }
+    catch (err) {
+        if (cachedPartners)
+            return cachedPartners; // fallback to previous cache if DB transient error
+        throw err;
+    }
+}
+function invalidatePartnerMatchCache() {
+    cachedPartners = null;
+    cacheExpiry = 0;
+}
 async function evaluatePartnerMatch(lead) {
     const normPhone = (0, leadStore_1.normalizePhoneNumber)(lead.phone);
     const normEmail = (0, leadStore_1.normalizeEmail)(lead.email);
     const compName = (lead.company_name || '').trim().toLowerCase();
     const altName = (lead.alternate_name || '').trim().toLowerCase();
-    // Fetch all partners
-    const partners = await (0, supabase_1.queryAll)('SELECT id, partner_code, company_name, contact_person, email, phone FROM partners');
+    // Step 2 & Step 7: Fast-exit if no phone, email, or company name is provided
+    if (!normPhone && !normEmail && !compName && !altName) {
+        return {
+            hasMatch: false,
+            matchStatus: 'NO_MATCH',
+            callBlocked: false,
+            matchScore: 0,
+            matchFactors: [],
+            reviewRequired: false
+        };
+    }
+    // Fetch partners (cached in memory with 60s TTL to prevent DB overload)
+    const partners = await getCachedPartners();
     const store = (0, leadStore_1.loadLeadStore)();
     const altContacts = store.partner_contacts || [];
     // Check 1: EXACT MATCH ON PRIMARY PHONE (LM-08)

@@ -355,10 +355,16 @@ exports.leadManagementRouter.post('/crm/user-category-access', async (req, res) 
 exports.leadManagementRouter.post('/crm/leads/check-partner-match', async (req, res) => {
     try {
         const { company_name, alternate_name, email, phone } = req.body;
-        const result = await (0, partnerMatchEngine_1.evaluatePartnerMatch)({ company_name, alternate_name, email, phone });
+        // Wrap execution with a 4.5s safe timeout to prevent any 504 Gateway Timeout from reverse proxies
+        const matchPromise = (0, partnerMatchEngine_1.evaluatePartnerMatch)({ company_name, alternate_name, email, phone });
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Match evaluation timeout')), 4500));
+        const result = await Promise.race([matchPromise, timeoutPromise]);
         return res.json(result);
     }
     catch (err) {
+        if (err.message === 'Match evaluation timeout') {
+            return res.status(504).json({ error: 'Partner match evaluation timed out' });
+        }
         return res.status(500).json({ error: err.message });
     }
 });
