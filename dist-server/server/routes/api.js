@@ -3105,6 +3105,153 @@ exports.apiRouter.get('/inventory/transfers/pdf', requirePermission('inventory',
 // ==========================================
 // 10. Administrator Central Settings (Phase 2)
 // ==========================================
+const masterNavigationStore_1 = require("../masterNavigationStore");
+// Hierarchical Master Navigation APIs
+exports.apiRouter.get('/admin/master-navigation', requireAuth, async (req, res) => {
+    try {
+        const user = req.user;
+        const items = (0, masterNavigationStore_1.loadMasterNavigation)();
+        // Non-super-admins only see active items and modules they have permission for
+        if (user && user.hierarchy_level_order > 0) {
+            const activeItems = items.filter(i => i.is_active === 1);
+            return res.json({ success: true, items: activeItems });
+        }
+        return res.json({ success: true, items });
+    }
+    catch (err) {
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+exports.apiRouter.post('/admin/master-navigation', requireAdmin, async (req, res) => {
+    try {
+        const { parent_id, name, code, type, route, icon, display_order, is_active, permission_key, master_resource } = req.body;
+        if (!name || !code || !type) {
+            return res.status(400).json({ success: false, error: 'Name, code, and type are required.' });
+        }
+        const validTypes = ['MODULE', 'SUB_MODULE', 'MASTER'];
+        if (!validTypes.includes(type)) {
+            return res.status(400).json({ success: false, error: `Invalid type. Allowed: ${validTypes.join(', ')}` });
+        }
+        // Hierarchy validation
+        if (type === 'SUB_MODULE' && !parent_id) {
+            return res.status(400).json({ success: false, error: 'Sub-module must have a parent Module.' });
+        }
+        if (type === 'MASTER' && !parent_id) {
+            return res.status(400).json({ success: false, error: 'Master must have a parent Sub-module or Module.' });
+        }
+        const items = (0, masterNavigationStore_1.loadMasterNavigation)();
+        // Validate duplicate code within siblings or globally
+        if (items.some(i => i.code.toLowerCase() === code.trim().toLowerCase())) {
+            return res.status(409).json({ success: false, error: `Navigation item with code "${code}" already exists.` });
+        }
+        const newItem = {
+            id: `nav-${type.toLowerCase()}-${Date.now()}`,
+            parent_id: parent_id || null,
+            name: name.trim(),
+            code: code.trim().toUpperCase(),
+            type,
+            route: route ? route.trim() : null,
+            icon: icon ? icon.trim() : (type === 'MODULE' ? 'Layers' : type === 'SUB_MODULE' ? 'ChevronRight' : 'Tag'),
+            display_order: Number(display_order || items.length + 1),
+            is_active: is_active !== undefined ? (is_active ? 1 : 0) : 1,
+            permission_key: permission_key ? permission_key.trim() : null,
+            master_resource: master_resource ? master_resource.trim() : null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+        };
+        items.push(newItem);
+        (0, masterNavigationStore_1.saveMasterNavigation)(items);
+        return res.status(201).json({ success: true, item: newItem, message: `${type} created successfully.` });
+    }
+    catch (err) {
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+exports.apiRouter.put('/admin/master-navigation/:id', requireAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { parent_id, name, code, route, icon, display_order, is_active, permission_key, master_resource } = req.body;
+        const items = (0, masterNavigationStore_1.loadMasterNavigation)();
+        const index = items.findIndex(i => i.id === id);
+        if (index === -1) {
+            return res.status(404).json({ success: false, error: 'Navigation item not found.' });
+        }
+        const current = items[index];
+        if (code && code.trim().toLowerCase() !== current.code.toLowerCase()) {
+            if (items.some(i => i.id !== id && i.code.toLowerCase() === code.trim().toLowerCase())) {
+                return res.status(409).json({ success: false, error: `Code "${code}" is already in use.` });
+            }
+        }
+        items[index] = Object.assign(Object.assign({}, current), { parent_id: parent_id !== undefined ? (parent_id || null) : current.parent_id, name: name ? name.trim() : current.name, code: code ? code.trim().toUpperCase() : current.code, route: route !== undefined ? (route ? route.trim() : null) : current.route, icon: icon !== undefined ? (icon ? icon.trim() : current.icon) : current.icon, display_order: display_order !== undefined ? Number(display_order) : current.display_order, is_active: is_active !== undefined ? (is_active ? 1 : 0) : current.is_active, permission_key: permission_key !== undefined ? (permission_key ? permission_key.trim() : null) : current.permission_key, master_resource: master_resource !== undefined ? (master_resource ? master_resource.trim() : null) : current.master_resource, updated_at: new Date().toISOString() });
+        (0, masterNavigationStore_1.saveMasterNavigation)(items);
+        return res.json({ success: true, item: items[index], message: 'Navigation item updated successfully.' });
+    }
+    catch (err) {
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+exports.apiRouter.patch('/admin/master-navigation/:id/status', requireAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { is_active } = req.body;
+        const items = (0, masterNavigationStore_1.loadMasterNavigation)();
+        const index = items.findIndex(i => i.id === id);
+        if (index === -1) {
+            return res.status(404).json({ success: false, error: 'Navigation item not found.' });
+        }
+        const newStatus = is_active ? 1 : 0;
+        items[index].is_active = newStatus;
+        items[index].updated_at = new Date().toISOString();
+        (0, masterNavigationStore_1.saveMasterNavigation)(items);
+        return res.json({
+            success: true,
+            id,
+            is_active: newStatus,
+            message: newStatus ? 'Master activated successfully.' : 'Master deactivated successfully.'
+        });
+    }
+    catch (err) {
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+exports.apiRouter.put('/admin/master-navigation/reorder', requireAdmin, async (req, res) => {
+    try {
+        const { orderings } = req.body; // Array of { id: string, display_order: number }
+        if (!Array.isArray(orderings)) {
+            return res.status(400).json({ success: false, error: 'Orderings must be an array of { id, display_order }.' });
+        }
+        const items = (0, masterNavigationStore_1.loadMasterNavigation)();
+        const orderMap = new Map(orderings.map((o) => [o.id, Number(o.display_order)]));
+        items.forEach(item => {
+            if (orderMap.has(item.id)) {
+                item.display_order = orderMap.get(item.id);
+                item.updated_at = new Date().toISOString();
+            }
+        });
+        (0, masterNavigationStore_1.saveMasterNavigation)(items);
+        return res.json({ success: true, message: 'Display order updated successfully.' });
+    }
+    catch (err) {
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+// Support CRM Lead Statuses Master Endpoints
+exports.apiRouter.get('/crm/lead-statuses', requireAuth, async (_req, res) => {
+    try {
+        const statuses = [
+            { id: 'status-new', code: 'NEW', name: 'New Lead / Fresh Inquiry', is_active: 1, display_order: 1 },
+            { id: 'status-contacted', code: 'CONTACTED', name: 'Contacted / Pitch Made', is_active: 1, display_order: 2 },
+            { id: 'status-follow-up', code: 'FOLLOW_UP', name: 'Follow-up Scheduled', is_active: 1, display_order: 3 },
+            { id: 'status-proposal-sent', code: 'PROPOSAL_SENT', name: 'Price Quotation / Proposal Sent', is_active: 1, display_order: 4 },
+            { id: 'status-won', code: 'WON', name: 'Closed - Won / Partner Converted', is_active: 1, display_order: 5 },
+            { id: 'status-lost', code: 'LOST', name: 'Closed - Lost / Not Interested', is_active: 1, display_order: 6 },
+        ];
+        return res.json({ success: true, statuses });
+    }
+    catch (err) {
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
 // A. Company Profile Settings
 exports.apiRouter.get('/admin/settings/company', requireAuth, async (_req, res) => {
     try {

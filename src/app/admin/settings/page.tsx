@@ -26,7 +26,9 @@ import {
   AlertTriangle,
   Sliders,
   X,
+  FolderTree,
 } from 'lucide-react'
+import { MasterNavigationTreeManager } from '@/components/MasterNavigationTreeManager'
 
 // Master Category & Key definitions for DBIZ two-column navigation
 type MasterKey =
@@ -39,6 +41,9 @@ type MasterKey =
   | 'vendors'
   | 'reasons'
   | 'lead_sources'
+  | 'lead_categories'
+  | 'lead_statuses'
+  | 'communication_channels'
   | 'services'
   | 'bank_accounts'
   | 'couriers'
@@ -204,6 +209,42 @@ const MASTER_DEFINITIONS: Record<MasterKey, MasterDefinition> = {
     canAdd: true,
     fields: [{ name: 'source_name', label: 'Lead Source Channel Name', type: 'text', required: true, editable: true, order: 1 }],
   },
+  lead_categories: {
+    key: 'lead_categories',
+    title: 'CRM Lead Categories',
+    subtitle: 'Authorized business customer segments and RBAC category scope definitions (LM-16/LM-17)',
+    endpoint: '/api/crm/lead-categories',
+    listKey: 'categories',
+    canAdd: true,
+    fields: [
+      { name: 'category_name', label: 'Category Name', type: 'text', required: true, editable: true, order: 1 },
+      { name: 'description', label: 'Category Description', type: 'textarea', required: false, editable: true, order: 2 },
+    ],
+  },
+  lead_statuses: {
+    key: 'lead_statuses',
+    title: 'CRM Lead Pipeline Statuses',
+    subtitle: 'Lifecycle stages of sales pipeline from new intake to won partner conversion',
+    endpoint: '/api/crm/lead-statuses',
+    listKey: 'statuses',
+    canAdd: false,
+    fields: [
+      { name: 'code', label: 'Status Code', type: 'text', required: true, editable: false, order: 1 },
+      { name: 'name', label: 'Status Display Name', type: 'text', required: true, editable: true, order: 2 },
+    ],
+  },
+  communication_channels: {
+    key: 'communication_channels',
+    title: 'Communication Channels',
+    subtitle: 'Verified outreach and customer interaction media (Phone, WhatsApp, Email, Meetings)',
+    endpoint: '/api/crm/communication-channels',
+    listKey: 'channels',
+    canAdd: true,
+    fields: [
+      { name: 'channel_name', label: 'Channel Name', type: 'text', required: true, editable: true, order: 1 },
+      { name: 'channel_icon', label: 'Icon Identifier (e.g. Phone, Mail, MessageSquare)', type: 'text', required: true, editable: true, order: 2 },
+    ],
+  },
   services: {
     key: 'services',
     title: 'Business Compliance Services Catalog',
@@ -294,7 +335,7 @@ const NAV_GROUPS: NavGroup[] = [
     id: 'crm',
     title: 'Customer CRM',
     icon: Tag,
-    masters: ['lead_sources'],
+    masters: ['lead_sources', 'lead_categories', 'lead_statuses', 'communication_channels'],
   },
   {
     id: 'services_group',
@@ -320,7 +361,8 @@ export default function AdminSettingsPage() {
   // ONLY TWO TOP-LEVEL TABS AS REQUIRED BY DBIZ APPROACH:
   // 1. CONFIGURATION
   // 2. NUMBERING
-  const [activeTopTab, setActiveTopTab] = useState<'configuration' | 'numbering'>('configuration')
+  // 3. NAVIGATION (Configurable Hierarchical Master Tree)
+  const [activeTopTab, setActiveTopTab] = useState<'configuration' | 'navigation' | 'numbering'>('configuration')
 
   // DBIZ Configuration State
   const [selectedMasterKey, setSelectedMasterKey] = useState<MasterKey>('company')
@@ -358,6 +400,9 @@ export default function AdminSettingsPage() {
     vendors: [],
     reasons: [],
     lead_sources: [],
+    lead_categories: [],
+    lead_statuses: [],
+    communication_channels: [],
     services: [],
     bank_accounts: [],
     couriers: [],
@@ -710,7 +755,7 @@ export default function AdminSettingsPage() {
         )}
       </div>
 
-      {/* EXACT TWO TOP-LEVEL TABS (DBIZ APPROACH) */}
+      {/* EXACT TOP-LEVEL TABS (CONFIGURATION, HIERARCHICAL NAVIGATION & NUMBERING) */}
       <div className="flex items-center gap-3 border-b border-slate-800">
         <button
           onClick={() => setActiveTopTab('configuration')}
@@ -725,6 +770,18 @@ export default function AdminSettingsPage() {
         </button>
 
         <button
+          onClick={() => setActiveTopTab('navigation')}
+          className={`pb-3 px-2 text-xs font-semibold tracking-wider flex items-center gap-2 border-b-2 transition cursor-pointer ${
+            activeTopTab === 'navigation'
+              ? 'border-purple-500 text-purple-400'
+              : 'border-transparent text-slate-400 hover:text-white'
+          }`}
+        >
+          <FolderTree className="w-4 h-4" />
+          2. HIERARCHICAL NAVIGATION
+        </button>
+
+        <button
           onClick={() => setActiveTopTab('numbering')}
           className={`pb-3 px-2 text-xs font-semibold tracking-wider flex items-center gap-2 border-b-2 transition cursor-pointer ${
             activeTopTab === 'numbering'
@@ -733,9 +790,22 @@ export default function AdminSettingsPage() {
           }`}
         >
           <Hash className="w-4 h-4" />
-          2. NUMBERING
+          3. NUMBERING
         </button>
       </div>
+
+      {/* TAB 2: HIERARCHICAL MASTER NAVIGATION TREE */}
+      {activeTopTab === 'navigation' && (
+        <MasterNavigationTreeManager
+          currentResourceKey={selectedMasterKey}
+          onSelectMaster={(resourceKey) => {
+            if (resourceKey in MASTER_DEFINITIONS) {
+              setSelectedMasterKey(resourceKey as MasterKey)
+              setActiveTopTab('configuration')
+            }
+          }}
+        />
+      )}
 
       {/* TAB 1: CONFIGURATION (TWO-COLUMN DBIZ ARCHITECTURE) */}
       {activeTopTab === 'configuration' && (
