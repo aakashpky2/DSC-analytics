@@ -253,17 +253,24 @@ export function AddLeadModal({ isOpen, onClose, onSuccess }: ModalProps) {
     // LM-06 & LM-32: Validate complete intake payload (optional fields allowed; supplied invalid fields rejected)
     console.log('[AddLeadModal] Submitting lead formData:', formData)
     const validation = validateLeadPayload(formData)
-    if (!validation.valid) {
-      console.warn('[AddLeadModal] Frontend validation failed:', validation.errors)
-      setFieldErrors(validation.errors)
+    
+    // LM-16/17: Require category selection on staff intake so newly created lead is not isolated from view
+    const errors = { ...validation.errors }
+    if (!formData.category_id) {
+      errors.category_id = 'Please select an authorized Lead Category to proceed.'
+    }
+
+    if (!validation.valid || errors.category_id) {
+      console.warn('[AddLeadModal] Frontend validation failed:', errors)
+      setFieldErrors(errors)
 
       // Focus first invalid field
-      if (validation.errors.phone && phoneRef.current) phoneRef.current.focus()
-      else if (validation.errors.email && emailRef.current) emailRef.current.focus()
-      else if (validation.errors.contact_person && contactPersonRef.current) contactPersonRef.current.focus()
-      else if (validation.errors.company_name && companyNameRef.current) companyNameRef.current.focus()
-      else if (validation.errors.pin_code && pinCodeRef.current) pinCodeRef.current.focus()
-      else if (validation.errors.pan && panRef.current) panRef.current.focus()
+      if (errors.phone && phoneRef.current) phoneRef.current.focus()
+      else if (errors.email && emailRef.current) emailRef.current.focus()
+      else if (errors.contact_person && contactPersonRef.current) contactPersonRef.current.focus()
+      else if (errors.company_name && companyNameRef.current) companyNameRef.current.focus()
+      else if (errors.pin_code && pinCodeRef.current) pinCodeRef.current.focus()
+      else if (errors.pan && panRef.current) panRef.current.focus()
 
       return
     }
@@ -510,19 +517,35 @@ export function AddLeadModal({ isOpen, onClose, onSuccess }: ModalProps) {
               </select>
             </div>
             <div>
-              <label className="block text-slate-300 font-medium mb-1">Lead Category (LM-02)</label>
+              <label className="block text-slate-300 font-medium mb-1">
+                Lead Category (LM-02) <span className="text-purple-400">*</span>
+              </label>
               <select
                 value={formData.category_id}
-                onChange={(e) => setFormData({ ...formData, category_id: e.target.value })}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
+                onChange={(e) => {
+                  setFormData({ ...formData, category_id: e.target.value })
+                  if (fieldErrors.category_id) {
+                    setFieldErrors((prev) => {
+                      const copy = { ...prev }
+                      delete copy.category_id
+                      return copy
+                    })
+                  }
+                }}
+                className={`w-full bg-slate-950 border rounded-lg px-3 py-2 text-white focus:outline-none transition ${
+                  fieldErrors.category_id ? 'border-red-500 focus:border-red-500' : 'border-slate-800 focus:border-indigo-500'
+                }`}
               >
-                <option value="">Select Category (Supervisory Intake if Unassigned)</option>
+                <option value="">Select Category (Required for Staff Intake)</option>
                 {categories.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.category_name}
                   </option>
                 ))}
               </select>
+              {fieldErrors.category_id && (
+                <p className="text-[11px] text-red-400 mt-1">{fieldErrors.category_id}</p>
+              )}
             </div>
           </div>
 
