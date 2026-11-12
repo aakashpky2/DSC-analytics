@@ -2369,6 +2369,19 @@
       "supervisor_override": 1,
       "override_reason": "Branch expansion authorization by Regional Manager",
       "created_at": "2026-11-10T16:27:44.935Z"
+    },
+    {
+      "id": "int-1794469552370-imx8",
+      "lead_id": "lead-1793950262983-ex3f",
+      "conducted_by": "usr-1794390921917",
+      "channel_id": "chan-whatsapp",
+      "channel_name": "WhatsApp Business",
+      "outcome": "Interested",
+      "reason": "Discussed volume purchase requirements",
+      "conversation_notes": "",
+      "next_follow_up_date": "2026-11-13T07:45:51.274Z",
+      "supervisor_override": 0,
+      "created_at": "2026-11-12T07:45:52.370Z"
     }
   ],
   "service_tracking": {
