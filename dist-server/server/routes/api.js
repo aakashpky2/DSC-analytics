@@ -499,6 +499,7 @@ exports.apiRouter.put('/admin/roles/:id/permissions', requireAdmin, async (req, 
         }
         const roleId = req.params.id;
         const { permissions = [] } = req.body; // Array of { module_id, can_view, can_create, can_edit, can_delete, can_export, mask_pii_fields }
+        const orgId = currentUser.organization_id || 'comp-default';
         for (const p of permissions) {
             const { error } = await supabase_1.supabase
                 .from('role_module_permissions')
@@ -506,6 +507,7 @@ exports.apiRouter.put('/admin/roles/:id/permissions', requireAdmin, async (req, 
                 id: `rmp-${roleId}-${p.module_id}`,
                 role_id: roleId,
                 module_id: p.module_id,
+                organization_id: orgId,
                 can_view: p.can_view ? 1 : 0,
                 can_create: p.can_create ? 1 : 0,
                 can_edit: p.can_edit ? 1 : 0,
@@ -525,6 +527,7 @@ exports.apiRouter.put('/admin/roles/:id/permissions', requireAdmin, async (req, 
             newValueJson: permissions,
             reason: 'Role Matrix Policy Update',
             ipAddress: req.ip,
+            organizationId: orgId,
         });
         return res.json({ success: true, message: 'Role permissions updated successfully.' });
     }

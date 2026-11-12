@@ -154,7 +154,25 @@ export default function RolesPage() {
         body: JSON.stringify({ permissions: payload }),
       })
 
-      const d = await res.json()
+      let d: any = {}
+      const contentType = res.headers.get('content-type') || ''
+      if (contentType.includes('application/json')) {
+        try {
+          d = await res.json()
+        } catch {
+          d = {}
+        }
+      } else {
+        const text = await res.text()
+        if (res.status === 504) {
+          throw new Error('Permission save timed out. Please try again.')
+        } else if (res.status === 403) {
+          throw new Error('Access denied. You do not have permission to modify role permissions.')
+        } else {
+          throw new Error(`Server returned unexpected response (HTTP ${res.status}).`)
+        }
+      }
+
       if (!res.ok) throw new Error(d.error || 'Failed to update permissions')
 
       setSuccessMsg(`Permissions for "${selectedRole.name}" updated successfully.`)
