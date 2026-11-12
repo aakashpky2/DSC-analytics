@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { ShieldCheck, Plus, Calendar, Clock, AlertTriangle, CheckCircle2, XCircle, Search, Filter } from 'lucide-react'
 import { Pagination } from '@/components/Pagination'
+import { useToast } from '@/components/ToastProvider'
 
 interface DelegationRecord {
   id: string
@@ -31,6 +32,7 @@ interface StaffUser {
 }
 
 export default function AdminDelegationsPage() {
+  const { showToast } = useToast()
   const [delegations, setDelegations] = useState<DelegationRecord[]>([])
   const [staff, setStaff] = useState<StaffUser[]>([])
   const [loading, setLoading] = useState(true)
@@ -86,6 +88,25 @@ export default function AdminDelegationsPage() {
     setError('')
     setSuccess('')
     try {
+      const fromDate = new Date(form.valid_from)
+      const untilDate = new Date(form.valid_until)
+
+      if (isNaN(fromDate.getTime()) || isNaN(untilDate.getTime())) {
+        setError('Please provide valid start and end dates.')
+        return
+      }
+
+      if (untilDate <= fromDate) {
+        setError('End date must be after start date.')
+        showToast({
+          type: 'error',
+          status: 400,
+          title: 'Validation Error',
+          message: 'End date must be after start date.'
+        })
+        return
+      }
+
       const res = await fetch('/api/admin/delegations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -93,19 +114,52 @@ export default function AdminDelegationsPage() {
           recipient_user_id: form.recipient_user_id,
           module_key: form.module_key,
           action_key: form.action_key,
-          valid_from: new Date(form.valid_from).toISOString(),
-          valid_until: new Date(form.valid_until).toISOString(),
+          valid_from: fromDate.toISOString(),
+          valid_until: untilDate.toISOString(),
           reason: form.reason,
           can_delegate_further: form.can_delegate_further ? 1 : 0,
         }),
       })
-      const d = await res.json()
-      if (!res.ok) throw new Error(d.error || 'Failed to grant delegation')
-      setSuccess('Temporary delegation granted successfully.')
+
+      let d: any = {}
+      const contentType = res.headers.get('content-type') || ''
+      if (contentType.includes('application/json')) {
+        try {
+          d = await res.json()
+        } catch {
+          d = {}
+        }
+      }
+
+      if (!res.ok) {
+        const errorMsg = d.error || (res.status === 403 ? 'Access denied. You do not have permission to create delegations.' : res.status === 409 ? 'This delegation already exists.' : 'Unable to create delegation. Please try again.')
+        setError(errorMsg)
+        showToast({
+          type: 'error',
+          status: res.status,
+          title: res.status === 409 ? 'Duplicate Delegation' : 'Delegation Failed',
+          message: errorMsg
+        })
+        return
+      }
+
+      setSuccess('Delegation created successfully.')
+      showToast({
+        type: 'success',
+        status: 201,
+        title: 'Delegation Created',
+        message: 'Delegation created successfully.'
+      })
       setIsModalOpen(false)
       loadData()
     } catch (err: any) {
-      setError(err.message)
+      setError(err.message || 'Unable to create delegation. Please try again.')
+      showToast({
+        type: 'error',
+        status: 500,
+        title: 'Error',
+        message: err.message || 'Unable to create delegation. Please try again.'
+      })
     }
   }
 

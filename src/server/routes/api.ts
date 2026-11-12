@@ -4446,12 +4446,27 @@ apiRouter.post('/admin/delegations', requireAuth, async (req: Request, res: Resp
       }
     }
 
+    // Check for exact duplicate active delegation to avoid redundant rows
+    const existingActive = await queryOne<any>(`
+      SELECT id FROM temporary_delegations
+      WHERE recipient_user_id = ?
+        AND module_key = ?
+        AND action_key = ?
+        AND status = 'active'
+        AND valid_until > CURRENT_TIMESTAMP
+    `, [recipient_user_id, module_key, action_key])
+
+    if (existingActive) {
+      return res.status(409).json({ error: 'An active delegation for this recipient, module, and action already exists.' })
+    }
+
+    const orgId = currentUser.organization_id || 'comp-default'
     const id = `del-${Date.now()}`
     await run(`
       INSERT INTO temporary_delegations (
-        id, grantor_user_id, recipient_user_id, module_key, action_key, valid_from, valid_until, reason, can_delegate_further, parent_delegation_id, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
-    `, [id, currentUser.id, recipient_user_id, module_key, action_key, valid_from, valid_until, reason.trim(), can_delegate_further ? 1 : 0, parent_delegation_id || null])
+        id, organization_id, grantor_user_id, recipient_user_id, module_key, action_key, valid_from, valid_until, reason, can_delegate_further, parent_delegation_id, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+    `, [id, orgId, currentUser.id, recipient_user_id, module_key, action_key, valid_from, valid_until, reason.trim(), can_delegate_further ? 1 : 0, parent_delegation_id || null])
 
     await logAuditEvent({
       userId: currentUser.id,
@@ -4462,6 +4477,7 @@ apiRouter.post('/admin/delegations', requireAuth, async (req: Request, res: Resp
       newValueJson: { recipient_user_id, module_key, action_key, valid_from, valid_until, reason },
       reason,
       ipAddress: req.ip,
+      organizationId: orgId,
     })
 
     return res.status(201).json({ success: true, id, message: 'Temporary delegation granted successfully.' })
