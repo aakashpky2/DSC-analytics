@@ -376,6 +376,30 @@
       "user_id": "usr-1793775870867",
       "category_id": "cat-enterprises",
       "created_at": "2026-11-10T16:26:43.728Z"
+    },
+    {
+      "id": "uca-midhun-1",
+      "user_id": "usr-1794390921917",
+      "category_id": "cat-enterprises",
+      "created_at": "2026-11-12T07:36:13.653Z"
+    },
+    {
+      "id": "uca-midhun-2",
+      "user_id": "usr-1794390921917",
+      "category_id": "cat-ca-advocates",
+      "created_at": "2026-11-12T07:36:13.655Z"
+    },
+    {
+      "id": "uca-midhun-3",
+      "user_id": "usr-1794390921917",
+      "category_id": "cat-tax-practitioners",
+      "created_at": "2026-11-12T07:36:13.655Z"
+    },
+    {
+      "id": "uca-midhun-4",
+      "user_id": "usr-1794390921917",
+      "category_id": "cat-retail-partners",
+      "created_at": "2026-11-12T07:36:13.655Z"
     }
   ],
   "partner_contacts": [
