@@ -676,6 +676,50 @@ exports.apiRouter.patch('/admin/users/:id/freeze', requireAuth, async (req, res)
         return res.status(500).json({ error: err.message });
     }
 });
+// Update user active / inactive status (Deactivate / Activate)
+exports.apiRouter.patch('/admin/users/:id/status', requireAuth, async (req, res) => {
+    try {
+        const currentUser = req.user;
+        if (currentUser.hierarchy_level_order !== 0) {
+            return res.status(403).json({ error: 'Only the Super Admin (Level 0) can change user account status.' });
+        }
+        const { status } = req.body;
+        const userId = req.params.id;
+        if (userId === 'usr-admin-root') {
+            return res.status(400).json({ error: 'The Master Super Admin account cannot be deactivated.' });
+        }
+        const validStatuses = ['active', 'inactive', 'deactivated'];
+        if (!status || !validStatuses.includes(String(status).toLowerCase())) {
+            return res.status(400).json({ error: `Invalid status. Allowed values: ${validStatuses.join(', ')}` });
+        }
+        // Standardize to database status: 'inactive'
+        const normalizedStatus = String(status).toLowerCase() === 'active' ? 'active' : 'inactive';
+        await (0, supabase_1.run)(`UPDATE user_profiles SET status = ? WHERE id = ?`, [normalizedStatus, userId]);
+        // If deactivated, invalidate all active sessions for this user immediately
+        if (normalizedStatus === 'inactive') {
+            await (0, supabase_1.run)(`DELETE FROM sessions WHERE user_id = ?`, [userId]);
+        }
+        await logAuditEvent({
+            userId: currentUser.id,
+            actionType: normalizedStatus === 'active' ? 'ACTIVATE_USER' : 'DEACTIVATE_USER',
+            moduleKey: 'admin_users',
+            tableAffected: 'user_profiles',
+            recordId: userId,
+            newValueJson: { status: normalizedStatus },
+            reason: normalizedStatus === 'active' ? 'Administrator activated account' : 'Administrator deactivated account',
+            ipAddress: req.ip,
+        });
+        return res.json({
+            success: true,
+            id: userId,
+            status: normalizedStatus,
+            message: normalizedStatus === 'active' ? 'User activated successfully.' : 'User deactivated successfully.'
+        });
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message || 'Unable to change user status. Please try again.' });
+    }
+});
 // ==========================================
 // 3. Partner Network Management
 // ==========================================

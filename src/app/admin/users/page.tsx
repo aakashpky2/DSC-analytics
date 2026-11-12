@@ -6,8 +6,10 @@ import { Shield, UserCheck, Lock, Unlock, EyeOff, Plus, UserPlus, Search, Slider
 import { AddStaffModal } from '@/components/AddStaffModal'
 import { UserPermissionDrawer } from '@/components/UserPermissionDrawer'
 import { Pagination } from '@/components/Pagination'
+import { useToast } from '@/components/ToastProvider'
 
 export default function UsersPage() {
+  const { showToast } = useToast()
   const [users, setUsers] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -79,15 +81,47 @@ export default function UsersPage() {
   const handleToggleStatus = async (userId: string, currentStatus: string) => {
     setActionLoading(userId)
     try {
-      const newStatus = currentStatus === 'active' ? 'deactivated' : 'active'
+      const newStatus = currentStatus === 'active' ? 'inactive' : 'active'
       const res = await fetch(`/api/admin/users/${userId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus }),
       })
-      if (res.ok) {
-        fetchUsers()
+
+      let data: any = {}
+      const contentType = res.headers.get('content-type') || ''
+      if (contentType.includes('application/json')) {
+        try {
+          data = await res.json()
+        } catch {
+          data = {}
+        }
       }
+
+      if (res.ok) {
+        showToast({
+          type: 'success',
+          status: 200,
+          title: 'User Updated',
+          message: newStatus === 'active' ? 'User activated successfully.' : 'User deactivated successfully.'
+        })
+        fetchUsers()
+      } else {
+        const errorMsg = data?.error || (res.status === 403 ? 'Access denied. You do not have permission to change user status.' : 'Unable to change user status. Please try again.')
+        showToast({
+          type: 'error',
+          status: res.status,
+          title: 'Status Update Failed',
+          message: errorMsg
+        })
+      }
+    } catch {
+      showToast({
+        type: 'error',
+        status: 500,
+        title: 'Status Update Failed',
+        message: 'Unable to change user status. Please try again.'
+      })
     } finally {
       setActionLoading(null)
     }
