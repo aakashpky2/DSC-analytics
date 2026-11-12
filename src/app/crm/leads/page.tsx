@@ -57,6 +57,13 @@ export default function CrmLeadsPage() {
     setCurrentPage(1)
   }
 
+  const handleSuccess = () => {
+    // Reset search and pagination to page 1 to ensure newly created lead is immediately visible
+    setSearch('')
+    setCurrentPage(1)
+    loadLeads()
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -191,7 +198,7 @@ export default function CrmLeadsPage() {
       <AddLeadModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        onSuccess={loadLeads}
+        onSuccess={handleSuccess}
       />
 
       <BulkImportModal

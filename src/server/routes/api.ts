@@ -1667,9 +1667,23 @@ apiRouter.get('/crm/leads', requirePermission('crm', 'can_view'), async (req: Re
 
     const store = loadLeadStore()
     const isSupervisor = user.hierarchy_level_order <= 1
-    const userCatIds = (store.user_category_access || [])
+
+    // Synchronize category access from DB (crm_user_category_access) and store
+    let userCatIds = (store.user_category_access || [])
       .filter((a: any) => a.user_id === user.id)
       .map((a: any) => a.category_id)
+
+    if (!isSupervisor && userCatIds.length === 0) {
+      try {
+        const { data: dbAccess } = await supabase
+          .from('crm_user_category_access')
+          .select('category_id')
+          .eq('user_id', user.id)
+        if (dbAccess && dbAccess.length > 0) {
+          userCatIds = dbAccess.map((d: any) => d.category_id)
+        }
+      } catch {}
+    }
 
     let whereClause = 'WHERE l.is_merged = 0'
     const params: any[] = []
@@ -1836,11 +1850,29 @@ apiRouter.post('/crm/leads', requirePermission('crm', 'can_create'), async (req:
 
     const orgId = user?.organization_id || 'comp-default'
 
-    // Insert primary record in crm_leads (PostgreSQL / Supabase compatible)
+    // Insert primary record in crm_leads (PostgreSQL / Supabase compatible) with category_id and source_id
     await run(`
-      INSERT INTO crm_leads (id, lead_code, company_name, contact_person, email, phone, gstin, pan, requirement_summary, status, organization_id)
-      VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 'new', ?)
-    `, [id, lead_code, cleanCompany, cleanContact, cleanEmail, cleanPhone, cleanPan, cleanReq, orgId])
+      INSERT INTO crm_leads (id, lead_code, company_name, contact_person, email, phone, gstin, pan, requirement_summary, status, organization_id, category_id, source_id, city, state, district, address, pin_code, alternate_name)
+      VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      id,
+      lead_code,
+      cleanCompany,
+      cleanContact,
+      cleanEmail,
+      cleanPhone,
+      cleanPan,
+      cleanReq,
+      orgId,
+      category_id || null,
+      source_id || null,
+      city || null,
+      state || null,
+      district || null,
+      address || null,
+      pin_code || null,
+      alternate_name || null
+    ])
 
     // Save extended specification attributes into leadStore
     if (id && id !== 'undefined' && String(id).trim().length > 0) {
@@ -1868,6 +1900,7 @@ apiRouter.post('/crm/leads', requirePermission('crm', 'can_create'), async (req:
 
     const firstContactDueAt = new Date(Date.now() + appliedTatDays * 24 * 60 * 60 * 1000).toISOString()
 
+    store.extended_leads = store.extended_leads || {}
     store.extended_leads[id] = {
       alternate_name: alternate_name ? alternate_name.trim() : null,
       city: city ? city.trim() : null,
